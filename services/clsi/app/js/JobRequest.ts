@@ -1,26 +1,40 @@
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
-import type { ArchiveSummary } from './BoundedProjectArchive.ts'
+import type {
+  ArchiveSummary,
+  CompileArchiveSummary,
+} from './BoundedProjectArchive.ts'
 
 export interface JobPolicy {
   trustedStagingRoot: string
   allowedImages: readonly string[]
   allowedExecutables: readonly string[]
 }
-export interface JobRequest {
+export interface ExecutionRequest {
   image: string
   argv: readonly string[]
   cwd: string
   inputDirectory: string
-  outputDirectory: string
   timeoutMs: number
   environment?: Readonly<Record<string, string>>
   signal?: AbortSignal
 }
-export interface JobResult {
+export interface JobRequest extends ExecutionRequest {
+  outputDirectory: string
+}
+export interface StdoutJobRequest extends ExecutionRequest {
+  outputDirectory?: never
+}
+export interface StdoutJobResult {
   exitCode: number
   stdout: Buffer
   stderr: Buffer
+}
+export interface CompileArtifactJobResult extends StdoutJobResult {
+  output: CompileArchiveSummary
+  outputDirectory: string
+}
+export interface JobResult extends StdoutJobResult {
   output: ArchiveSummary
   outputDirectory: string
 }
@@ -47,8 +61,8 @@ function inside(root: string, child: string): boolean {
   )
 }
 /** Caller owns this private staging tree and must keep it immutable for the job. */
-export async function validateRequest(
-  request: JobRequest,
+async function validateCommonRequest(
+  request: ExecutionRequest,
   policy: JobPolicy
 ): Promise<void> {
   if (
@@ -94,18 +108,20 @@ export async function validateRequest(
   }
   const root = path.resolve(policy.trustedStagingRoot)
   const input = path.resolve(request.inputDirectory)
-  const output = path.resolve(request.outputDirectory)
   if (
     root !== (await fs.realpath(root)) ||
     input !== (await fs.realpath(input)) ||
-    !inside(root, input) ||
-    !inside(root, output) ||
-    input === output ||
-    inside(input, output) ||
-    inside(output, input)
+    !inside(root, input)
   )
     throw new Error('Unsafe staging path')
-  for (const directory of [root, input, path.dirname(output)]) {
+  await trustedDirectories([root, input])
+  if (((await fs.stat(root)).mode & 0o077) !== 0)
+    throw new Error('Staging root is not private')
+}
+async function trustedDirectories(
+  directories: readonly string[]
+): Promise<void> {
+  for (const directory of directories) {
     const stat = await fs.lstat(directory)
     if (
       !stat.isDirectory() ||
@@ -116,8 +132,31 @@ export async function validateRequest(
     )
       throw new Error('Staging directory is not trusted')
   }
-  if (((await fs.stat(root)).mode & 0o077) !== 0)
-    throw new Error('Staging root is not private')
+}
+export async function validateStdoutRequest(
+  request: StdoutJobRequest,
+  policy: JobPolicy
+): Promise<void> {
+  if ('outputDirectory' in request)
+    throw new Error('stdout request must not have outputDirectory')
+  await validateCommonRequest(request, policy)
+}
+export async function validateRequest(
+  request: JobRequest,
+  policy: JobPolicy
+): Promise<void> {
+  await validateCommonRequest(request, policy)
+  const root = path.resolve(policy.trustedStagingRoot),
+    input = path.resolve(request.inputDirectory),
+    output = path.resolve(request.outputDirectory)
+  if (
+    !inside(root, output) ||
+    input === output ||
+    inside(input, output) ||
+    inside(output, input)
+  )
+    throw new Error('Unsafe staging path')
+  await trustedDirectories([path.dirname(output)])
   try {
     await fs.lstat(output)
   } catch (error) {
@@ -127,7 +166,7 @@ export async function validateRequest(
   }
   throw new Error('Output directory already exists')
 }
-export function compileEnvironment(request: JobRequest): string[] {
+export function compileEnvironment(request: ExecutionRequest): string[] {
   return Object.entries({
     HOME: '/home/tex',
     PATH: '/usr/local/bin:/usr/bin:/bin',

@@ -4,6 +4,8 @@ import { finished } from 'node:stream/promises'
 import type Docker from 'dockerode'
 import {
   createInputArchiveBundle,
+  createManifestInputArchiveBundle,
+  extractCompileOutputArchive,
   extractOutputArchive,
 } from './BoundedProjectArchive.ts'
 import { collectExecOutput } from './DockerExecOutput.ts'
@@ -11,6 +13,10 @@ import { checkJobOwnership, jobLabels, jobName } from './JobOwnership.ts'
 import {
   compileEnvironment,
   validateRequest,
+  validateStdoutRequest,
+  type StdoutJobRequest,
+  type StdoutJobResult,
+  type CompileArtifactJobResult,
   type JobPolicy,
   type JobRequest,
   type JobResult,
@@ -19,7 +25,17 @@ import {
   sandboxResourceLimits,
   sandboxTemporaryDirectories,
 } from './SandboxResources.mjs'
-export type { JobPolicy, JobRequest, JobResult } from './JobRequest.ts'
+export type {
+  JobPolicy,
+  JobRequest,
+  JobResult,
+  StdoutJobRequest,
+  StdoutJobResult,
+  CompileArtifactJobResult,
+} from './JobRequest.ts'
+type GenericMode = { mode: 'generic'; request: JobRequest }
+type ArtifactMode = { mode: 'artifacts'; request: JobRequest }
+type StdoutMode = { mode: 'stdout'; request: StdoutJobRequest }
 
 function isMissing(error: unknown): boolean {
   return (
@@ -45,8 +61,35 @@ export class EphemeralDockerJob {
     request: JobRequest,
     identity: string = randomUUID()
   ): Promise<JobResult> {
+    return this.execute({ mode: 'generic', request }, identity)
+  }
+  runArtifacts(
+    request: JobRequest,
+    identity: string = randomUUID()
+  ): Promise<CompileArtifactJobResult> {
+    return this.execute({ mode: 'artifacts', request }, identity)
+  }
+  runStdout(
+    request: StdoutJobRequest,
+    identity: string = randomUUID()
+  ): Promise<StdoutJobResult> {
+    return this.execute({ mode: 'stdout', request }, identity)
+  }
+  private execute(input: GenericMode, identity: string): Promise<JobResult>
+  private execute(
+    input: ArtifactMode,
+    identity: string
+  ): Promise<CompileArtifactJobResult>
+  private execute(input: StdoutMode, identity: string): Promise<StdoutJobResult>
+  private async execute(
+    input: GenericMode | ArtifactMode | StdoutMode,
+    identity: string
+  ): Promise<JobResult | CompileArtifactJobResult | StdoutJobResult> {
+    const request = input.request
     const name = jobName(identity)
-    await validateRequest(request, this.policy)
+    if (input.mode === 'stdout')
+      await validateStdoutRequest(input.request, this.policy)
+    else await validateRequest(input.request, this.policy)
     const labels = jobLabels(identity)
     const controller = new AbortController()
     const cancel = (): void => {
@@ -63,7 +106,11 @@ export class EphemeralDockerJob {
     let container = this.docker.getContainer(name)
     const volume = this.docker.getVolume(name)
     let paused = false
-    let result: JobResult | undefined
+    let result:
+      | JobResult
+      | CompileArtifactJobResult
+      | StdoutJobResult
+      | undefined
     let failure: unknown
     let failed = false
     const cleanupErrors: unknown[] = []
@@ -129,7 +176,9 @@ export class EphemeralDockerJob {
       await container.start()
       signal.throwIfAborted()
       const { stream: archive, completion: producerDone } =
-        createInputArchiveBundle(request.inputDirectory, { signal })
+        input.mode === 'artifacts'
+          ? createManifestInputArchiveBundle(request.inputDirectory, { signal })
+          : createInputArchiveBundle(request.inputDirectory, { signal })
       const archiveDone = finished(archive, { cleanup: true })
       void archiveDone.catch(() => {})
       let transferFailure: { error: unknown } | undefined
@@ -189,25 +238,45 @@ export class EphemeralDockerJob {
         execution.ExitCode === null
       )
         throw new Error('Compiler exec has no terminal exit status')
-      await container.pause()
-      paused = true
-      signal.throwIfAborted()
-      const outputStream = await container.getArchive({ path: '/compile' })
-      // Keep the real response stream: an async-iterator wrapper can wait for
-      // its pending next() forever when the wrapper is destroyed on abort.
-      if (!(outputStream instanceof Readable))
-        throw new Error('Docker archive response is not a Readable')
-      const summary = await extractOutputArchive(
-        outputStream,
-        request.outputDirectory,
-        { signal, requiredPrefix: 'compile' }
-      )
-      signal.throwIfAborted()
-      result = {
-        exitCode: execution.ExitCode,
-        ...output,
-        output: summary,
-        outputDirectory: request.outputDirectory,
+      if (input.mode === 'stdout') {
+        result = { exitCode: execution.ExitCode, ...output }
+      } else {
+        await container.pause()
+        paused = true
+        signal.throwIfAborted()
+        const outputStream = await container.getArchive({ path: '/compile' })
+        if (!(outputStream instanceof Readable))
+          throw new Error('Docker archive response is not a Readable')
+        if (input.mode === 'artifacts') {
+          if (producer.value === undefined)
+            throw new Error('Missing upload manifest')
+          const summary = await extractCompileOutputArchive(
+            outputStream,
+            input.request.outputDirectory,
+            producer.value,
+            output,
+            { signal }
+          )
+          result = {
+            exitCode: execution.ExitCode,
+            ...output,
+            output: summary,
+            outputDirectory: input.request.outputDirectory,
+          }
+        } else {
+          const summary = await extractOutputArchive(
+            outputStream,
+            input.request.outputDirectory,
+            { signal, requiredPrefix: 'compile' }
+          )
+          result = {
+            exitCode: execution.ExitCode,
+            ...output,
+            output: summary,
+            outputDirectory: input.request.outputDirectory,
+          }
+        }
+        signal.throwIfAborted()
       }
     } catch (error) {
       failed = true

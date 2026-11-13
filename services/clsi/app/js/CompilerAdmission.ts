@@ -2,7 +2,17 @@ import { randomUUID } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
-import type { JobRequest, JobResult } from './JobRequest.ts'
+import type {
+  JobRequest,
+  JobResult,
+  ExecutionRequest,
+  StdoutJobRequest,
+  StdoutJobResult,
+  CompileArtifactJobResult,
+} from './JobRequest.ts'
+type GenericJob = { mode: 'generic'; request: JobRequest }
+type ArtifactJob = { mode: 'artifacts'; request: JobRequest }
+type StdoutJob = { mode: 'stdout'; request: StdoutJobRequest }
 import type { OwnedJobReconciler } from './JobOwnership.ts'
 
 type AdmissionCode =
@@ -23,6 +33,14 @@ export class AdmissionError extends Error {
 }
 interface JobExecutor {
   run(request: JobRequest, identity?: string): Promise<JobResult>
+  runArtifacts?(
+    request: JobRequest,
+    identity?: string
+  ): Promise<CompileArtifactJobResult>
+  runStdout?(
+    request: StdoutJobRequest,
+    identity?: string
+  ): Promise<StdoutJobResult>
 }
 interface Options {
   activeLimit?: number
@@ -51,6 +69,8 @@ export interface WorkflowScope {
    * Every workflow job must stay strictly inside it. Cleanup joins owned I/O. */
   ownWorkspace(rootDirectory: string, cleanup: () => Promise<void>): void
   runJob(request: JobRequest): Promise<JobResult>
+  runArtifacts(request: JobRequest): Promise<CompileArtifactJobResult>
+  runStdout(request: StdoutJobRequest): Promise<StdoutJobResult>
 }
 export interface WorkflowLease {
   readonly identity: string
@@ -205,8 +225,13 @@ function checkWorkspaceRoot(rootDirectory: string): void {
     throw new AdmissionError('INVALID_REQUEST')
   }
 }
-function checkWorkspaceJobPaths(request: JobRequest): void {
+function checkWorkspaceJobPaths(
+  request: ExecutionRequest & { outputDirectory?: string }
+): void {
   try {
+    if (realpathSync(request.inputDirectory) !== request.inputDirectory)
+      throw new AdmissionError('INVALID_REQUEST')
+    if (request.outputDirectory === undefined) return
     if (
       realpathSync(request.inputDirectory) !== request.inputDirectory ||
       realpathSync(path.dirname(request.outputDirectory)) !==
@@ -234,11 +259,11 @@ function overlap(a: string, b: string): boolean {
       !path.isAbsolute(relative))
   )
 }
-function snapshot(
+function snapshotCommon(
   project: string,
-  request: JobRequest,
+  request: ExecutionRequest,
   wait: number
-): JobRequest {
+): ExecutionRequest {
   if (
     !Number.isSafeInteger(wait) ||
     wait <= 0 ||
@@ -252,9 +277,7 @@ function snapshot(
     request.image.length > 512 ||
     request.cwd.length > 4096 ||
     request.inputDirectory.length > 4096 ||
-    request.outputDirectory.length > 4096 ||
     !path.isAbsolute(request.inputDirectory) ||
-    !path.isAbsolute(request.outputDirectory) ||
     request.argv.length === 0 ||
     request.argv.length > 256 ||
     request.argv.reduce((n, arg) => n + Buffer.byteLength(arg), 0) > 65_536 ||
@@ -280,9 +303,32 @@ function snapshot(
     timeoutMs: request.timeoutMs,
     environment: Object.fromEntries(environment),
     inputDirectory: path.resolve(request.inputDirectory),
-    outputDirectory: path.resolve(request.outputDirectory),
     ...(request.signal === undefined ? {} : { signal: request.signal }),
   }
+}
+
+function snapshot(
+  project: string,
+  request: JobRequest,
+  wait: number
+): JobRequest {
+  if (
+    typeof request.outputDirectory !== 'string' ||
+    request.outputDirectory.length > 4096 ||
+    !path.isAbsolute(request.outputDirectory)
+  )
+    throw new AdmissionError('INVALID_REQUEST')
+  return {
+    ...snapshotCommon(project, request, wait),
+    outputDirectory: path.resolve(request.outputDirectory),
+  }
+}
+function snapshotStdout(
+  project: string,
+  request: StdoutJobRequest
+): StdoutJobRequest {
+  if ('outputDirectory' in request) throw new AdmissionError('INVALID_REQUEST')
+  return snapshotCommon(project, request, 30000)
 }
 
 /** One queue for real workflow metadata and the compatible bounded job API.
@@ -555,6 +601,18 @@ export class CompilerAdmission {
         .then(legacy.resolve, legacy.reject)
   }
   private runJob(flow: Flow, request: JobRequest): Promise<JobResult> {
+    return this.runOwnedJob(flow, { mode: 'generic', request })
+  }
+  private runOwnedJob(flow: Flow, job: GenericJob): Promise<JobResult>
+  private runOwnedJob(
+    flow: Flow,
+    job: ArtifactJob
+  ): Promise<CompileArtifactJobResult>
+  private runOwnedJob(flow: Flow, job: StdoutJob): Promise<StdoutJobResult>
+  private runOwnedJob(
+    flow: Flow,
+    job: GenericJob | ArtifactJob | StdoutJob
+  ): Promise<JobResult | CompileArtifactJobResult | StdoutJobResult> {
     try {
       if (
         !flow.started ||
@@ -566,8 +624,41 @@ export class CompilerAdmission {
         throw new AdmissionError('CLOSED')
       flow.controller.signal.throwIfAborted()
       this.reconciler.assertHeld()
-      const copy = snapshot(flow.entry.meta.projectId, request, 30000)
-      const directories = [copy.inputDirectory, copy.outputDirectory]
+      // Preserve the mode together with the one request copy whose paths are
+      // checked below. Never reread caller accessors after authorization.
+      const checked: GenericJob | ArtifactJob | StdoutJob =
+        job.mode === 'stdout'
+          ? {
+              mode: 'stdout',
+              request: snapshotStdout(flow.entry.meta.projectId, job.request),
+            }
+          : job.mode === 'artifacts'
+            ? {
+                mode: 'artifacts',
+                request: snapshot(
+                  flow.entry.meta.projectId,
+                  job.request,
+                  30000
+                ),
+              }
+            : {
+                mode: 'generic',
+                request: snapshot(
+                  flow.entry.meta.projectId,
+                  job.request,
+                  30000
+                ),
+              }
+      const copy = checked.request
+      const directories =
+        copy.outputDirectory === undefined
+          ? [copy.inputDirectory]
+          : [copy.inputDirectory, copy.outputDirectory]
+      if (
+        (checked.mode === 'stdout' && !this.executor.runStdout) ||
+        (checked.mode === 'artifacts' && !this.executor.runArtifacts)
+      )
+        throw new AdmissionError('INVALID_REQUEST')
       const workspace = flow.workspaceRoot
       if (
         flow.entry.legacy === undefined &&
@@ -588,9 +679,19 @@ export class CompilerAdmission {
         copy.signal === undefined
           ? flow.controller.signal
           : AbortSignal.any([flow.controller.signal, copy.signal])
-      let pending: Promise<JobResult>
+      let pending: Promise<
+        JobResult | CompileArtifactJobResult | StdoutJobResult
+      >
       try {
-        pending = this.executor.run({ ...copy, signal }, id)
+        if (checked.mode === 'stdout') {
+          const run = this.executor.runStdout
+          if (!run) throw new AdmissionError('INVALID_REQUEST')
+          pending = run.call(this.executor, { ...checked.request, signal }, id)
+        } else if (checked.mode === 'artifacts') {
+          const run = this.executor.runArtifacts
+          if (!run) throw new AdmissionError('INVALID_REQUEST')
+          pending = run.call(this.executor, { ...checked.request, signal }, id)
+        } else pending = this.executor.run({ ...checked.request, signal }, id)
       } catch (error) {
         pending = Promise.reject(error)
       }
@@ -646,6 +747,10 @@ export class CompilerAdmission {
         flow.cleanup = cleanup
       },
       runJob: (request: JobRequest) => this.runJob(flow, request),
+      runArtifacts: (request: JobRequest) =>
+        this.runOwnedJob(flow, { mode: 'artifacts', request }),
+      runStdout: (request: StdoutJobRequest) =>
+        this.runOwnedJob(flow, { mode: 'stdout', request }),
     })
     let value: { result: T } | undefined
     let failure: { error: unknown } | undefined

@@ -1,4 +1,17 @@
-import { constants } from 'node:fs'
+import { constants, type Stats } from 'node:fs'
+import { createHash, type Hash } from 'node:crypto'
+import {
+  CompileArchiveCollection,
+  type InputArchiveManifest,
+  type InputArchiveFile,
+  type CompileArchiveSummary,
+  type CompileDiagnostics,
+} from './CompileArchiveCollection.ts'
+export type {
+  InputArchiveManifest,
+  CompileArchiveSummary,
+} from './CompileArchiveCollection.ts'
+const trustedManifests = new WeakSet<InputArchiveManifest>()
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { Readable, Transform } from 'node:stream'
@@ -109,7 +122,7 @@ function reserveFile(
   summary.bytes += size
   summary.files++
 }
-function byteCounter(expected: number): Transform {
+function byteCounter(expected: number, digest?: Hash): Transform {
   let received = 0
   return new Transform({
     transform(chunk: unknown, _encoding, callback) {
@@ -122,6 +135,7 @@ function byteCounter(expected: number): Transform {
         callback(policy('file length mismatch'))
         return
       }
+      digest?.update(chunk)
       callback(null, chunk)
     },
     flush(callback) {
@@ -178,6 +192,41 @@ export function createInputArchiveBundle(
   root: string,
   options: ArchiveOptions = {}
 ): InputArchiveBundle {
+  return inputProducer(root, options, false, () => undefined)
+}
+
+export function createManifestInputArchiveBundle(
+  root: string,
+  options: Pick<ArchiveOptions, 'signal'> = {}
+): {
+  readonly stream: Readable
+  readonly completion: Promise<InputArchiveManifest>
+} {
+  return inputProducer(
+    root,
+    options.signal === undefined ? {} : { signal: options.signal },
+    true,
+    (files, directories, summary) => {
+      const manifest = Object.freeze({
+        files: Object.freeze(files),
+        directories: Object.freeze(directories),
+        summary: Object.freeze(summary),
+      })
+      trustedManifests.add(manifest)
+      return manifest
+    }
+  )
+}
+function inputProducer<T>(
+  root: string,
+  options: ArchiveOptions,
+  record: boolean,
+  finalize: (
+    files: InputArchiveFile[],
+    directories: string[],
+    summary: ArchiveSummary
+  ) => T
+): { readonly stream: Readable; readonly completion: Promise<T> } {
   const pack = tar.pack()
   const controller = new AbortController()
   const abort = (): void => {
@@ -196,9 +245,11 @@ export function createInputArchiveBundle(
   controller.signal.addEventListener('abort', abortPack, { once: true })
   if (controller.signal.aborted) abortPack()
 
-  async function produce(): Promise<void> {
+  async function produce(): Promise<T> {
     const limits = limitsFor(INPUT_LIMITS, options)
     const summary: ArchiveSummary = { entries: 0, files: 0, bytes: 0 }
+    const files: InputArchiveFile[] = []
+    const directories: string[] = []
     const rootStat = await fs.lstat(root)
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink())
       throw policy('input root is not a directory')
@@ -218,6 +269,7 @@ export function createInputArchiveBundle(
         const stat = await fs.lstat(childPath)
         if (stat.isDirectory() && !stat.isSymbolicLink()) {
           await appendDirectory(pack, name)
+          if (record) directories.push(name)
           await visit(name)
           continue
         }
@@ -228,6 +280,7 @@ export function createInputArchiveBundle(
           constants.O_RDONLY | constants.O_NOFOLLOW
         )
         let fileFailure: { error: unknown } | undefined
+        let accepted: InputArchiveFile | undefined
         try {
           const opened = await file.stat()
           if (
@@ -240,6 +293,7 @@ export function createInputArchiveBundle(
           }
           const size = checkedSize(opened.size, limits)
           reserveFile(summary, size, limits)
+          const digest = record ? createHash('sha256') : undefined
           const entry = pack.entry({
             name,
             type: 'file',
@@ -254,12 +308,18 @@ export function createInputArchiveBundle(
             Readable.from(readFileChunks(file, controller.signal), {
               objectMode: false,
             }),
-            byteCounter(size),
+            byteCounter(size, digest),
             entry,
             {
               signal: controller.signal,
             }
           )
+          if (digest)
+            accepted = Object.freeze({
+              path: name,
+              size,
+              sha256: digest.digest('hex'),
+            })
         } catch (error) {
           fileFailure = { error }
         }
@@ -279,11 +339,13 @@ export function createInputArchiveBundle(
           throw closeFailure.error
         }
         if (fileFailure !== undefined) throw fileFailure.error
+        if (accepted) files.push(accepted)
       }
     }
     await visit('')
     controller.signal.throwIfAborted()
     pack.finalize()
+    return finalize(files, directories, summary)
   }
   // Start after the caller can attach a consumer. Observe rejection immediately
   // for legacy stream-only consumers; the original promise still rejects for
@@ -307,8 +369,48 @@ export async function extractOutputArchive(
   target: string,
   options: ExtractOptions = {}
 ): Promise<ArchiveSummary> {
+  return extractArchive(source, target, options, undefined)
+}
+export function extractCompileOutputArchive(
+  source: Readable,
+  target: string,
+  manifest: InputArchiveManifest,
+  diagnostics: CompileDiagnostics = {},
+  options: Pick<ArchiveOptions, 'signal'> = {}
+): Promise<CompileArchiveSummary> {
+  return extractArchive(
+    source,
+    target,
+    { ...options, requiredPrefix: 'compile' },
+    { manifest, diagnostics }
+  )
+}
+interface CompileInput {
+  manifest: InputArchiveManifest
+  diagnostics: CompileDiagnostics
+}
+function extractArchive(
+  source: Readable,
+  target: string,
+  options: ExtractOptions,
+  compile: undefined
+): Promise<ArchiveSummary>
+function extractArchive(
+  source: Readable,
+  target: string,
+  options: ExtractOptions,
+  compile: CompileInput
+): Promise<CompileArchiveSummary>
+async function extractArchive(
+  source: Readable,
+  target: string,
+  options: ExtractOptions,
+  compile: CompileInput | undefined
+): Promise<ArchiveSummary | CompileArchiveSummary> {
   const resolvedTarget = path.resolve(target)
   let created = false
+  let createdIdentity: Stats | undefined
+  let collection: CompileArchiveCollection | undefined
   const sourceDone = finished(source, {
     readable: true,
     writable: false,
@@ -325,6 +427,8 @@ export async function extractOutputArchive(
   const summary: ArchiveSummary = { entries: 0, files: 0, bytes: 0 }
   try {
     const limits = limitsFor(OUTPUT_LIMITS, options)
+    if (compile && !trustedManifests.has(compile.manifest))
+      throw policy('manifest is not from the input producer')
     options.signal?.throwIfAborted()
     const prefix =
       options.requiredPrefix === undefined
@@ -337,7 +441,18 @@ export async function extractOutputArchive(
       throw policy('target parent contains a symlink')
     await fs.mkdir(resolvedTarget, { mode: 0o700 })
     created = true
+    if (compile) createdIdentity = await fs.lstat(resolvedTarget)
     await fs.chmod(resolvedTarget, 0o700)
+    if (compile) {
+      if (!createdIdentity) throw policy('missing output ownership')
+      collection = await CompileArchiveCollection.create(
+        resolvedTarget,
+        createdIdentity,
+        compile.manifest,
+        compile.diagnostics,
+        options.signal
+      )
+    }
     const seen = new Set<string>()
     const materialized = new Set<string>()
     let wireBytes = 0
@@ -345,9 +460,10 @@ export async function extractOutputArchive(
     // Includes file padding and extended path headers, with an independent
     // metadata window below to bound tar-stream's internal PAX body buffering.
     const maxWireBytes =
+      collection?.maxWireBytes ??
       limits.maxTotalBytes +
-      limits.maxEntries * (2 * MAX_PATH_BYTES + 1024) +
-      1024
+        limits.maxEntries * (2 * MAX_PATH_BYTES + 1024) +
+        1024
     if (!Number.isSafeInteger(maxWireBytes))
       throw policy('archive wire limit overflow')
 
@@ -385,9 +501,15 @@ export async function extractOutputArchive(
         throw policy('link or special entry')
       if (header.linkname) throw policy('unexpected link target')
       const directory = header.type === 'directory'
-      const size = checkedSize(header.size, limits)
-      if (directory && size !== 0) throw policy('directory has a body')
       const archiveName = canonicalName(header.name, directory)
+      const nameForSize =
+        prefix === undefined
+          ? archiveName
+          : archiveName.slice(prefix.length + 1)
+      const size = collection
+        ? collection.size(nameForSize, directory, header.size)
+        : checkedSize(header.size, limits)
+      if (directory && size !== 0) throw policy('directory has a body')
       if (seen.has(archiveName)) throw policy('duplicate entry')
       seen.add(archiveName)
       // Reserve only one bounded file body; reset the metadata window for each
@@ -420,6 +542,11 @@ export async function extractOutputArchive(
         prefix === undefined
           ? archiveName
           : archiveName.slice(prefix.length + 1)
+      if (collection) {
+        if (body.destroyed) await bodyDone
+        await collection.consume(name, directory, size, body)
+        return
+      }
       await ensureParents(name)
       if (!materialized.has(name)) {
         countEntry(summary, limits)
@@ -519,6 +646,7 @@ export async function extractOutputArchive(
     await extractionDone
     if (prefix !== undefined && !seen.has(prefix))
       throw policy('missing archive root')
+    if (collection) return await collection.finish()
     return summary
   } catch (error) {
     // Both sides may have independent failures. Settle every operation before
@@ -526,13 +654,49 @@ export async function extractOutputArchive(
     source.destroy()
     activeBody?.destroy(asError(error))
     extract.destroy(asError(error))
-    await Promise.allSettled([
+    const settled = await Promise.allSettled([
       transfer,
       sourceDone,
       extractionDone,
       activeEntry,
     ])
-    if (created) await fs.rm(resolvedTarget, { recursive: true, force: true })
+    const failures: unknown[] = [error]
+    if (collection)
+      for (const result of settled)
+        if (result.status === 'rejected' && !failures.includes(result.reason))
+          failures.push(result.reason)
+    const cleanupErrors: unknown[] = []
+    try {
+      await collection?.cleanupProvisional()
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError)
+    }
+    if (created) {
+      try {
+        if (collection) await collection.removeOutput()
+        else {
+          if (compile) {
+            const current = await fs.lstat(resolvedTarget)
+            if (
+              !createdIdentity ||
+              !current.isDirectory() ||
+              current.dev !== createdIdentity.dev ||
+              current.ino !== createdIdentity.ino
+            )
+              throw policy('output root ownership changed')
+          }
+          await fs.rm(resolvedTarget, { recursive: true, force: true })
+        }
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError)
+      }
+    }
+    if (cleanupErrors.length || failures.length > 1)
+      throw new AggregateError(
+        [...failures, ...cleanupErrors],
+        `${asError(error).message}; archive operation or cleanup failed`,
+        { cause: error }
+      )
     throw error
   }
 }
