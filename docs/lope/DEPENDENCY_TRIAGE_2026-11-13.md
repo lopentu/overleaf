@@ -182,7 +182,7 @@ passes in both baseline and proposal; it does not reproduce every upstream
 async-filter issue. Normal compression negotiation, on-headers behavior, route
 controllers and database workflows remain separate checks.
 
-## Actual installed-graph checkpoint
+## First installed-graph checkpoint (source PR6, historical)
 
 Normal Yarn installation regenerated the lock with the three-day age gate,
 checksum checks and all existing source patches retained. Eight locators were
@@ -222,3 +222,44 @@ The standard unified patch stores syntactically required blank context-line
 prefixes. Generic whitespace diagnostics on that patch data are not source
 whitespace errors; changed executable/manifests/docs pass the corresponding
 checks and formatting hooks.
+
+## Compatible parser and transitive increment
+
+The next source increment updates existing root pins for xmldom 0.8.15,
+Zod 4.6.7 and js-yaml 4.3.2. Targeted existing-resolution table updates select
+Axios 1.20.0, follow-redirects 1.16.2, fast-uri 3.1.9, source-map-js 1.2.2,
+grpc-js 1.14.7 and brace-expansion 1.1.21/2.1.7/5.0.12 within their existing
+branches. The body-parser 1.20.9/qs 6.16.0 rebase retains only the four required
+lockdown hooks, with its upstream reader unchanged. See
+[BODY_PARSER_REBASE_2026-11-13.md](BODY_PARSER_REBASE_2026-11-13.md).
+All selected releases meet the unchanged three-day age policy; no blanket
+recursive refresh or advisory ignore was used.
+
+The combined actual lock adds 15 locators and removes 13, with every retained
+checksum unchanged. All 29 unrelated custom patches are byte-identical; only
+the explicitly reviewed body-parser patch is replaced. Its new hash is `d86795`.
+Lock SHA256: `6512637e817f61de3412e052f8e0eb7c3f80fc8fa73e904ee64714cdbd5383f0`.
+
+The actual graph passes all 19 blocking hooks, including both public backend
+and production frontend types and the strict new-fixture scope. The first full
+run caught an error-handler type annotation that incorrectly required app-only
+Request extensions; Express's contextual ErrorRequestHandler type fixes that
+without changing four-argument runtime behavior or weakening a gate. All 60
+parser/security cases pass. Existing suites also pass: 160 validation/lockdown,
+15 notifications and 333 real-time collaboration tests.
+
+Private XML/Zod controls distinguish nine old-version failures from 13 passing
+fixed scenarios. The many-attribute and malformed-recovery timing workloads
+also pass the old version within their generous budgets; they are workload
+coverage, not independently discriminating negative controls. xmldom 0.8's
+well-formed serialization guard is opt-in using the fourth argument, while Zod's
+short-circuit requires explicit collection constraints. Global application
+payload/schema limits and enabled-provider behavior remain separate acceptance.
+
+The actual recursive production-source audit now reports 61 rows: zero critical,
+five high, 46 moderate and ten low. The five highs belong to Nodemailer (three),
+Vite (one, tooling) and systeminformation (one, conditional Windows path).
+Those findings remain visible; no blanket reachability clearance is claimed.
+The prior body-parser rows are absent after the upstream rebase. A separate
+Nodemailer major-version compatibility increment and scoped tool/runtime updates
+remain open, together with required hosted CI and rebuilt-image acceptance.

@@ -97,6 +97,8 @@ repos:
           test/unit/src/LinkedFiles/LinkedFilesController.test.mjs
           test/unit/src/Subscription/CustomerIoPlanHelpers.test.mjs
           test/unit/src/infrastructure/DependencySecurity.test.mjs
+          test/unit/src/infrastructure/BodyParserCompatibility.test.mjs
+          test/unit/src/infrastructure/DependencyParsers.test.mjs
           test/unit/src/infrastructure/EmailCredentials.test.mjs
           test/unit/src/infrastructure/Multer.test.mjs
           --passWithNoTests=false

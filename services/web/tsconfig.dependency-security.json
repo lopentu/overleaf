@@ -14,6 +14,10 @@
   "include": [
     "test/unit/src/infrastructure/DependencySecurity.test.mjs",
     "test/unit/src/infrastructure/fixtures/dependency-security.cjs",
-    "test/unit/src/infrastructure/EmailCredentials.test.mjs"
+    "test/unit/src/infrastructure/EmailCredentials.test.mjs",
+    "test/unit/src/infrastructure/DependencyParsers.test.mjs",
+    "test/unit/src/infrastructure/fixtures/dependency-parsers.cjs",
+    "test/unit/src/infrastructure/BodyParserCompatibility.test.mjs",
+    "test/unit/src/infrastructure/fixtures/body-parser-compatibility.cjs"
   ]
 }
