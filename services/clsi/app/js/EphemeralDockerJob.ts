@@ -7,6 +7,7 @@ import {
   extractOutputArchive,
 } from './BoundedProjectArchive.ts'
 import { collectExecOutput } from './DockerExecOutput.ts'
+import { checkJobOwnership, jobLabels, jobName } from './JobOwnership.ts'
 import {
   compileEnvironment,
   validateRequest,
@@ -20,20 +21,10 @@ import {
 } from './SandboxResources.mjs'
 export type { JobPolicy, JobRequest, JobResult } from './JobRequest.ts'
 
-const OWNER_LABEL = 'org.lope.overleaf.compiler-job'
-const MANAGED_LABEL = 'org.lope.overleaf.managed-by'
-const MANAGER = 'ephemeral-docker-job-v1'
 function isMissing(error: unknown): boolean {
   return (
     error instanceof Error && 'statusCode' in error && error.statusCode === 404
   )
-}
-function checkOwnership(
-  labels: Readonly<Record<string, string>> | undefined,
-  identity: string
-): void {
-  if (labels?.[OWNER_LABEL] !== identity || labels[MANAGED_LABEL] !== MANAGER)
-    throw new Error('Docker resource ownership mismatch; preserved')
 }
 /**
  * Internal CLSI worker adapter. Never instantiate/expose a Docker client in web.
@@ -50,11 +41,13 @@ export class EphemeralDockerJob {
     this.docker = docker
     this.policy = policy
   }
-  async run(request: JobRequest): Promise<JobResult> {
+  async run(
+    request: JobRequest,
+    identity: string = randomUUID()
+  ): Promise<JobResult> {
+    const name = jobName(identity)
     await validateRequest(request, this.policy)
-    const identity = randomUUID()
-    const name = `lope-clsi-job-${identity}`
-    const labels = { [OWNER_LABEL]: identity, [MANAGED_LABEL]: MANAGER }
+    const labels = jobLabels(identity)
     const controller = new AbortController()
     const cancel = (): void => {
       controller.abort(request.signal?.reason)
@@ -88,7 +81,7 @@ export class EphemeralDockerJob {
         },
       })
       signal.throwIfAborted()
-      checkOwnership((await volume.inspect()).Labels, identity)
+      checkJobOwnership((await volume.inspect()).Labels, identity)
       signal.throwIfAborted()
       const options: Docker.ContainerCreateOptions = {
         name,
@@ -131,7 +124,7 @@ export class EphemeralDockerJob {
       containerAttempted = true
       container = await this.docker.createContainer(options)
       signal.throwIfAborted()
-      checkOwnership((await container.inspect()).Config.Labels, identity)
+      checkJobOwnership((await container.inspect()).Config.Labels, identity)
       signal.throwIfAborted()
       await container.start()
       signal.throwIfAborted()
@@ -224,7 +217,7 @@ export class EphemeralDockerJob {
       request.signal?.removeEventListener('abort', cancel)
       if (containerAttempted) {
         try {
-          checkOwnership((await container.inspect()).Config.Labels, identity)
+          checkJobOwnership((await container.inspect()).Config.Labels, identity)
           if (paused) {
             try {
               await container.unpause()
@@ -241,7 +234,7 @@ export class EphemeralDockerJob {
       // throws. Busy/error responses are explicit incomplete-cleanup failures.
       if (volumeAttempted) {
         try {
-          checkOwnership((await volume.inspect()).Labels, identity)
+          checkJobOwnership((await volume.inspect()).Labels, identity)
           await volume.remove()
         } catch (error) {
           if (!isMissing(error)) cleanupErrors.push(error)

@@ -10,6 +10,8 @@ export type Phase =
   | 'upload'
   | 'exec'
   | 'collect'
+  | 'remove-container'
+  | 'remove-volume'
 export class DockerApiFixture {
   readonly events: string[] = []
   readonly failures = new Set<string>()
@@ -27,6 +29,8 @@ export class DockerApiFixture {
   execResponse: ServerResponse | undefined
   holdExec = false
   holdCollect = false
+  lateVolumeDelayMs: number | undefined
+  private lateVolumeTimer: ReturnType<typeof setTimeout> | undefined
   readonly server = http.createServer((request, response) => {
     void this.respond(request, response).catch((error: unknown) => {
       response.destroy(
@@ -47,6 +51,7 @@ export class DockerApiFixture {
     })
   }
   async close(): Promise<void> {
+    if (this.lateVolumeTimer) clearTimeout(this.lateVolumeTimer)
     this.server.closeAllConnections()
     await new Promise<void>(resolve =>
       this.server.close(() => {
@@ -75,11 +80,43 @@ export class DockerApiFixture {
       response.writeHead(status, { 'content-type': 'application/json' })
       response.end(JSON.stringify(value))
     }
-    if (method === 'POST' && route === '/volumes/create') {
+    if (method === 'GET' && route === '/containers/json') {
+      json(
+        200,
+        this.ownedContainer
+          ? [
+              {
+                Id: 'job-container-id',
+                Names: [`/${this.containerConfig?.name ?? ''}`],
+                Labels: this.containerConfig?.Labels,
+              },
+            ]
+          : []
+      )
+    } else if (method === 'GET' && route === '/volumes') {
+      json(200, {
+        Volumes: this.ownedVolume
+          ? [
+              {
+                Name: this.volumeConfig?.Name,
+                Labels: this.volumeConfig?.Labels,
+              },
+            ]
+          : [],
+      })
+    } else if (method === 'POST' && route === '/volumes/create') {
       this.volumeConfig = JSON.parse(
         (await this.body(request)).toString()
       ) as Docker.VolumeCreateOptions
       this.events.push('volume')
+      if (this.lateVolumeDelayMs !== undefined) {
+        this.lateVolumeTimer = setTimeout(() => {
+          this.ownedVolume = true
+          this.events.push('late-volume')
+        }, this.lateVolumeDelayMs)
+        response.destroy()
+        return
+      }
       await this.holds.get('volume')
       this.ownedVolume = true
       json(201, { Name: this.volumeConfig.Name })
@@ -94,6 +131,7 @@ export class DockerApiFixture {
       })
     } else if (method === 'DELETE' && route.startsWith('/volumes/')) {
       this.events.push('remove-volume')
+      await this.holds.get('remove-volume')
       if (this.failures.has('remove-volume')) {
         json(500, { message: 'volume busy' })
         return
@@ -123,6 +161,7 @@ export class DockerApiFixture {
       }
       json(200, {
         Id: 'job-container-id',
+        Name: `/${this.containerConfig?.name ?? ''}`,
         Config: {
           Labels:
             this.labelsMismatch || this.containerLabelsMismatch
@@ -132,6 +171,7 @@ export class DockerApiFixture {
       })
     } else if (method === 'DELETE' && route.startsWith('/containers/')) {
       this.events.push('remove-container')
+      await this.holds.get('remove-container')
       if (this.failures.has('remove-container')) {
         json(500, { message: 'remove failure' })
         return

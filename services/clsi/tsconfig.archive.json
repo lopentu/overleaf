@@ -29,6 +29,16 @@
     "app/js/CompileInputSnapshot.ts",
     "test/unit/js/CompileInputSnapshot.test.ts",
     "test/unit/js/InputProducerLifetime.native.ts",
-    "test/unit/js/InputProducerLifetime.test.ts"
+    "test/unit/js/InputProducerLifetime.test.ts",
+    "app/js/CompilerAdmission.ts",
+    "app/js/JobOwnership.ts",
+    "app/js/PrivateUnixSocketPath.ts",
+    "app/js/WorkflowAdmissionHttp.ts",
+    "test/unit/js/CompilerAdmission.test.ts",
+    "test/unit/js/JobOwnership.test.ts",
+    "test/unit/js/OwnershipApiFixture.ts",
+    "test/unit/js/CompilerAdmissionIntegration.test.ts",
+    "test/unit/js/WorkflowLease.test.ts",
+    "test/unit/js/WorkflowHttp.test.ts"
   ]
 }
