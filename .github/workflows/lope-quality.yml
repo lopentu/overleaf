@@ -29,3 +29,8 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           .lope-tools/bin/pre-commit run --from-ref "$BASE_SHA" --to-ref "$HEAD_SHA" --show-diff-on-failure
+      - name: Fresh production dependency audit (high and critical)
+        run: |
+          test "$(corepack yarn config get npmAuditExcludePackages --json)" = '[]'
+          test "$(corepack yarn config get npmAuditIgnoreAdvisories --json)" = '[]'
+          corepack yarn npm audit --all --recursive --environment production --severity high --json --no-deprecations
