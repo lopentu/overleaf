@@ -5,6 +5,9 @@ import type {
   CompileArchiveSummary,
 } from './BoundedProjectArchive.ts'
 
+/** Preserve the legacy CLSI ten-minute request maximum across all job modes. */
+export const MAX_COMPILE_TIMEOUT_MS = 600_000
+
 export interface JobPolicy {
   trustedStagingRoot: string
   allowedImages: readonly string[]
@@ -68,7 +71,7 @@ async function validateCommonRequest(
   if (
     !Number.isSafeInteger(request.timeoutMs) ||
     request.timeoutMs <= 0 ||
-    request.timeoutMs > 300_000
+    request.timeoutMs > MAX_COMPILE_TIMEOUT_MS
   )
     throw new Error('Invalid compile deadline')
   if (

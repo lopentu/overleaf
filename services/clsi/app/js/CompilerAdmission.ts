@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { MAX_COMPILE_TIMEOUT_MS } from './JobRequest.ts'
 import type {
   JobRequest,
   JobResult,
@@ -283,7 +284,7 @@ function snapshotCommon(
     request.argv.reduce((n, arg) => n + Buffer.byteLength(arg), 0) > 65_536 ||
     !Number.isSafeInteger(request.timeoutMs) ||
     request.timeoutMs <= 0 ||
-    request.timeoutMs > 300_000
+    request.timeoutMs > MAX_COMPILE_TIMEOUT_MS
   )
     throw new AdmissionError('INVALID_REQUEST')
   const environment = Object.entries(request.environment ?? {})

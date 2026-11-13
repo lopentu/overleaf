@@ -91,6 +91,23 @@ describe('bounded compiler admission', () => {
   async function turn(): Promise<void> {
     await new Promise<void>(resolve => setImmediate(resolve))
   }
+  it('admits the legacy ten-minute compile deadline without shortening it', async () => {
+    const input = { ...request('legacy-deadline'), timeoutMs: 600_000 }
+    const result = submit('legacy-deadline', input)
+    expect(executor.calls).toHaveLength(1)
+    expect(executor.calls[0]?.request.timeoutMs).toBe(600_000)
+    executor.release(0)
+    expect(await result).toMatchObject({ exitCode: 0 })
+  })
+  it('rejects a compile deadline above ten minutes before admission or executor work', async () => {
+    const result = await submit('too-long', {
+      ...request('too-long'),
+      timeoutMs: 600_001,
+    })
+    expect(result).toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(executor.calls).toHaveLength(0)
+    expect(manager.status()).toMatchObject({ active: 0, queued: 0 })
+  })
   it('admits exactly two, queues eight metadata requests, and rejects the eleventh without invoking it', async () => {
     for (let i = 0; i < 10; i++) submit(String(i))
     expect(executor.calls).toHaveLength(2)
