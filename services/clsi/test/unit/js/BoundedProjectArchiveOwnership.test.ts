@@ -12,14 +12,31 @@ type FileObserver = {
   closeCalls: number
   closeErrors: unknown[]
   closed: Promise<void>
+  written: Promise<void>
 }
 function observeClose(file: FileHandle): FileObserver {
   const closed = Promise.withResolvers<undefined>()
+  const written = Promise.withResolvers<undefined>()
   const observer: FileObserver = {
     closeCalls: 0,
     closeErrors: [],
     closed: closed.promise,
+    written: written.promise,
   }
+  const write = file.write.bind(file)
+  Object.defineProperty(file, 'write', {
+    configurable: true,
+    value: async (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number | null
+    ) => {
+      const result = await write(buffer, offset, length, position)
+      if (result.bytesWritten > 0) written.resolve(undefined)
+      return result
+    },
+  })
   const close = file.close.bind(file)
   file.close = async () => {
     observer.closeCalls++
@@ -58,21 +75,22 @@ async function fixture(
     await fs.rm(base, { recursive: true, force: true })
   }
 }
-async function waitForBytes(filename: string): Promise<void> {
-  for (let attempt = 0; attempt < 1000; attempt++) {
-    try {
-      if ((await fs.stat(filename)).size > 0) return
-    } catch (error) {
-      if (
-        !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      )
-        throw error
-    }
-    await new Promise<void>(resolve => {
-      setImmediate(resolve)
-    })
+async function waitForBytes(
+  filename: string,
+  observed: Promise<FileObserver>
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('Output did not receive any bytes within 2 seconds'))
+    }, 2000)
+  })
+  try {
+    await Promise.race([observed.then(owner => owner.written), deadline])
+    assert.ok((await fs.stat(filename)).size > 0)
+  } finally {
+    clearTimeout(timer)
   }
-  throw new Error('Output did not receive any bytes')
 }
 async function assertClosedOnce(
   observed: Promise<FileObserver>
@@ -130,7 +148,7 @@ for (const failure of ['upstream error', 'abort'] as const) {
       })
       entry.on('error', () => {})
       entry.write(Buffer.alloc(64 * 1024))
-      await waitForBytes(path.join(output, 'file'))
+      await waitForBytes(path.join(output, 'file'), observed)
       if (failure === 'abort') controller.abort()
       else pack.destroy(new Error('sentinel output upstream failed'))
       await rejected
