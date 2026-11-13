@@ -45,6 +45,13 @@ RUN --mount=type=cache,target=/root/.cache \
 # -----------------------------------------------------
 ENV NODE_OPTIONS="--require /overleaf/.pnp.cjs --import /overleaf/.pnp.register.mjs"
 
+# The image contains public code/dependencies, never runtime secrets or state.
+# COPY parents and dependency installers can create root-only directories.
+# Keep the complete runtime readable, immutable to non-root users, and tested.
+RUN chmod -R a+rX,go-w /overleaf \
+    && runuser -u www-data -- /bin/sh -c 'cd /overleaf/services/web && node -e "require(\"@overleaf/settings\"); require(\"bcrypt\")"'
+
+
 # Copy runit service startup scripts to its location
 # --------------------------------------------------
 ADD server-ce/runit /etc/service
