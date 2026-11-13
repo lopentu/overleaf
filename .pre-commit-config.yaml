@@ -59,6 +59,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: clsi-archive-types
+        name: Strict types for CLSI bounded archive transfer
+        entry: corepack yarn workspace @overleaf/clsi types:archive
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: eslint
         name: Lint changed JavaScript and TypeScript (zero warnings)
         entry: corepack yarn exec eslint --max-warnings 0
@@ -70,8 +76,8 @@ repos:
         language: system
         files: '\.(cjs|mjs|js|jsx|ts|tsx|mts|json|ya?ml|md)$'
       - id: compile-runner-regressions
-        name: Compile runner isolation regressions
-        entry: corepack yarn workspace @overleaf/clsi exec vitest run --config vitest.config.unit.cjs test/unit/js/DockerRunner.test.js --passWithNoTests=false
+        name: Compile runner and archive isolation regressions
+        entry: corepack yarn workspace @overleaf/clsi exec vitest run --config vitest.config.unit.cjs test/unit/js/DockerRunner.test.js test/unit/js/BoundedProjectArchive.test.ts test/unit/js/BoundedProjectArchiveOwnership.test.ts --passWithNoTests=false
         language: system
         pass_filenames: false
         always_run: true

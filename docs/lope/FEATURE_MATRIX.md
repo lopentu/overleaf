@@ -4,18 +4,18 @@ CE+ is the development base, not a claim of complete Overleaf.com parity.
 Source presence, unit tests, native acceptance and production deployment are
 separate results. The current live service remains stock CE 6.3.2.
 
-| Workflow                                     | Candidate evidence                                                                     | Still required                                                                                                                            |
-| -------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Source editing, collaboration and PDF output | Existing upstream runtime; stock deployment passed real browser workflow               | Repeat on the CE+ candidate with representative projects, engines, fonts and packages                                                     |
-| Threaded comments and tracked changes        | CE+ module present; reviewer deletion defect repaired and regression-tested            | Real multi-user concurrent edits, replies, resolve/reopen, accept/reject, reconnect and permission matrix                                 |
-| Sandboxed compilation                        | CE+ runner with bounded CPU/PID/swap and temporary home defaults; 67 runner tests pass | Native adversarial isolation, CPU/PID/scratch limits, cleanup and a reviewed compiler privilege boundary                                  |
-| Git and GitHub synchronization               | CE+ implementations present; public types and GitHub state regressions repaired        | Authenticated push/pull, conflicts, concurrency, credential revocation and failure recovery                                               |
-| Zotero/reference workflows                   | Collection/reference components present; concrete public type repairs                  | Authenticated library/collection round-trip, citation-key preservation and failure handling                                               |
-| Visual editing                               | Bibliography editing exists; full TeX visual-editor parity is unverified               | Inventory missing TeX visual provider and implement/test an independent compatible workflow                                               |
-| Templates and administration                 | Public contracts and focused action/settings regressions repaired                      | Browser/API round-trips, permissions, publishing and upload compatibility                                                                 |
-| Hosted project migration                     | No hosted project accepted as a migration fixture yet                                  | Preserve source/assets/settings/references, authors, comments, tracked changes, history and access mapping; verify originals before/after |
-| Cloud/identity integrations                  | Source/account mechanisms require per-service configuration                            | Provider registration and private credential custody; hosted account credentials are not automatically transferable                       |
-| Recovery and handoff                         | Stock service has accepted cold backup/isolated restore and fleet monitoring           | Candidate image build, state migration, consistent backup and isolated functional restore before promotion                                |
+| Workflow                                     | Candidate evidence                                                                             | Still required                                                                                                                            |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Source editing, collaboration and PDF output | Stock workflow plus private CE+v6 synthetic two-user edit/reload/PDF passed                    | Representative real projects, engines, fonts and packages; final isolated worker workflow                                                 |
+| Threaded comments and tracked changes        | Private CE+v6 comments/replies/resolve/reopen, role denial, accept/reject and reconnect passed | Repeat against the final resource-accepted sandboxed deployment and authorized real projects                                              |
+| Sandboxed compilation                        | CE+ runner with bounded CPU/PID/swap and temporary home defaults; 67 runner tests pass         | Native adversarial isolation, CPU/PID/scratch limits, cleanup and a reviewed compiler privilege boundary                                  |
+| Git and GitHub synchronization               | CE+ implementations present; public types and GitHub state regressions repaired                | Authenticated push/pull, conflicts, concurrency, credential revocation and failure recovery                                               |
+| Zotero/reference workflows                   | Collection/reference components present; concrete public type repairs                          | Authenticated library/collection round-trip, citation-key preservation and failure handling                                               |
+| Visual editing                               | Bibliography editing exists; full TeX visual-editor parity is unverified                       | Inventory missing TeX visual provider and implement/test an independent compatible workflow                                               |
+| Templates and administration                 | Public contracts and focused action/settings regressions repaired                              | Browser/API round-trips, permissions, publishing and upload compatibility                                                                 |
+| Hosted project migration                     | No hosted project accepted as a migration fixture yet                                          | Preserve source/assets/settings/references, authors, comments, tracked changes, history and access mapping; verify originals before/after |
+| Cloud/identity integrations                  | Source/account mechanisms require per-service configuration                                    | Provider registration and private credential custody; hosted account credentials are not automatically transferable                       |
+| Recovery and handoff                         | Stock service has accepted cold backup/isolated restore and fleet monitoring                   | Candidate image build, state migration, consistent backup and isolated functional restore before promotion                                |
 
 A hosted source ZIP contains source files, not proof of transferred review
 metadata or full history. Migration acceptance must use a named authorized
@@ -27,7 +27,8 @@ source project and compare preserved records. See the official
 The all-project admin fallback now uses a dedicated `/admin/projects` JSON
 endpoint protected by the existing site-admin middleware. Regression tests cover
 missing/present prefetch, owner-specific requests, query scope and error
-forwarding. Native authenticated authorization/retry acceptance remains open.
+forwarding. Private v6 authenticated admin fallback and non-admin denial passed. Production
+promotion and other administration/template workflows remain separate gates.
 
 The sandbox runner defaults to a read-only root, 1 CPU, 256 processes, 1 GiB
 memory with swap capped to the same amount, and bounded temporary/home tmpfs.
@@ -51,3 +52,20 @@ a deliberate memory overrun terminated with OOM/exit 137. Probe containers
 were removed by exact ID after verification. This is rootful controller
 evidence, not rootless-worker, timeout/cleanup or per-project disk-quota
 acceptance. The running lab application remains stock CE.
+
+## Private image and promotion checkpoint
+
+The v6 image built and passed unprivileged module loading and synthetic review
+workflows. Its test runtime was removed by exact identity. Requested Compose
+no-swap settings did not match effective cgroups in that run; resource acceptance
+remains blocked despite zero observed swap usage. Do not equate HostConfig or a
+passing minimal probe with the accepted whole deployment.
+
+The focused bounded archive unit has strict types and active-I/O cancellation
+regressions, but it is not the production runner. Stock migration/history files
+match the candidate; an additional active-project Zotero migration has a no-op
+rollback, so compatibility/rollback needs separate fresh stock restores.
+Production-source dependency audit findings also need patch-aware triage before
+promotion; the existing body-parser pipeline backport must be preserved and
+regression-tested. No broad audit ignore is justified. Private evidence and the
+current operational handoff are maintained in the canonical server-utils repo.
