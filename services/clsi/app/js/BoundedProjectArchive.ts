@@ -27,7 +27,7 @@ export interface ArchiveSummary {
 }
 
 const MiB = 1024 * 1024
-const INPUT_LIMITS: Readonly<ArchiveLimits> = Object.freeze({
+export const INPUT_LIMITS: Readonly<ArchiveLimits> = Object.freeze({
   maxEntries: 4096,
   maxFileBytes: 50 * MiB,
   maxTotalBytes: 100 * MiB,
@@ -156,12 +156,28 @@ async function appendDirectory(pack: Pack, name: string): Promise<void> {
  * Stream a trusted private CLSI input directory to Docker putArchive('/compile').
  * The caller must prevent concurrent changes to the staging tree and its parents.
  * No host path, ownership, executable bit, link, or special file is preserved.
- * Consume/destroy the returned stream; its errors are the producer's result.
+ * Compatibility stream API. Consumers that release source ownership on return
+ * must use createInputArchiveBundle and join completion after destroying stream.
  */
 export function createInputArchive(
   root: string,
   options: ArchiveOptions = {}
 ): Readable {
+  return createInputArchiveBundle(root, options).stream
+}
+
+export interface InputArchiveBundle {
+  readonly stream: Readable
+  /** Settles after traversal, pending source I/O and owned file closure. Stream
+   * close alone does not establish this boundary. Always observe/join this promise
+   * before releasing source ownership, including after consumer failure/abort. */
+  readonly completion: Promise<void>
+}
+
+export function createInputArchiveBundle(
+  root: string,
+  options: ArchiveOptions = {}
+): InputArchiveBundle {
   const pack = tar.pack()
   const controller = new AbortController()
   const abort = (): void => {
@@ -211,6 +227,7 @@ export function createInputArchive(
           childPath,
           constants.O_RDONLY | constants.O_NOFOLLOW
         )
+        let fileFailure: { error: unknown } | undefined
         try {
           const opened = await file.stat()
           if (
@@ -243,22 +260,39 @@ export function createInputArchive(
               signal: controller.signal,
             }
           )
-        } finally {
-          await file.close()
+        } catch (error) {
+          fileFailure = { error }
         }
+        let closeFailure: { error: unknown } | undefined
+        try {
+          await file.close()
+        } catch (error) {
+          closeFailure = { error }
+        }
+        if (closeFailure !== undefined) {
+          if (fileFailure !== undefined)
+            throw new AggregateError(
+              [fileFailure.error, closeFailure.error],
+              'Input archive read and source close failed',
+              { cause: fileFailure.error }
+            )
+          throw closeFailure.error
+        }
+        if (fileFailure !== undefined) throw fileFailure.error
       }
     }
     await visit('')
     controller.signal.throwIfAborted()
     pack.finalize()
   }
-  // Start after the caller can attach a stream consumer and error listener.
-  queueMicrotask(() => {
-    void produce().catch((error: unknown) => {
-      pack.destroy(asError(error))
-    })
+  // Start after the caller can attach a consumer. Observe rejection immediately
+  // for legacy stream-only consumers; the original promise still rejects for
+  // lifetime-aware callers, including failures after the stream has closed.
+  const completion = Promise.resolve().then(produce)
+  void completion.catch((error: unknown) => {
+    pack.destroy(asError(error))
   })
-  return pack
+  return Object.freeze({ stream: pack, completion })
 }
 
 /**

@@ -17,4 +17,7 @@ assert.equal(
 )
 const { EphemeralDockerJob } = await import('../app/js/EphemeralDockerJob.ts')
 assert.equal(typeof EphemeralDockerJob, 'function')
+const { withCompileInputSnapshot } =
+  await import('../app/js/CompileInputSnapshot.ts')
+assert.equal(typeof withCompileInputSnapshot, 'function')
 console.log('Node24.18.1 strip-only native import PASS')
