@@ -82,3 +82,12 @@ checkouts. Node modules are excluded from package archives, even when an
 inherited ignore file lacks its final newline. This prevents concurrent prepares from corrupting the shared legacy
 `~/.cache/yarn/v6` cache. The original failed post-merge run is retained; cache
 isolation does not waive immutable lockfile or checksum verification.
+
+## Unprivileged image readability
+
+Production code and dependencies in `/overleaf` contain no runtime secrets or
+state. The image build normalizes their read/traversal permissions and removes
+group/other write access, then loads application settings and the native bcrypt
+module as `www-data` under the actual PnP configuration. This build step is
+blocking: a root-only `.yarn` parent must fail the image build rather than first
+appear during service startup. Runtime secrets/state remain external mounts.
