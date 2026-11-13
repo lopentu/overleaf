@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "checkJs": false,
+    "erasableSyntaxOnly": true
+  },
+  "include": [
+    "app/js/LockManager.js",
+    "test/unit/js/LockManagerOwnership.test.ts"
+  ]
+}

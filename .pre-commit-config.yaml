@@ -54,7 +54,7 @@ repos:
         pass_filenames: false
         always_run: true
       - id: clsi-types
-        name: CLSI upstream declaration and TypeScript check
+        name: CLSI upstream declarations and strict lock ownership types
         entry: corepack yarn workspace @overleaf/clsi types:check
         language: system
         pass_filenames: false
@@ -82,7 +82,7 @@ repos:
         language: system
         files: '\.(cjs|mjs|js|jsx|ts|tsx|mts|json|ya?ml|md)$'
       - id: compile-runner-regressions
-        name: Compile runner, archive and ephemeral job regressions
+        name: Compile runner, archive, job and lock ownership regressions
         entry: corepack yarn workspace @overleaf/clsi test:compiler-boundary
         language: system
         pass_filenames: false

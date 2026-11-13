@@ -16,6 +16,10 @@ import OutputCacheManager from './app/js/OutputCacheManager.js'
 
 import express from 'express'
 
+import {
+  installUnixListenerShutdown,
+  startClsiListeners,
+} from './app/js/ClsiListener.ts'
 import net from 'node:net'
 import os from 'node:os'
 import ConversionController from './app/js/ConversionController.js'
@@ -311,30 +315,37 @@ if (import.meta.main) {
     )
   }
 
-  app.listen(port, host, error => {
-    if (error) {
-      logger.fatal({ error }, `Error starting CLSI on ${host}:${port}`)
-    } else {
-      logger.debug(`CLSI starting up, listening on ${host}:${port}`)
-      if (Settings.smokeTest) {
-        runSmokeTest()
+  void startClsiListeners({
+    app,
+    loadHttpApp: loadHttpServer,
+    loadTcpServer,
+    host,
+    port,
+    loadTcpPort,
+    loadHttpPort,
+    unixSocket: Settings.internal.clsi.unixSocket,
+  }).then(
+    listeners => {
+      if (Settings.internal.clsi.unixSocket !== undefined) {
+        installUnixListenerShutdown(listeners, error =>
+          logger.error({ err: error }, 'CLSI Unix listener shutdown failed')
+        )
+        logger.debug('CLSI starting up on private Unix socket')
+      } else {
+        logger.debug(`CLSI starting up, listening on ${host}:${port}`)
+        logger.debug(`Load tcp agent listening on load port ${loadTcpPort}`)
+        logger.debug(`Load http agent listening on load port ${loadHttpPort}`)
+      }
+      if (Settings.smokeTest) runSmokeTest()
+    },
+    error => {
+      try {
+        logger.fatal({ err: error }, 'CLSI listener startup failed')
+      } finally {
+        process.exit(1)
       }
     }
-  })
-
-  loadTcpServer.listen(loadTcpPort, host, function (error) {
-    if (error != null) {
-      throw error
-    }
-    logger.debug(`Load tcp agent listening on load port ${loadTcpPort}`)
-  })
-
-  loadHttpServer.listen(loadHttpPort, host, function (error) {
-    if (error != null) {
-      throw error
-    }
-    logger.debug(`Load http agent listening on load port ${loadHttpPort}`)
-  })
+  )
 }
 
 export default app
