@@ -1,3 +1,4 @@
+import { BUILD_REGEX } from './CompileBuildId.ts'
 import { callbackify, promisify } from 'node:util'
 import async from 'async'
 import fs from 'node:fs'
@@ -55,7 +56,9 @@ async function fillCache() {
   } finally {
     try {
       await handle.close()
-    } catch (e) {}
+    } catch (e) {
+      // Removal is best effort after the primary operation has already failed.
+    }
   }
 }
 
@@ -105,7 +108,7 @@ export default OutputCacheManager = {
   CACHE_SUBDIR: 'generated-files',
   ARCHIVE_SUBDIR: 'archived-logs',
   // build id is HEXDATE-HEXRANDOM from Date.now() and RandomBytes
-  BUILD_REGEX: /^[0-9a-f]+-[0-9a-f]+$/,
+  BUILD_REGEX,
   CONTENT_REGEX: /^[0-9a-f]+-[0-9a-f]+$/,
   CACHE_LIMIT: 2, // maximum number of cache directories
   CACHE_AGE: 90 * 60 * 1000, // up to 90 minutes old

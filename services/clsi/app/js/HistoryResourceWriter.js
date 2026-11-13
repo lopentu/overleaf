@@ -1,4 +1,5 @@
 // @ts-check
+import { historySourceBlobUrl } from './SourceDownloadUrls.ts'
 import logger from '@overleaf/logger'
 import zlib from 'node:zlib'
 import Settings from '@overleaf/settings'
@@ -828,18 +829,17 @@ class BlobStore extends BlobStoreBase {
    * @return {URL}
    */
   getBlobURL(hash) {
-    const u = new URL(Settings.apis.filestore.url)
-    if (this.#filestoreBlobPrefix) {
-      u.pathname = `${this.#filestoreBlobPrefix}/${hash}`
-    } else if (this.#clsiPerfVariant) {
-      u.host = Settings.apis.clsiPerf.host
-      u.pathname = `/variant/${this.#clsiPerfVariant}/hash/${hash}`
-    } else if (this.#globalBlobs.includes(hash)) {
-      u.pathname = `/history/global/hash/${hash}`
-    } else {
-      u.pathname = `/history/project/${this.#historyId}/hash/${hash}`
-    }
-    return u
+    return historySourceBlobUrl(
+      Settings.apis.filestore.url,
+      Settings.apis.clsiPerf.host,
+      hash,
+      {
+        historyId: this.#historyId,
+        globalBlobs: this.#globalBlobs,
+        filestoreBlobPrefix: this.#filestoreBlobPrefix,
+        clsiPerfVariant: this.#clsiPerfVariant,
+      }
+    )
   }
 
   /**

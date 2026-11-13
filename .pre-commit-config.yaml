@@ -54,7 +54,7 @@ repos:
         pass_filenames: false
         always_run: true
       - id: clsi-types
-        name: CLSI upstream declarations and strict lock ownership types
+        name: CLSI declarations, lock ownership and fresh source types
         entry: corepack yarn workspace @overleaf/clsi types:check
         language: system
         pass_filenames: false
