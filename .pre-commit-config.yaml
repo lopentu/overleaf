@@ -25,7 +25,7 @@ repos:
         always_run: true
       - id: immutable-dependencies
         name: CE+ dependency graph is immutable
-        entry: env YARN_CACHE_FOLDER=.yarn/cache corepack yarn install --immutable --mode=skip-build
+        entry: env npm_config_cache_folder=.yarn/cache corepack yarn install --immutable --mode=skip-build
         language: system
         pass_filenames: false
         always_run: true

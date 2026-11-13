@@ -74,8 +74,9 @@ application, compiler isolation, migration and restore acceptance.
 
 ## Git dependency bootstrap caches
 
-The immutable-install hook and image recipe set `YARN_CACHE_FOLDER=.yarn/cache`.
-Yarn 4 still uses the repository-local cache. Git dependencies that bootstrap
+The immutable-install hook and image recipe set `npm_config_cache_folder=.yarn/cache`.
+Yarn 4 ignores this legacy compatibility setting and keeps the same repository-local
+cache even when invoked from nested workspaces. Git dependencies that bootstrap
 with Yarn Classic resolve that relative path inside their own temporary
 checkouts, preventing concurrent prepares from corrupting the shared legacy
 `~/.cache/yarn/v6` cache. The original failed post-merge run is retained; cache
