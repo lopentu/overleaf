@@ -33,9 +33,16 @@ Do not substitute that result for a successful production image build.
   backend scope except Python browser-worker tests, which require DOM/JSX and
   are not backend code. Browser runtime is covered by frontend production types.
 - CLSI: original declaration/TypeScript check, plus the real DockerRunner unit
-  suite. The bounded archive transfer and ownership tests use a separate strict
-  `tsconfig.archive.json` gate, including `noUncheckedIndexedAccess` and
-  `exactOptionalPropertyTypes`. The original configuration leaves ordinary unannotated JS unchecked;
+  suite. The archive and ephemeral-job modules/tests use a separate strict
+  `tsconfig.archive.json` gate, including `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, checked JavaScript and `erasableSyntaxOnly`.
+  The existing compiler regression hook first imports the real job module with
+  pinned Node 24.18.1, without type transformation, then runs all 166 selected
+  runner/archive/job/native tests. Native tests cover the actual repository paths
+  and child compiler PATH; Docker API fixtures do not establish native container
+  acceptance. Dockerode uses its real pinned `@types/dockerode` dependency.
+  Disposable job containers explicitly disable Docker logging, independently
+  from the host daemon's default log driver; their bounded exec output is separate. The original configuration leaves ordinary unannotated JS unchecked;
   this is not a claim of full JavaScript type coverage.
 - New frontend regression tests also have their own strict TypeScript gate,
   `services/web/tsconfig.lope-tests.json`.

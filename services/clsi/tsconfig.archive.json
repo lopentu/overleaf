@@ -4,11 +4,23 @@
     "strict": true,
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true
+    "exactOptionalPropertyTypes": true,
+    "checkJs": true,
+    "erasableSyntaxOnly": true
   },
   "include": [
+    "app/js/ArchiveFileIo.ts",
     "app/js/BoundedProjectArchive.ts",
+    "app/js/DockerExecOutput.ts",
+    "app/js/EphemeralDockerJob.ts",
+    "app/js/JobRequest.ts",
+    "app/js/SandboxResources.mjs",
+    "scripts/check-ephemeral-job-native.mjs",
     "test/unit/js/BoundedProjectArchive.test.ts",
-    "test/unit/js/BoundedProjectArchiveOwnership.test.ts"
+    "test/unit/js/BoundedProjectArchiveOwnership.test.ts",
+    "test/unit/js/DockerApiFixture.ts",
+    "test/unit/js/DockerExecOutput.test.ts",
+    "test/unit/js/EphemeralDockerJob.test.ts",
+    "test/unit/js/NativeRuntime.test.ts"
   ]
 }
