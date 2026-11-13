@@ -68,8 +68,8 @@ function getClient() {
       'Email transport and/or parameters not defined. No emails will be sent.'
     )
     client = {
-      async sendMail(options) {
-        logger.info({ options }, 'Would send email if enabled.')
+      async sendMail() {
+        logger.info('Email transport disabled; message not sent.')
       },
     }
   }
