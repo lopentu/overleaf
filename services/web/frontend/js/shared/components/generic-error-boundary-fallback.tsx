@@ -1,13 +1,13 @@
-import { FC } from 'react'
+import type { FallbackProps } from 'react-error-boundary'
 import { useTranslation } from 'react-i18next'
 import { useLocation } from '../hooks/use-location'
 import { DefaultMessage } from './default-message'
 import MaterialIcon from './material-icon'
 import OLButton from '@/shared/components/ol/ol-button'
 
-export const GenericErrorBoundaryFallback: FC<React.PropsWithChildren> = ({
+export function GenericErrorBoundaryFallback({
   children,
-}) => {
+}: React.PropsWithChildren<Partial<FallbackProps>>) {
   const { t } = useTranslation()
   const { reload: handleClick } = useLocation()
 

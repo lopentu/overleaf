@@ -1,9 +1,10 @@
 import { memo } from 'react'
+import { TemplateListEntry } from '../../../../../types/template'
 import { cleanHtml } from '../../../../../app/src/CleanHtml.mjs'
 
-function TemplateGalleryEntry({ template }) {
+function TemplateGalleryEntry({ template }: { template: TemplateListEntry }) {
   return (
-    <div className={"gallery-thumbnail col-12 col-md-6 col-lg-4"}>
+    <div className={'gallery-thumbnail col-12 col-md-6 col-lg-4'}>
       <a href={`/template/${template.id}`} className="thumbnail-link">
         <div className="thumbnail">
           <img
@@ -17,10 +18,19 @@ function TemplateGalleryEntry({ template }) {
         </span>
       </a>
       <div className="caption">
-        <p className="caption-description" dangerouslySetInnerHTML={{ __html: cleanHtml(template.description, 'plainText') }} />
+        <p
+          className="caption-description"
+          dangerouslySetInnerHTML={{
+            __html: cleanHtml(template.description, 'plainText'),
+          }}
+        />
       </div>
       <div className="author-name">
-        <div dangerouslySetInnerHTML={{ __html: cleanHtml(template.author, 'plainText') }} />
+        <div
+          dangerouslySetInnerHTML={{
+            __html: cleanHtml(template.author, 'plainText'),
+          }}
+        />
       </div>
     </div>
   )

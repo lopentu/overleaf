@@ -25,7 +25,7 @@ import {
 } from '../../../types/project/dashboard/notification'
 import { Survey } from '../../../types/project/dashboard/survey'
 import { GetProjectsResponseBody } from '../../../types/project/dashboard/api'
-import { GetTemplatesResponseBody } from '../../../types/template/dashboard/api'
+import { GetTemplatesResponseBody } from '../../../modules/template-gallery/frontend/js/features/template-gallery/types/api'
 import { Tag } from '../../../app/src/Features/Tags/types'
 import { Institution } from '../../../types/institution'
 import {
@@ -39,7 +39,6 @@ import { SplitTestInfo } from '../../../types/split-test'
 import { ValidationStatus } from '../../../types/group-management/validation'
 import { ManagedInstitution } from '../../../types/subscription/dashboard/managed-institution'
 import { OnboardingFormData } from '../../../types/onboarding'
-import { GroupSSOTestResult } from '../../../modules/group-settings/frontend/js/utils/types'
 import {
   AccessToken,
   InstitutionLink,
@@ -63,16 +62,24 @@ import { SubscriptionChangePreview } from '../../../types/subscription/subscript
 import { SubscriptionCreationPreview } from '../../../types/subscription/subscription-creation-preview'
 import { DefaultNavbarMetadata } from '@/shared/components/types/default-navbar-metadata'
 import { FooterMetadata } from '@/shared/components/types/footer-metadata'
-import type { ScriptLogType } from '../../../modules/admin-panel/frontend/js/features/script-logs/script-log'
 import { Subscription as AdminSubscription } from '../../../types/admin/subscription'
 import { AdminCapability } from '../../../types/admin-capabilities'
-import { AlgoliaConfig } from '../../../modules/algolia-search/frontend/js/types'
-import { WritefullPublicEnv } from '@wf/domain/writefull-public-env'
+import { AlgoliaConfig } from '../../../types/algolia'
 import { UserNotificationPreferences } from '../../../types/notifications'
-import { SharingPermissions } from '../../../modules/sharing-permissions/app/src/types'
+import { SharingPermissions } from '../../../types/sharing-permissions'
+import type { GetProjectsResponseBody as AdminProjectsResponseBody } from '../../../modules/admin-tools/types/project/api'
+import type { GetUsersResponseBody } from '../../../modules/admin-tools/types/user/api'
+import type { Template } from '../../../modules/template-gallery/types/template'
 import { FullHistoryFailure } from '@ol-types/history/projectHistory'
 
 export interface Meta {
+  'og:title': string
+  'ol-availableAuthMethods': Array<'local' | 'ldap' | 'saml' | 'oidc'>
+  'ol-prefetchedUsersBlob': GetUsersResponseBody | undefined
+  'ol-templateCategory': string
+  'ol-template': Template
+  'ol-userIsAdmin': boolean
+  'ol-userIsTemplatesManager': boolean
   'ol-ExposedSettings': ExposedSettings
   'ol-adminCapabilities': AdminCapability[]
   'ol-adminSubscription': AdminSubscription
@@ -149,7 +156,6 @@ export interface Meta {
   'ol-groupPolicy': GroupPolicy
   'ol-groupSSOActive': boolean
   'ol-groupSSOConfig'?: SSOConfig
-  'ol-groupSSOTestResult': GroupSSOTestResult
   'ol-groupSettingsAdvertisedFor': string[]
   'ol-groupSettingsEnabledFor': string[]
   'ol-groupSize': number
@@ -295,8 +301,6 @@ export interface Meta {
   'ol-referenceLinkingErrorMessage': string
   'ol-ro-mirror-on-client-no-local-storage': boolean
   'ol-samlError': SAMLError | undefined
-  'ol-script-log': ScriptLogType
-  'ol-script-logs': ScriptLogType[]
   'ol-settingsGroupSSO': { enabled: boolean } | undefined
   'ol-settingsPlans': Plan[]
   'ol-sharedWorkspaceEnabled': boolean
@@ -388,7 +392,6 @@ export interface Meta {
   'ol-viaDomainCapture': boolean
   'ol-wikiEnabled': boolean
   'ol-writefullEnabled': boolean
-  'ol-writefullEnv': WritefullPublicEnv
   'ol-wsUrl': string
 }
 
@@ -411,7 +414,13 @@ export type MetaTag = {
 // cache for parsed values
 window.metaAttributesCache = window.metaAttributesCache || new Map()
 
-export default function getMeta<T extends keyof Meta>(name: T): Meta[T] {
+// Admin and dashboard pages publish different schemas under this historical key.
+export default function getMeta(
+  name: 'ol-prefetchedProjectsBlob',
+  page: 'admin'
+): AdminProjectsResponseBody | undefined
+export default function getMeta<T extends keyof Meta>(name: T): Meta[T]
+export default function getMeta(name: keyof Meta): Meta[keyof Meta] {
   if (window.metaAttributesCache.has(name)) {
     return window.metaAttributesCache.get(name)
   }

@@ -1,11 +1,14 @@
 import { useTranslation, Trans } from 'react-i18next'
 import useAsync from '@/shared/hooks/use-async'
-import { deleteJSON } from '@/infrastructure/fetch-json'
+import { FetchError, deleteJSON } from '@/infrastructure/fetch-json'
 import { OLModalBody, OLModalFooter } from '@/shared/components/ol/ol-modal'
 import OLButton from '@/shared/components/ol/ol-button'
 import Notification from '@/shared/components/notification'
 import { debugConsole } from '@/utils/debugging'
-import { ProjectSyncState, GitSyncModalStatus } from '../../types/git-sync-types'
+import {
+  ProjectSyncState,
+  GitSyncModalStatus,
+} from '../../types/git-sync-types'
 
 type GitSyncUnlinkModalProps = {
   handleHide: () => void
@@ -19,19 +22,17 @@ const GitSyncUnlinkModal = ({
   setModalStatus,
   projectSyncState,
   projectId,
-}: GitSyncInitModalProps) => {
+}: GitSyncUnlinkModalProps) => {
   const { t } = useTranslation()
 
-  const {
-    error,
-    isLoading,
-    runAsync,
-  } = useAsync<void>()
+  const { error, isLoading, runAsync } = useAsync<void, FetchError>()
 
   const handleUnlink = () => {
     runAsync(deleteJSON(`/project/${projectId}/github-sync`))
       .then(() => setModalStatus('need-export'))
-      .catch(err => debugConsole.error(err?.data?.message || err?.message || err))
+      .catch(err =>
+        debugConsole.error(err?.data?.message || err?.message || err)
+      )
   }
 
   return (
@@ -59,12 +60,16 @@ const GitSyncUnlinkModal = ({
           <Notification
             type="error"
             content={
-              error.info?.statusCode === 403 ? (
+              error.response?.status === 403 ? (
                 <Trans
                   i18nKey="ask_proj_owner_to_unlink_from_current_github"
                   values={{ projectOwnerEmail: error?.data?.ownerEmail ?? '?' }}
                   components={[
-                    error?.data?.ownerEmail ? <a href={`mailto:${error.data.ownerEmail}`} /> : <></>
+                    error?.data?.ownerEmail ? (
+                      <a href={`mailto:${error.data.ownerEmail}`} />
+                    ) : (
+                      <></>
+                    ),
                   ]}
                 />
               ) : (
@@ -74,7 +79,6 @@ const GitSyncUnlinkModal = ({
           />
         )}
       </OLModalBody>
-
 
       <OLModalFooter>
         <div className="d-flex gap-2">
@@ -86,10 +90,7 @@ const GitSyncUnlinkModal = ({
             {t('confirm')}
           </OLButton>
 
-          <OLButton
-            variant="secondary"
-            onClick={handleHide}
-          >
+          <OLButton variant="secondary" onClick={handleHide}>
             {t('cancel')}
           </OLButton>
         </div>

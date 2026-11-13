@@ -6,9 +6,11 @@ type DeletedAtProps = {
   user: User
 }
 
-export default function deletedAtCell({ user }: deletedAtCellProps) {
+export default function deletedAtCell({ user }: DeletedAtProps) {
   const deletedAt = user.deletedAt ? fromNowDate(user.deletedAt) : 'Not deleted'
-  const tooltipText = user.deletedAt ? formatDate(user.deletedAt) : 'Not deleted'
+  const tooltipText = user.deletedAt
+    ? formatDate(user.deletedAt)
+    : 'Not deleted'
   return (
     <OLTooltip
       key={`tooltip-deleted-at-${user.id}`}

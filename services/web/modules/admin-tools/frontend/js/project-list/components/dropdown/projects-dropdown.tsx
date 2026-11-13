@@ -6,12 +6,10 @@ import {
 } from '../../context/project-list-context'
 import {
   OLDropdown,
-  OLDropdownHeader,
   OLDropdownItem,
   OLDropdownMenu,
   OLDropdownToggle,
 } from '@/shared/components/ol/ol-dropdown-menu'
-import BackToUserList from '../back-to-user-list'
 import ProjectsFilterMenu from '../projects-filter-menu'
 
 type ItemProps = {

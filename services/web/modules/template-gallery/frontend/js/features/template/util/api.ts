@@ -16,7 +16,7 @@ type UpdateTemplateOptions = {
 
 export function updateTemplate({
   template,
-  editedTemplate
+  editedTemplate,
 }: UpdateTemplateOptions): Promise<Template | null> {
   const updatedFields: Partial<Template> = {
     name: editedTemplate.name.trim(),
@@ -27,18 +27,29 @@ export function updateTemplate({
     descriptionMD: editedTemplate.descriptionMD.trim(),
   }
 
-  const changedFields = Object.entries(updatedFields).reduce((diff, [key, value]) => {
-    if (value !== undefined && template[key as keyof Template] !== value) {
-      diff[key] = value
+  const editableFields = [
+    'name',
+    'license',
+    'category',
+    'language',
+    'authorMD',
+    'descriptionMD',
+  ] as const
+  const changedFields: Partial<
+    Pick<Template, (typeof editableFields)[number]>
+  > = {}
+  for (const key of editableFields) {
+    const value = updatedFields[key]
+    if (value !== undefined && template[key] !== value) {
+      changedFields[key] = value
     }
-    return diff
-  }, {} as Partial<Template>)
+  }
 
   if (Object.keys(changedFields).length === 0) {
     return Promise.resolve(null)
   }
 
   return postJSON(`/template/${editedTemplate.id}/edit`, {
-    body: changedFields
+    body: changedFields,
   })
 }

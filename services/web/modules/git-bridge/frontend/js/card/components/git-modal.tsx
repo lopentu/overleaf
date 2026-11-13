@@ -11,16 +11,12 @@ import {
 import OLButton from '@/shared/components/ol/ol-button'
 
 type Props = {
-  show: bool
+  show: boolean
   handleHide: () => void
   projectId: string
 }
 
-export default function GitModal({
-  show,
-  handleHide,
-  projectId,
-}: Props) {
+export default function GitModal({ show, handleHide, projectId }: Props) {
   const { t } = useTranslation()
 
   const gitCloneCommand = `git clone ${window.location.protocol}//git@${window.location.host}/git/${projectId}`
@@ -32,9 +28,8 @@ export default function GitModal({
       id="git-sync-modal"
       backdrop="static"
       size="lg"
-      themed="true"
+      themed
     >
-
       <OLModalHeader closeButton>
         <OLModalTitle>{t('clone_with_git')}</OLModalTitle>
       </OLModalHeader>
@@ -44,12 +39,10 @@ export default function GitModal({
 
         <div className="git-bridge-copy">
           <span aria-label={t('git_clone_project_command')}>
-            <code>
-              {gitCloneCommand}
-            </code>
+            <code>{gitCloneCommand}</code>
           </span>
-          <CopyToClipboard 
-            content={gitCloneCommand} 
+          <CopyToClipboard
+            content={gitCloneCommand}
             tooltipId="git-copy-clone-project-command-tooltip"
             kind={'button'}
           />
@@ -67,10 +60,7 @@ export default function GitModal({
       </OLModalBody>
 
       <OLModalFooter>
-        <OLButton
-          variant="secondary"
-          onClick={handleHide}
-        >
+        <OLButton variant="secondary" onClick={handleHide}>
           {t('close')}
         </OLButton>
         <OLButton

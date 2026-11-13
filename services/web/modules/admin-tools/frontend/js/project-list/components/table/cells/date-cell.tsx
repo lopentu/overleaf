@@ -5,12 +5,16 @@ import OLTooltip from '@/shared/components/ol/ol-tooltip'
 type DateCellProps = {
   projectId: string
   actorName: string
-  date: string
+  date?: string
 }
 
-export default function DateCell({ projectId, actorName, date }: DateCellProps) {
-  const fromNow = fromNowDate(date)
-  const tooltipText = formatDate(date)
+export default function DateCell({
+  projectId,
+  actorName,
+  date,
+}: DateCellProps) {
+  const fromNow = date ? fromNowDate(date) : '[N/A]'
+  const tooltipText = date ? formatDate(date) : '[N/A]'
   const { t } = useTranslation()
 
   return (

@@ -15,39 +15,49 @@ function SortBtn({ onClick, text, iconType, screenReaderText }: SortBtnProps) {
       aria-label={screenReaderText}
     >
       <span>{text}</span>
-        {iconType ? (
-          <MaterialIcon type={iconType} />
-        ) : (
-          <MaterialIcon type="arrow_upward" style={{ visibility: 'hidden' }} />
-        )}
+      {iconType ? (
+        <MaterialIcon type={iconType} />
+      ) : (
+        <MaterialIcon type="arrow_upward" style={{ visibility: 'hidden' }} />
+      )}
     </button>
   )
 }
 
 const SortByButton = withContent(SortBtn)
 
-export default function GallerySearchSortHeader( { gotoAllLink }: { boolean } ) {
+export default function GallerySearchSortHeader({
+  gotoAllLink = false,
+}: {
+  gotoAllLink?: boolean
+}) {
   const { t } = useTranslation()
-  const {
-    searchText,
-    setSearchText,
-    sort,
-  } = useTemplateGalleryContext()
+  const { searchText, setSearchText, sort } = useTemplateGalleryContext()
 
   const { handleSort } = useSort()
   return (
     <OLRow className="align-items-center">
       {gotoAllLink ? (
-      <OLCol className="col-auto">
+        <OLCol className="col-auto">
           <a className="previous-page-link" href="/templates/all">
-            <i className="material-symbols material-symbols-rounded" aria-hidden="true">arrow_left_alt</i>
+            <i
+              className="material-symbols material-symbols-rounded"
+              aria-hidden="true"
+            >
+              arrow_left_alt
+            </i>
             {t('all_templates')}
           </a>
         </OLCol>
       ) : (
-      <OLCol className="col-auto">
+        <OLCol className="col-auto">
           <a className="previous-page-link" href="/templates">
-            <i className="material-symbols material-symbols-rounded" aria-hidden="true">arrow_left_alt</i>
+            <i
+              className="material-symbols material-symbols-rounded"
+              aria-hidden="true"
+            >
+              arrow_left_alt
+            </i>
             {t('template_gallery')}
           </a>
         </OLCol>
@@ -67,11 +77,8 @@ export default function GallerySearchSortHeader( { gotoAllLink }: { boolean } ) 
           onClick={() => handleSort('name')}
         />
       </OLCol>
-      <OLCol xs={3} className="ms-auto" >
-        <SearchForm
-          inputValue={searchText}
-          setInputValue={setSearchText}
-        />
+      <OLCol xs={3} className="ms-auto">
+        <SearchForm inputValue={searchText} setInputValue={setSearchText} />
       </OLCol>
     </OLRow>
   )

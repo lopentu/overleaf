@@ -28,13 +28,10 @@ function UserListTable() {
   const {
     visibleUsers,
     sort,
-    searchText,
     selectedUsers,
     selectOrUnselectAllUsers,
     selfVisibleCount,
     filter,
-    currentPage,
-    setCurrentPage,
   } = useUserListContext()
   const { handleSort } = useSort()
   const checkAllRef = useRef<HTMLInputElement>(null)
@@ -68,7 +65,8 @@ function UserListTable() {
               autoComplete="off"
               onChange={handleAllUsersCheckboxChange}
               checked={
-                visibleUsers.length === selectedUsers.length + selfVisibleCount  &&
+                visibleUsers.length ===
+                  selectedUsers.length + selfVisibleCount &&
                 visibleUsers.length - selfVisibleCount !== 0
               }
               disabled={visibleUsers.length - selfVisibleCount === 0}
@@ -80,7 +78,7 @@ function UserListTable() {
             className="dash-cell-name"
             aria-label={t('title')}
             aria-sort={
-              sort.by === 'title'
+              sort.by === 'name'
                 ? sort.order === 'asc'
                   ? 'ascending'
                   : 'descending'

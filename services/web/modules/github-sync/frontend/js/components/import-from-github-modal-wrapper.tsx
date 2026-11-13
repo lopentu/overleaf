@@ -2,10 +2,7 @@ import React, { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import useAsync from '@/shared/hooks/use-async'
 import { debugConsole } from '@/utils/debugging'
-import {
-  postJSON,
-  getJSON,
-} from '@/infrastructure/fetch-json'
+import { postJSON, getJSON } from '@/infrastructure/fetch-json'
 import getMeta from '@/utils/meta'
 import {
   OLModal,
@@ -28,25 +25,25 @@ type GitSyncReposResponse = {
   repos?: GitSyncRepo[]
 }
 
-function ImportFromGitHubModalContent({ handleHide }: { handleHide: () => void }) {
+function ImportFromGitHubModalContent({
+  handleHide,
+}: {
+  handleHide: () => void
+}) {
   const { t } = useTranslation()
   const { appName } = getMeta('ol-ExposedSettings')
 
-  const {
-    isLoading,
-    isSuccess,
-    isError,
-    data,
-    runAsync,
-  } = useAsync<GitSyncReposResponse>()
+  const { isLoading, isSuccess, isError, data, runAsync } =
+    useAsync<GitSyncReposResponse>()
 
   useEffect(() => {
-    runAsync(getJSON('/user/github-sync/repos'))
-      .catch(err => debugConsole.error(err?.data?.message || err?.message || err))
+    runAsync(getJSON('/user/github-sync/repos')).catch(err =>
+      debugConsole.error(err?.data?.message || err?.message || err)
+    )
   }, [runAsync])
 
   const reposExist = data?.repos != null
-  const repos = reposExist ? data.repos : []
+  const repos = data?.repos ?? []
 
   const {
     isLoading: isImporting,
@@ -65,35 +62,36 @@ function ImportFromGitHubModalContent({ handleHide }: { handleHide: () => void }
   const showRepos = !isImporting && isSuccess && reposExist
 
   const handleImport = (repo: GitSyncRepo) => {
-
     runAsyncImport(
       postJSON('/project/new/github-sync', {
-        body: repo
+        body: repo,
       })
     )
       .then(data => {
         window.location.href = `/project/${data.projectId}`
       })
-      .catch(err => debugConsole.error(err?.data?.message || err?.message || err))
+      .catch(err =>
+        debugConsole.error(err?.data?.message || err?.message || err)
+      )
   }
 
   return (
     <>
-      <OLModalHeader onClose={handleHide}>
+      <OLModalHeader>
         <OLModalTitle>{t('import_from_github')}</OLModalTitle>
       </OLModalHeader>
 
       <OLModalBody>
         {isLoading && (
           <span>
-            <OLSpinner size="sm" className="me-2"/>
+            <OLSpinner size="sm" className="me-2" />
             {t('loading_github_repositories')}
           </span>
         )}
 
         {isImporting && (
           <span>
-            <OLSpinner size="sm" className="me-2"/>
+            <OLSpinner size="sm" className="me-2" />
             {t('importing')}
           </span>
         )}
@@ -109,13 +107,8 @@ function ImportFromGitHubModalContent({ handleHide }: { handleHide: () => void }
 
         {showLinkToGitHub && (
           <div className="text-center">
-            <p>
-              {t('link_to_github_description', { appName })}
-            </p>
-            <OLButton
-              variant="secondary"
-              href="/user/github-sync/oauth2"
-            >
+            <p>{t('link_to_github_description', { appName })}</p>
+            <OLButton variant="secondary" href="/user/github-sync/oauth2">
               {t('link_to_github')}
             </OLButton>
           </div>
@@ -154,7 +147,9 @@ function ImportFromGitHubModalContent({ handleHide }: { handleHide: () => void }
                               variant="primary"
                               onClick={() => handleImport(repo)}
                             >
-                              {t('import_to_sharelatex', { appName: 'Overleaf' })}
+                              {t('import_to_sharelatex', {
+                                appName: 'Overleaf',
+                              })}
                             </OLButton>
                           </td>
                         </tr>
@@ -175,20 +170,19 @@ function ImportFromGitHubModalContent({ handleHide }: { handleHide: () => void }
             />
           </div>
         )}
-
       </OLModalBody>
 
       <OLModalFooter>
         {!isImporting && (
-        <span className="me-auto">
-          <a
-            href="https://help.github.com/en/articles/requesting-organization-approval-for-oauth-apps"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {t('cant_see_what_youre_looking_for_question')}
-          </a>
-        </span>
+          <span className="me-auto">
+            <a
+              href="https://help.github.com/en/articles/requesting-organization-approval-for-oauth-apps"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t('cant_see_what_youre_looking_for_question')}
+            </a>
+          </span>
         )}
         <OLButton
           variant="secondary"
@@ -202,7 +196,11 @@ function ImportFromGitHubModalContent({ handleHide }: { handleHide: () => void }
   )
 }
 
-export default function ImportFromGitHubModal({ onHide }: { onHide: () => void }) {
+export default function ImportFromGitHubModal({
+  onHide,
+}: {
+  onHide: () => void
+}) {
   return (
     <OLModal
       id="git-import-modal"
@@ -211,7 +209,7 @@ export default function ImportFromGitHubModal({ onHide }: { onHide: () => void }
       size="lg"
       onHide={onHide}
       backdrop="static"
-      themed="true"
+      themed
     >
       <ImportFromGitHubModalContent handleHide={onHide} />
     </OLModal>

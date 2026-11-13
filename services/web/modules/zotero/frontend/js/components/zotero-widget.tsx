@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
-import { getJSON, deleteJSON, isForbidden, type FetchError } from '@/infrastructure/fetch-json'
+import {
+  getJSON,
+  deleteJSON,
+  isForbidden,
+  type FetchError,
+} from '@/infrastructure/fetch-json'
 import useAsync from '@/shared/hooks/use-async'
 import { debugConsole } from '@/utils/debugging'
 import OLButton from '@/shared/components/ol/ol-button'
@@ -45,8 +50,9 @@ export const ZoteroWidget = function ZoteroWidget() {
   const needsRelink = isForbidden(connCheckError)
 
   const handleConnCheck = useCallback(() => {
-    runAsyncConnCheck(getJSON('/user/zotero/status'))
-      .catch(err => debugConsole.error(err?.data?.message || err?.message || err))
+    runAsyncConnCheck(getJSON('/user/zotero/status')).catch(err =>
+      debugConsole.error(err?.data?.message || err?.message || err)
+    )
   }, [runAsyncConnCheck])
 
   useEffect(() => {
@@ -56,7 +62,9 @@ export const ZoteroWidget = function ZoteroWidget() {
   const handleUnlink = useCallback(() => {
     runAsyncUnlink(deleteJSON('/user/zotero'))
       .then(() => setConnState(false))
-      .catch(err => debugConsole.error(err?.data?.message || err?.message || err))
+      .catch(err =>
+        debugConsole.error(err?.data?.message || err?.message || err)
+      )
       .finally(() => setShowUnlinkModal(false))
   }, [runAsyncUnlink, setConnState])
 
@@ -92,14 +100,14 @@ export const ZoteroWidget = function ZoteroWidget() {
             <h4 id="zotero-link">{t('zotero')}</h4>
           </div>
 
-          <p className="small">
-            {t('zotero_sync_description', { appName })}
-          </p>
+          <p className="small">{t('zotero_sync_description', { appName })}</p>
 
-          {(isErrorConnCheck && !needsRelink) && (
+          {isErrorConnCheck && !needsRelink && (
             <Notification
               type="error"
-              content={t('problem_checking_connection_with_provider', { provider: t('zotero') })}
+              content={t('problem_checking_connection_with_provider', {
+                provider: t('zotero'),
+              })}
             />
           )}
 
@@ -121,17 +129,11 @@ export const ZoteroWidget = function ZoteroWidget() {
               {isUnlinking ? t('unlinking') : t('unlink')}
             </OLButton>
           ) : isErrorConnCheck && !needsRelink ? (
-            <OLButton
-              variant="secondary"
-              onClick={handleConnCheck}
-            >
+            <OLButton variant="secondary" onClick={handleConnCheck}>
               {t('reconnect')}
             </OLButton>
           ) : (
-            <OLButton
-              variant="secondary"
-              href="/user/zotero/oauth?popup=0"
-            >
+            <OLButton variant="secondary" href="/user/zotero/oauth?popup=0">
               {t('link')}
             </OLButton>
           )}
@@ -143,7 +145,7 @@ export const ZoteroWidget = function ZoteroWidget() {
         show={showUnlinkModal}
         onHide={() => setShowUnlinkModal(false)}
         backdrop="static"
-        themed="true"
+        themed
       >
         <OLModalHeader>
           <OLModalTitle>

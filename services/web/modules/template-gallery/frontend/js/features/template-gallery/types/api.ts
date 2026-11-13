@@ -1,5 +1,5 @@
 import { SortingOrder } from '../../../../../../../types/sorting-order'
-import { Template } from '../../../../../types/template'
+import { TemplateListEntry } from '../../../../../types/template'
 
 export type Sort = {
   by: 'lastUpdated' | 'name'
@@ -8,5 +8,5 @@ export type Sort = {
 
 export type GetTemplatesResponseBody = {
   totalSize: number
-  templates: Template[]
+  templates: TemplateListEntry[]
 }

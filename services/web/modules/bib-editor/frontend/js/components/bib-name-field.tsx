@@ -22,12 +22,11 @@ import type { BibAuthorDraft } from '../utils/bib-author-draft'
 import type { BibHistoryUserEvent } from '../context/bib-editor-context'
 
 /** Resize an auto-growing field with a small height allowance. */
-export const resizeTextarea = (textarea: HTMLTextAreaElement | null) => {
+export const resizeTextarea = (textarea: HTMLElement | null) => {
   if (!textarea) return
   textarea.style.height = 'auto'
   textarea.style.height = `${textarea.scrollHeight + 4}px`
 }
-
 
 /**
  * Name-list inputs and the raw text editor share one draft model. An invalid name
@@ -72,7 +71,8 @@ export default function BibNameField({
   )
   const nextRowIdRef = useRef(rowIdsRef.current.length)
   // Match the label target in both row and textarea modes.
-  const inputId = (index: number) => `${idPrefix}${fieldName}${index ? `-${index}` : ''}`
+  const inputId = (index: number) =>
+    `${idPrefix}${fieldName}${index ? `-${index}` : ''}`
 
   const handleTextareaRef = useCallback((element: HTMLInputElement | null) => {
     const textarea = element as HTMLTextAreaElement | null
@@ -90,8 +90,8 @@ export default function BibNameField({
     if (value === expectedValueRef.current) return
     const next = createAuthorDraft(value)
     if (next.mode === 'rows') {
-      rowIdsRef.current = next.rows.map((_, index) =>
-        rowIdsRef.current[index] ?? nextRowIdRef.current++
+      rowIdsRef.current = next.rows.map(
+        (_, index) => rowIdsRef.current[index] ?? nextRowIdRef.current++
       )
     } else {
       rowIdsRef.current = []
@@ -142,14 +142,17 @@ export default function BibNameField({
       focusNameIndexRef.current = null
       focusTextEndRef.current = true
       rowIdsRef.current = []
-      update({
-        mode: 'text',
-        value: authorDraftValue(current),
-        saved: authorDraftSavedValue(current),
-        invalidRow: current.rows.find(
-          row => !hasBalancedCurlyBraces(row.value)
-        )?.value,
-      }, 'input.complete')
+      update(
+        {
+          mode: 'text',
+          value: authorDraftValue(current),
+          saved: authorDraftSavedValue(current),
+          invalidRow: current.rows.find(
+            row => !hasBalancedCurlyBraces(row.value)
+          )?.value,
+        },
+        'input.complete'
+      )
       return
     }
 
@@ -170,15 +173,20 @@ export default function BibNameField({
   const removeName = (index: number) => {
     const current = nameDraftRef.current
     if (current.mode !== 'rows') return
-    rowIdsRef.current = current.rows.length > 1
-      ? rowIdsRef.current.filter((_, i) => i !== index)
-      : [rowIdsRef.current[0]]
-    update({
-      mode: 'rows',
-      rows: current.rows.length > 1
-        ? current.rows.filter((_, i) => i !== index)
-        : [{ value: '', saved: '' }],
-    }, 'input.complete')
+    rowIdsRef.current =
+      current.rows.length > 1
+        ? rowIdsRef.current.filter((_, i) => i !== index)
+        : [rowIdsRef.current[0]]
+    update(
+      {
+        mode: 'rows',
+        rows:
+          current.rows.length > 1
+            ? current.rows.filter((_, i) => i !== index)
+            : [{ value: '', saved: '' }],
+      },
+      'input.complete'
+    )
   }
 
   const moveName = (index: number, direction: -1 | 1) => {
@@ -206,7 +214,7 @@ export default function BibNameField({
           ref={handleTextareaRef}
           id={`${idPrefix}${fieldName}`}
           className={`bibtex-name-textarea bibtex-form-input ${error || !isAuthorDraftValid(nameDraft) ? 'is-invalid' : ''}`}
-          maxLength="4096"
+          maxLength={4096}
           autoComplete="off"
           value={nameDraft.value}
           onChange={event => {
@@ -222,9 +230,7 @@ export default function BibNameField({
           onInput={event => resizeTextarea(event.currentTarget)}
         />
         {!isAuthorDraftValid(nameDraft) && (
-          <BibEntryFeedback
-            message={t('curly_braces_must_be_balanced')}
-          />
+          <BibEntryFeedback message={t('curly_braces_must_be_balanced')} />
         )}
         <OLFormText>{t('separate_multiple_names_with_and')}</OLFormText>
       </>
@@ -234,7 +240,10 @@ export default function BibNameField({
   return (
     <div className="bibtex-form-names">
       {nameDraft.rows.map((name, index) => (
-        <div key={rowIdsRef.current[index]} className="bibtex-field-with-actions">
+        <div
+          key={rowIdsRef.current[index]}
+          className="bibtex-field-with-actions"
+        >
           <OLFormControl
             ref={
               focusNameIndexRef.current === index
@@ -246,7 +255,7 @@ export default function BibNameField({
                 : undefined
             }
             className={`bibtex-form-input ${error || !hasBalancedCurlyBraces(name.value) ? 'is-invalid' : ''}`}
-            maxLength="128"
+            maxLength={128}
             type="text"
             id={inputId(index)}
             value={name.value}
@@ -279,9 +288,11 @@ export default function BibNameField({
               icon="close"
               unfilled
               variant="ghost"
-              accessibilityLabel={fieldName === 'author'
-                ? t('remove_author')
-                : t('remove_field', { a: fieldLabel(fieldName) })}
+              accessibilityLabel={
+                fieldName === 'author'
+                  ? t('remove_author')
+                  : t('remove_field', { a: fieldLabel(fieldName) })
+              }
               onMouseDown={event => event.preventDefault()}
               onClick={() => removeName(index)}
               disabled={nameDraft.rows.length === 1 && !name.value.trim()}

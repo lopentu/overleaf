@@ -44,15 +44,18 @@ function ProjectsActionModal({
   const [isProcessing, setIsProcessing] = useState(false)
   const isMounted = useIsMounted()
 
-  const variant =
-    redActions.has(action) ? 'danger' :
-    greenActions.has(action) ? 'primary' : 'secondary'
+  const variant = redActions.has(action)
+    ? 'danger'
+    : greenActions.has(action)
+      ? 'primary'
+      : 'secondary'
 
-  const actionLabel =
-    action === 'transfer' ? t('change_owner') :
-    t(action)
+  const actionLabel = action === 'transfer' ? t('change_owner') : t(action)
 
-  async function handleActionForProjects(projects: Array<Project>, options?: any) {
+  async function handleActionForProjects(
+    projects: Array<Project>,
+    options?: any
+  ) {
     const errored = []
     setIsProcessing(true)
     setErrors([])
@@ -88,7 +91,7 @@ function ProjectsActionModal({
       setErrors([])
     }
   }, [options])
-  
+
   useEffect(() => {
     if (showModal) {
       eventTracking.sendMB('admin-user-project-list-page-interaction', {
@@ -104,7 +107,7 @@ function ProjectsActionModal({
       show={showModal}
       onHide={handleCloseModal}
       id="admin-action-project-modal"
-      themed="true"
+      themed
       backdrop="static"
     >
       <OLModalHeader>

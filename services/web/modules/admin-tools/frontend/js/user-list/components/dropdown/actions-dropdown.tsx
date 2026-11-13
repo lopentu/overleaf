@@ -7,7 +7,6 @@ import {
   OLDropdownToggle,
 } from '@/shared/components/ol/ol-dropdown-menu'
 import MaterialIcon from '@/shared/components/material-icon'
-import OLSpinner from '@/shared/components/ol/ol-spinner'
 import FlagUserButton from '../table/cells/action-buttons/flag-user-button'
 import DeleteUserButton from '../table/cells/action-buttons/delete-user-button'
 import UpdateUserButton from '../table/cells/action-buttons/update-user-button'
@@ -17,7 +16,11 @@ import ShowUserInfoButton from '../table/cells/action-buttons/show-user-info-but
 import SendRegEmailButton from '../table/cells/action-buttons/send-reg-email-button'
 import { User } from '../../../../../types/user/api'
 
-const flagActions = [
+const flagActions: {
+  action: 'suspend' | 'resume'
+  icon: string
+  unfilled: boolean
+}[] = [
   { action: 'suspend', icon: 'pause', unfilled: false },
   { action: 'resume', icon: 'resume', unfilled: false },
 ]
@@ -134,7 +137,7 @@ function ActionsDropdown({ user }: ActionsDropdownProps) {
                 </li>
               )}
             </PurgeUserButton>
-            {(user.authMethods.includes('local') && !user.suspended) && ( 
+            {user.authMethods.includes('local') && !user.suspended && (
               <SendRegEmailButton user={user}>
                 {(text, handleOpenModal) => (
                   <li role="none">

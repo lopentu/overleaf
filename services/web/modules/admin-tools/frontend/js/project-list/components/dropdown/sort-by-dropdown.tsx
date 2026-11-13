@@ -34,6 +34,7 @@ function SortByDropdown() {
   const { handleSort } = useSort()
   const sortByTranslations = useRef<Record<Sort['by'], string>>({
     title: t('title'),
+    owner: t('owner'),
     lastUpdated: t('last_modified'),
     deletedAt: t('deleted_at'),
   })
@@ -75,7 +76,7 @@ function SortByDropdown() {
           sort={sort}
           onClick={() => handleClick('owner')}
         />
-        { filter !== 'deleted' ? ( 
+        {filter !== 'deleted' ? (
           <ItemWithContent
             column="lastUpdated"
             text={t('last_modified')}

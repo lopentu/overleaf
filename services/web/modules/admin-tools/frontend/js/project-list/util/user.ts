@@ -1,6 +1,5 @@
-import { User } from '../../../../types/user/api'
-export function getUserName(user: User) {
-
+import { UserRef } from '../../../../types/project/api'
+export function getUserName(user: UserRef | null | undefined) {
   if (!user) return '[N/A]'
 
   const { firstName, lastName, email } = user

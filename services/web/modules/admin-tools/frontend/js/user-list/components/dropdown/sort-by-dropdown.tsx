@@ -37,6 +37,7 @@ function SortByDropdown() {
     email: t('email'),
     signUpDate: t('signed_up'),
     lastActive: t('last_active'),
+    lastLoggedIn: t('last_logged_in'),
     deletedAt: t('deleted_at'),
   })
 
@@ -78,7 +79,7 @@ function SortByDropdown() {
           onClick={() => handleClick('email')}
         />
 
-        { filter !== 'deleted' ? (
+        {filter !== 'deleted' ? (
           <ItemWithContent
             column="signUpDate"
             text={t('signed_up')}

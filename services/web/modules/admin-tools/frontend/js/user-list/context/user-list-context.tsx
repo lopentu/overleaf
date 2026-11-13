@@ -8,29 +8,30 @@ import {
   useState,
   useRef,
 } from 'react'
-import {
-  filter as arrayFilter,
-} from 'lodash'
+import { filter as arrayFilter } from 'lodash'
 import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
 import { debugConsole } from '@/utils/debugging'
 import useAsync from '@/shared/hooks/use-async'
 import usePersistedState from '@/shared/hooks/use-persisted-state'
-import {
-  GetUsersResponseBody,
-  User,
-  Sort,
-} from '../../../../types/user/api'
+import { GetUsersResponseBody, User, Sort } from '../../../../types/user/api'
 import { getUsers } from '../util/api'
 import sortUsers from '../util/sort-users'
 
 import { UserIdentityProvider } from './user-identity-context'
 
 type AuthMethods = 'local' | 'ldap' | 'saml' | 'oidc'
-export type Filter = 'all' | 'admin' | 'suspended' | 'inactive' | AuthMethods | 'deleted'
+export type Filter =
+  | 'all'
+  | 'admin'
+  | 'suspended'
+  | 'inactive'
+  | AuthMethods
+  | 'deleted'
 
 const selfId = getMeta('ol-user_id')
-const availableAuthMethods: AuthMethods[] = getMeta('ol-availableAuthMethods') ?? []
+const availableAuthMethods: AuthMethods[] =
+  getMeta('ol-availableAuthMethods') ?? []
 
 type FilterMap = {
   [key in Filter]: Partial<User> | ((user: User) => boolean)
@@ -42,12 +43,10 @@ const filters: FilterMap = {
   suspended: { suspended: true, deleted: false },
   inactive: { inactive: true, deleted: false },
   deleted: { deleted: true },
-  ...Object.fromEntries(
-    availableAuthMethods.map(method => [
-      method,
-      (user: User) => user.authMethods.includes(method) && !user.deleted
-    ])
-  )
+  local: user => user.authMethods.includes('local') && !user.deleted,
+  ldap: user => user.authMethods.includes('ldap') && !user.deleted,
+  saml: user => user.authMethods.includes('saml') && !user.deleted,
+  oidc: user => user.authMethods.includes('oidc') && !user.deleted,
 }
 
 // if there is only one authentication source we won't show "users by authentication" lists
@@ -57,11 +56,11 @@ const filterKeys: Filter[] = [
   'suspended',
   'inactive',
   ...(availableAuthMethods.length === 1 ? [] : availableAuthMethods),
-  'deleted'
+  'deleted',
 ]
 
 export type UserListContextValue = {
-  addUserToView: (user: Partial<User>) => void
+  addUserToView: (user: User) => void
   error: Error | null
   filter: Filter
   filterTranslations: Map<Filter, string>
@@ -73,7 +72,7 @@ export type UserListContextValue = {
   selectFilter: (filter: Filter) => void
   selectedUserIds: Set<string>
   selectedUsers: User[]
-  selectOrUnselectAllUsers: React.Dispatch<React.SetStateAction<boolean>>
+  selectOrUnselectAllUsers: (checked: boolean) => void
   selfVisibleCount: number
   setSearchText: React.Dispatch<React.SetStateAction<string>>
   setSelectedUserIds: React.Dispatch<React.SetStateAction<Set<string>>>
@@ -87,13 +86,13 @@ export type UserListContextValue = {
   currentPage: number
   setCurrentPage: React.Dispatch<React.SetStateAction<number>>
   totalPages: number
-  usersPerPage: number,
-  setUsersPerPage: React.Dispatch<React.SetStateAction<number>>,
+  usersPerPage: number
+  setUsersPerPage: React.Dispatch<React.SetStateAction<number>>
 }
 
-export const UserListContext = createContext<
-  UserListContextValue | undefined
->(undefined)
+export const UserListContext = createContext<UserListContextValue | undefined>(
+  undefined
+)
 
 type UserListProviderProps = {
   children: ReactNode
@@ -135,8 +134,7 @@ export function UserListProvider({ children }: UserListProviderProps) {
 
   const setSearchText: React.Dispatch<React.SetStateAction<string>> = value => {
     setSearchTextState(prev => {
-      const nextValue =
-        typeof value === 'function' ? value(prev) : value
+      const nextValue = typeof value === 'function' ? value(prev) : value
 
       const wasSearching = isSearchingRef.current
       const willSearch = nextValue.length > 0
@@ -165,7 +163,6 @@ export function UserListProvider({ children }: UserListProviderProps) {
   })
   const isLoading = isIdle ? true : loading
 
-
   useEffect(() => {
     if (prefetchedUsersBlob) return
     setLoadProgress(40)
@@ -180,22 +177,22 @@ export function UserListProvider({ children }: UserListProviderProps) {
       })
   }, [prefetchedUsersBlob, runAsync])
 
-  const addUserToView = useCallback((newUser: Partial<User>) => {
-    setLoadedUsers(prev => [newUser as User, ...prev])
+  const addUserToView = useCallback((newUser: User) => {
+    setLoadedUsers(prev => [newUser, ...prev])
   }, [])
 
-  const isDefaultSort =
-    sort.by === 'name' && sort.order === 'asc'
+  const isDefaultSort = sort.by === 'name' && sort.order === 'asc'
 
   const filteredUsers = useMemo(() => {
     let users = loadedUsers
 
     if (searchText.length) {
       const searchTextLowerCase = searchText.toLowerCase()
-      users = users.filter(user =>
-        user.email?.toLowerCase().includes(searchTextLowerCase) ||
-        user.firstName?.toLowerCase().includes(searchTextLowerCase) ||
-        user.lastName?.toLowerCase().includes(searchTextLowerCase)
+      users = users.filter(
+        user =>
+          user.email?.toLowerCase().includes(searchTextLowerCase) ||
+          user.firstName?.toLowerCase().includes(searchTextLowerCase) ||
+          user.lastName?.toLowerCase().includes(searchTextLowerCase)
       )
     }
 
@@ -273,7 +270,7 @@ export function UserListProvider({ children }: UserListProviderProps) {
   }, [selectedUserIds, loadedUsers])
 
   const selectOrUnselectAllUsers = useCallback(
-    (checked: any) => {
+    (checked: boolean) => {
       setSelectedUserIds(prevSelectedUserIds => {
         const selectedUserIds = new Set(prevSelectedUserIds)
         for (const user of visibleUsers) {
@@ -404,9 +401,7 @@ export function UserListProvider({ children }: UserListProviderProps) {
 export function useUserListContext() {
   const context = useContext(UserListContext)
   if (!context) {
-    throw new Error(
-      'UserListContext is only available inside UserListProvider'
-    )
+    throw new Error('UserListContext is only available inside UserListProvider')
   }
   return context
 }

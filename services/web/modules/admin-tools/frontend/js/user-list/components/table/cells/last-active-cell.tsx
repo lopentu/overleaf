@@ -7,9 +7,11 @@ type LastActiveProps = {
   user: User
 }
 
-export default function lastActiveCell({ user }: LastActiveCellProps) {
+export default function lastActiveCell({ user }: LastActiveProps) {
   const { t } = useTranslation()
-  const lastActiveDate = user.lastActive ? fromNowDate(user.lastActive) : t('never')
+  const lastActiveDate = user.lastActive
+    ? fromNowDate(user.lastActive)
+    : t('never')
   const tooltipText = user.lastActive ? formatDate(user.lastActive) : t('never')
   return (
     <OLTooltip

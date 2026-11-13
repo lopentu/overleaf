@@ -1,3 +1,4 @@
+import type { UserRef } from '../../../../../types/project/api'
 import { useMemo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import ProjectsActionModal from './projects-action-modal'
@@ -5,14 +6,9 @@ import ProjectsList from './projects-list'
 import SelectOwnerForm from '../select-owner-form'
 import { useUserListContext } from '../../../user-list/context/user-list-context'
 import { useProjectListContext } from '../../context/project-list-context'
-import { User } from '../../../../../types/user/api'
-import OLRow from '@/shared/components/ol/ol-row'
-import OLCol from '@/shared/components/ol/ol-col'
 import OLForm from '@/shared/components/ol/ol-form'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
-import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormCheckbox from '@/shared/components/ol/ol-form-checkbox'
-import OLSpinner from '@/shared/components/ol/ol-spinner'
 
 type TransferProjectModalProps = Pick<
   React.ComponentProps<typeof ProjectsActionModal>,
@@ -33,7 +29,7 @@ function TransferProjectModal({
   const { projectsOwnerId } = useProjectListContext()
 
   const potentialOwners = useMemo(() => {
-    if (!loadedUsers) return null;
+    if (!loadedUsers) return null
     const result: UserRef[] = []
     for (const user of loadedUsers) {
       if (!user.deleted && user.id !== projectsOwnerId) {
@@ -41,7 +37,7 @@ function TransferProjectModal({
           id: user.id,
           firstName: user.firstName,
           lastName: user.lastName,
-          email: user.email
+          email: user.email,
         })
       }
     }

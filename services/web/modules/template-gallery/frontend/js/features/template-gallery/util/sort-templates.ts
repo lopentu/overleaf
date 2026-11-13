@@ -1,15 +1,15 @@
 import { Sort } from '../types/api'
-import { Template } from '../../../../../types/template'
+import { TemplateListEntry } from '../../../../../types/template'
 import { SortingOrder } from '../../../../../../../types/sorting-order'
 import { Compare } from '../../../../../../../types/helpers/array/sort'
 
-const order = (order: SortingOrder, templates: Template[]) => {
+const order = (order: SortingOrder, templates: TemplateListEntry[]) => {
   return order === 'asc' ? [...templates] : templates.reverse()
 }
 
 export const defaultComparator = (
-  v1: Template,
-  v2: Template,
+  v1: TemplateListEntry,
+  v2: TemplateListEntry,
   key: 'name' | 'lastUpdated'
 ) => {
   const value1 = v1[key].toLowerCase()
@@ -22,7 +22,10 @@ export const defaultComparator = (
   return Compare.SORT_KEEP_ORDER
 }
 
-export default function sortTemplates(templates: Template[], sort: Sort) {
+export default function sortTemplates(
+  templates: TemplateListEntry[],
+  sort: Sort
+) {
   let sorted = [...templates]
   if (sort.by === 'name') {
     sorted = sorted.sort((...args) => {

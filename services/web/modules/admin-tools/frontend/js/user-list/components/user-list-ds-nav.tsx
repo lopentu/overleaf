@@ -7,7 +7,6 @@ import UsersDropdown from './dropdown/users-dropdown'
 import SortByDropdown from './dropdown/sort-by-dropdown'
 import UserTools from './table/user-tools/user-tools'
 import UserListTitle from './title/user-list-title'
-import CountUsers from './count-users'
 import OLCol from '@/shared/components/ol/ol-col'
 import OLRow from '@/shared/components/ol/ol-row'
 import { TableContainer } from '@/shared/components/ol/ol-table'
@@ -42,9 +41,7 @@ export function UserListDsNav() {
 
   const tableTopArea = (
     <div className="pt-2 pb-3 d-md-none d-flex gap-2">
-      <CreateAccountButton
-        id="create-account-button-users-table"
-      />
+      <CreateAccountButton id="create-account-button-users-table" />
       <SearchForm
         inputValue={searchText}
         setInputValue={setSearchText}
@@ -109,7 +106,11 @@ export function UserListDsNav() {
                     <UserListSummary />
                   </div>
                   <div className="mt-3">
-                    <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+                    <Pagination
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      onPageChange={setCurrentPage}
+                    />
                   </div>
                 </div>
               </main>

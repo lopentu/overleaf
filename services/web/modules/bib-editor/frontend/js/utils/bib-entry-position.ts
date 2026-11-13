@@ -27,12 +27,19 @@ export type BibProjectedEntry = PositionedBibtexEntry & {
 
 type SourceRange = { from: number; to: number }
 
-function positioned(entry: BibtexEntry, from: number, to: number): BibProjectedEntry {
+function positioned(
+  entry: BibtexEntry,
+  from: number,
+  to: number
+): BibProjectedEntry {
   return Object.assign(new PositionedBibtexEntry(), { entry, from, to })
 }
 
 /** A trusted node has real delimiters, no Lezer errors, and a matching key. */
-function trustedEntry(source: string, node: BibSyntaxEntryProjection): BibtexEntry | null {
+function trustedEntry(
+  source: string,
+  node: BibSyntaxEntryProjection
+): BibtexEntry | null {
   if (!node.clean || !node.entry || !node.citationKey) return null
   const { from, to } = node.citationKey
   return node.entry.key === source.slice(from, to) ? node.entry : null
@@ -50,13 +57,16 @@ export function parseBibEntryAt(
   if (from < 0 || from >= source.length || source[from] !== '@') return null
   const header = bibEntryHeaderAt(source, from)
   if (!header || NON_BIBLIOGRAPHY_ENTRY_TYPES.has(header.type)) return null
-  const to = knownTo ?? (() => {
-    const syntax = findSyntaxEntryProjection(source, false)
-    const entry = syntax.entries.find(item => item.from === from)
-    if (!entry) return from
-    return entry.closed ? entry.to :
-      (syntax.blockStarts.find(start => start > from) ?? source.length)
-  })()
+  const to =
+    knownTo ??
+    (() => {
+      const syntax = findSyntaxEntryProjection(source, false)
+      const entry = syntax.entries.find(item => item.from === from)
+      if (!entry) return from
+      return entry.closed
+        ? entry.to
+        : (syntax.blockStarts.find(start => start > from) ?? source.length)
+    })()
   if (to <= from) return null
 
   const raw = source.slice(from, to)
@@ -77,9 +87,10 @@ export function parseBibEntryAt(
   // Lezer recognized this malformed entry, but upstream could not construct
   // its content. Display a minimal entry; the source diagnostics mark it bad.
   const keyRange = bibCitationKeyRange(source, header)
-  const key = keyRange && keyRange.to <= to
-    ? source.slice(keyRange.from, keyRange.to)
-    : ''
+  const key =
+    keyRange && keyRange.to <= to
+      ? source.slice(keyRange.from, keyRange.to)
+      : ''
   return positioned(new BibtexEntry({ type: header.type, key }), from, to)
 }
 
@@ -99,40 +110,66 @@ export function parseBibFile(
   // On undo/redo, the extension knows the surviving entry boundaries. Parse
   // only the gap between those entries when every entry in it is complete.
   // Ambiguous/incomplete regions fall back to the original full projection.
-  if (range && trustedWindow &&
-    0 <= trustedWindow.from && trustedWindow.from <= from &&
-    to <= trustedWindow.to && trustedWindow.to <= source.length) {
-    const local = parseBibFile(source.slice(trustedWindow.from, trustedWindow.to))
-    if (local.length && local.every(entry =>
-      entry.sourceFieldRanges !== undefined &&
-      entry.to <= trustedWindow.to - trustedWindow.from &&
-      (entry.from < from - trustedWindow.from ||
-        !source.slice(to, trustedWindow.from + entry.to).trim())
-    )) {
-      return local.filter(entry =>
-        entry.from >= from - trustedWindow.from && entry.from < to - trustedWindow.from
-      ).map(entry => {
-        entry.from += trustedWindow.from
-        entry.to = Math.min(to, entry.to + trustedWindow.from)
-        return entry
-      })
+  if (
+    range &&
+    trustedWindow &&
+    0 <= trustedWindow.from &&
+    trustedWindow.from <= from &&
+    to <= trustedWindow.to &&
+    trustedWindow.to <= source.length
+  ) {
+    const local = parseBibFile(
+      source.slice(trustedWindow.from, trustedWindow.to)
+    )
+    if (
+      local.length &&
+      local.every(
+        entry =>
+          entry.sourceFieldRanges !== undefined &&
+          entry.to <= trustedWindow.to - trustedWindow.from &&
+          (entry.from < from - trustedWindow.from ||
+            !source.slice(to, trustedWindow.from + entry.to).trim())
+      )
+    ) {
+      return local
+        .filter(
+          entry =>
+            entry.from >= from - trustedWindow.from &&
+            entry.from < to - trustedWindow.from
+        )
+        .map(entry => {
+          return Object.assign(entry, {
+            from: entry.from + trustedWindow.from,
+            to: Math.min(to, entry.to + trustedWindow.from),
+          })
+        })
     }
   }
 
   const { entries, blockStarts } = findSyntaxEntryProjection(source)
   let nextBlock = 0
   return entries.flatMap(node => {
-    while (nextBlock < blockStarts.length && blockStarts[nextBlock] <= node.from) nextBlock++
+    while (
+      nextBlock < blockStarts.length &&
+      blockStarts[nextBlock] <= node.from
+    )
+      nextBlock++
     // Incomplete entries leave their content in Junk. Stop at the next Lezer
     // block, including @comment, @string, @preamble and % comments.
-    const end = node.closed ? node.to : (blockStarts[nextBlock] ?? source.length)
+    const end = node.closed
+      ? node.to
+      : (blockStarts[nextBlock] ?? source.length)
     const entryTo = Math.min(end, to)
     if (node.from < from || node.from >= to || entryTo <= node.from) return []
     // An empty citation key is valid source for the visual editor. Upstream
     // cannot parse its fields directly, so use an isolated in-memory projection.
     const keyless = projectKeylessEntry(source.slice(node.from, entryTo))
     if (keyless) {
-      const result = positioned(keyless.entry, node.from, node.from + keyless.close + 1)
+      const result = positioned(
+        keyless.entry,
+        node.from,
+        node.from + keyless.close + 1
+      )
       result.sourceFieldRanges = keyless.fields
       return [result]
     }
@@ -168,13 +205,16 @@ export function parseBibEntryInRange(
   from: number,
   to: number
 ): BibProjectedEntry | null {
-  if (from < 0 || to > source.length || from >= to || source[from] !== '@') return null
+  if (from < 0 || to > source.length || from >= to || source[from] !== '@')
+    return null
   const entries = parseBibFile(source.slice(from, to))
-  if (entries.length !== 1 || entries[0].from !== 0 || entries[0].to !== to - from) {
+  if (
+    entries.length !== 1 ||
+    entries[0].from !== 0 ||
+    entries[0].to !== to - from
+  ) {
     return null
   }
   const entry = entries[0]
-  entry.from = from
-  entry.to = to
-  return entry
+  return Object.assign(entry, { from, to })
 }

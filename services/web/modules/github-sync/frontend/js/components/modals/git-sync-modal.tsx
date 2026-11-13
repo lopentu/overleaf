@@ -21,7 +21,10 @@ import GitSyncConfirmUnlinkModal from './git-sync-confirm-unlink-modal'
 import GitSyncUnlinkUnavailableModal from './git-sync-unlink-unavailable-modal'
 import GitSyncCannotExportModal from './git-sync-cannot-export-modal'
 
-import { GitSyncModalStatus, ProjectSyncState } from '../../types/git-sync-types'
+import {
+  GitSyncModalStatus,
+  ProjectSyncState,
+} from '../../types/git-sync-types'
 
 type GitSyncModalProps = {
   show: boolean
@@ -40,25 +43,18 @@ function GitSyncModal({
   modalStatus,
   setModalStatus,
 }: GitSyncModalProps) {
-
   const { t } = useTranslation()
   const [commitMessage, setCommitMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
 
-const {
-  runAsync: runAsyncConn,
-  error: errorConn,
-  setError: setErrorConn,
-  data: dataConn,
-} = useAsync<boolean>()
+  const { runAsync: runAsyncConn, setError: setErrorConn } = useAsync<boolean>()
 
-const {
-  runAsync,
-  data: projectSyncState,
-  setData: setProjectSyncState,
-  error,
-  setError,
-} = useAsync<ProjectSyncState>()
+  const {
+    runAsync,
+    data: projectSyncState,
+    setData: setProjectSyncState,
+    setError,
+  } = useAsync<ProjectSyncState>()
 
   useEffect(() => {
     if (!show) return
@@ -124,11 +120,10 @@ const {
     }
 
     fetchConnectionStatus()
-
   }, [show, modalStatus, projectId, runAsyncConn, runAsync])
 
   return (
-    <OLModal show={show} onHide={handleHide} backdrop="static" themed="true">
+    <OLModal show={show} onHide={handleHide} backdrop="static" themed>
       <OLModalHeader closeButton>
         <OLModalTitle>{t('sync_with_github')}</OLModalTitle>
       </OLModalHeader>
@@ -150,7 +145,7 @@ const {
         />
       )}
 
-      {modalStatus === 'cannot-export' && (
+      {modalStatus === 'cannot-export' && projectSyncState && (
         <GitSyncCannotExportModal
           projectSyncState={projectSyncState}
           handleHide={handleHide}
@@ -158,19 +153,17 @@ const {
       )}
 
       {modalStatus === 'need-auth' && (
-        <GitSyncNeedAuthModal
-          handleHide={handleHide}
-        />
+        <GitSyncNeedAuthModal handleHide={handleHide} />
       )}
 
-      {modalStatus === 'need-permission' && (
+      {modalStatus === 'need-permission' && projectSyncState && (
         <GitSyncNeedPermissionModal
           handleHide={handleHide}
           projectSyncState={projectSyncState}
         />
       )}
 
-      {modalStatus === 'merge-overview' && (
+      {modalStatus === 'merge-overview' && projectSyncState && (
         <GitSyncMergeOverviewModal
           projectId={projectId}
           projectSyncState={projectSyncState}
@@ -181,7 +174,7 @@ const {
         />
       )}
 
-      {modalStatus === 'confirm-unlink' && (
+      {modalStatus === 'confirm-unlink' && projectSyncState && (
         <GitSyncConfirmUnlinkModal
           projectId={projectId}
           projectSyncState={projectSyncState}
@@ -211,14 +204,13 @@ const {
         />
       )}
 
-      {modalStatus === 'show-conflict' && (
+      {modalStatus === 'show-conflict' && projectSyncState && (
         <GitSyncConflictModal
           projectSyncState={projectSyncState}
           handleHide={handleHide}
           setModalStatus={setModalStatus}
         />
       )}
-
     </OLModal>
   )
 }

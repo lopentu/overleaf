@@ -11,7 +11,10 @@
  * Field labels are shared with the form because the same names appear in both
  * validation messages and the preview's missing-field summary.
  */
-import { missingRequiredFieldGroups, type PositionedBibtexEntry } from './bib-types'
+import {
+  missingRequiredFieldGroups,
+  type PositionedBibtexEntry,
+} from './bib-types'
 import type { BibtexEntry } from '@shared/bibtex/bibtex-entry.mts'
 import { BibtexFieldValue } from '@shared/bibtex/bibtex-field-value.mts'
 import { splitBibtexAnd } from './bib-author-names'
@@ -34,7 +37,11 @@ export function missingRequiredLabels(
 }
 
 /** Adjacent entry, or null at either end of the list. */
-function adjacentEntry<T>(entries: readonly T[], index: number, direction: -1 | 1): T | null {
+function adjacentEntry<T>(
+  entries: readonly T[],
+  index: number,
+  direction: -1 | 1
+): T | null {
   return entries[index + direction] ?? null
 }
 
@@ -62,9 +69,11 @@ export function downloadBibEntryFilename(citationKey: string): string {
 }
 
 /** Download filename for a bulk selection. */
-export function downloadBibBulkFilename(openDocName: string): string {
+export function downloadBibBulkFilename(openDocName: string | null): string {
   const name = (openDocName || '').trim()
-  return name.endsWith('.bib') ? 'selected_' + name : `selected_${name || 'bibliography'}.bib`
+  return name.endsWith('.bib')
+    ? 'selected_' + name
+    : `selected_${name || 'bibliography'}.bib`
 }
 
 /**
@@ -73,7 +82,10 @@ export function downloadBibBulkFilename(openDocName: string): string {
  * title, author, editor, year, date, and venue.
  * (journal/journaltitle/booktitle). Empty query matches everything.
  */
-export function matchesSearch(positioned: PositionedBibtexEntry, query: string): boolean {
+export function matchesSearch(
+  positioned: PositionedBibtexEntry,
+  query: string
+): boolean {
   const q = query.trim().toLowerCase()
   if (q === '') return true
   const entry = positioned.entry
@@ -85,16 +97,19 @@ export function matchesSearch(positioned: PositionedBibtexEntry, query: string):
         .toLowerCase()
         .includes(q)
     )
-  return [
-    entry.key,
-    field('title'),
-    field('year'),
-    field('date'),
-    field('journal'),
-    field('journaltitle'),
-    field('booktitle'),
-  ].some(value => value.toLowerCase().includes(q)) ||
-    matchesNames('author') || matchesNames('editor')
+  return (
+    [
+      entry.key,
+      field('title'),
+      field('year'),
+      field('date'),
+      field('journal'),
+      field('journaltitle'),
+      field('booktitle'),
+    ].some(value => value.toLowerCase().includes(q)) ||
+    matchesNames('author') ||
+    matchesNames('editor')
+  )
 }
 
 /**
@@ -138,7 +153,8 @@ export function splitHighlighted(
     searchFrom = idx + needle.length
     // Two folded substrings can overlap the same original character.
     if (from < sourceEnd) continue
-    if (from > sourceEnd) segments.push({ text: text.slice(sourceEnd, from), match: false })
+    if (from > sourceEnd)
+      segments.push({ text: text.slice(sourceEnd, from), match: false })
     segments.push({ text: text.slice(from, to), match: true })
     sourceEnd = to
   }

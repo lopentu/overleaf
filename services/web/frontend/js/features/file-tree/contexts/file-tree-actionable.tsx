@@ -95,7 +95,6 @@ const FileTreeActionableContext = createContext<
   | undefined
 >(undefined)
 
-/* eslint-disable no-unused-vars */
 enum ACTION_TYPES {
   START_RENAME = 'START_RENAME',
   START_DELETE = 'START_DELETE',
@@ -109,7 +108,6 @@ enum ACTION_TYPES {
   CLEAR = 'CLEAR',
   ERROR = 'ERROR',
 }
-/* eslint-enable no-unused-vars */
 
 type State = {
   isDeleting: boolean
@@ -488,14 +486,17 @@ export const FileTreeActionableProvider: FC<React.PropsWithChildren> = ({
   const finishCreatingLinkedFile = useCallback(
     (entity: Omit<NewLinkedFileEntity, 'endpoint'>) => {
       const shouldReindexReferences = /\.bib$/.test(entity.name)
-      return finishCreatingDocOrFile({ ...entity, endpoint: 'linked_file' }).
-        then(() => {
-          if (shouldReindexReferences) {
-            indexAllReferences(true)
-          }
-        })
+      return finishCreatingDocOrFile({
+        ...entity,
+        endpoint: 'linked_file',
+      }).then(result => {
+        if (shouldReindexReferences) {
+          indexAllReferences(true)
+        }
+        return result
+      })
     },
-    [finishCreatingDocOrFile]
+    [finishCreatingDocOrFile, indexAllReferences]
   )
 
   const cancel = useCallback(() => {

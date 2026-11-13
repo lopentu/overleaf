@@ -28,20 +28,19 @@ type FilterMap = {
 }
 
 const filters: FilterMap = {
-  owned: (project) =>
+  owned: project =>
     project.deleted === false &&
     project.trashed === false &&
     project.owner != null,
 
-  trashed: (project) =>
+  trashed: project =>
     project.deleted === false &&
     project.trashed === true &&
     project.owner != null,
 
-  deleted: (project) =>
-    project.deleted === true,
+  deleted: project => project.deleted === true,
 
-  inactive: (project) =>
+  inactive: project =>
     project.deleted === false &&
     project.trashed === false &&
     project.inactive === true,
@@ -57,7 +56,7 @@ export type ProjectListContextValue = {
   selectFilter: (filter: Filter) => void
   selectedProjectIds: Set<string>
   selectedProjects: Project[]
-  selectOrUnselectAllProjects: React.Dispatch<React.SetStateAction<boolean>>
+  selectOrUnselectAllProjects: (checked: boolean) => void
   searchText: string
   setSearchText: React.Dispatch<React.SetStateAction<string>>
   setSelectedProjectIds: React.Dispatch<React.SetStateAction<Set<string>>>
@@ -71,8 +70,8 @@ export type ProjectListContextValue = {
   currentPage: number
   setCurrentPage: React.Dispatch<React.SetStateAction<number>>
   totalPages: number
-  projectsPerPage: number,
-  setProjectsPerPage: React.Dispatch<React.SetStateAction<number>>,
+  projectsPerPage: number
+  setProjectsPerPage: React.Dispatch<React.SetStateAction<number>>
 }
 
 export const ProjectListContext = createContext<
@@ -84,10 +83,15 @@ type ProjectListProviderProps = {
   children: ReactNode
 }
 
-export function ProjectListProvider({ projectsOwnerId, children }: ProjectListProviderProps) {
+export function ProjectListProvider({
+  projectsOwnerId,
+  children,
+}: ProjectListProviderProps) {
   const { getUserById } = useUserIdentityContext()
 
-  const prefetchedProjectsBlob = projectsOwnerId ? null : getMeta('ol-prefetchedProjectsBlob')
+  const prefetchedProjectsBlob = projectsOwnerId
+    ? null
+    : getMeta('ol-prefetchedProjectsBlob', 'admin')
   const [loadedProjects, setLoadedProjects] = useState<Project[]>(
     prefetchedProjectsBlob?.projects ?? []
   )
@@ -118,8 +122,7 @@ export function ProjectListProvider({ projectsOwnerId, children }: ProjectListPr
 
   const setSearchText: React.Dispatch<React.SetStateAction<string>> = value => {
     setSearchTextState(prev => {
-      const nextValue =
-        typeof value === 'function' ? value(prev) : value
+      const nextValue = typeof value === 'function' ? value(prev) : value
 
       const wasSearching = isSearchingRef.current
       const willSearch = nextValue.length > 0
@@ -153,7 +156,9 @@ export function ProjectListProvider({ projectsOwnerId, children }: ProjectListPr
     if (prefetchedProjectsBlob) return
 
     setLoadProgress(40)
-    runAsync(getProjects({ userId: projectsOwnerId, by: 'lastUpdated', order: 'desc' }))
+    runAsync(
+      getProjects({ userId: projectsOwnerId, by: 'lastUpdated', order: 'desc' })
+    )
       .then(data => {
         setLoadedProjects(data.projects)
         setTotalProjectsCount(data.totalSize)
@@ -189,9 +194,7 @@ export function ProjectListProvider({ projectsOwnerId, children }: ProjectListPr
         }
       }
 
-      return typeof predicate === 'function'
-        ? predicate(project)
-        : true
+      return typeof predicate === 'function' ? predicate(project) : true
     })
   }, [sortedProjects, searchText, filter])
 
@@ -324,7 +327,7 @@ export function ProjectListProvider({ projectsOwnerId, children }: ProjectListPr
       setCurrentPage,
       totalPages,
       projectsPerPage,
-      setProjectsPerPage
+      setProjectsPerPage,
     }),
     [
       error,
@@ -351,7 +354,7 @@ export function ProjectListProvider({ projectsOwnerId, children }: ProjectListPr
       setCurrentPage,
       totalPages,
       projectsPerPage,
-      setProjectsPerPage
+      setProjectsPerPage,
     ]
   )
 

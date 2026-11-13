@@ -9,7 +9,11 @@
 import { Annotation, Extension, Facet, Transaction } from '@codemirror/state'
 import { EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view'
 import { undoDepth, redoDepth } from '@codemirror/commands'
-import { parseBibFile, parseBibEntryAt, parseBibEntryInRange } from '../utils/bib-entry-position'
+import {
+  parseBibFile,
+  parseBibEntryAt,
+  parseBibEntryInRange,
+} from '../utils/bib-entry-position'
 import { keyToCommitOnLeave } from '../utils/bib-key-generation'
 import type { BibProjectedEntry } from '../utils/bib-entry-position'
 import { validateBibSource } from '../utils/bib-source-diagnostics'
@@ -27,8 +31,15 @@ import {
   type BibFieldWriteTarget,
 } from '../utils/bib-write'
 import type { BibtexEntry } from '@shared/bibtex/bibtex-entry.mts'
-import { updateOccurrenceIndexes, nearestEntryAt, getEntryIdentityChanges } from '../utils/bib-editor-identity'
-import type { PreviousBibEntryIdentity, BibEntryIdentityChanges } from '../utils/bib-editor-identity'
+import {
+  updateOccurrenceIndexes,
+  nearestEntryAt,
+  getEntryIdentityChanges,
+} from '../utils/bib-editor-identity'
+import type {
+  PreviousBibEntryIdentity,
+  BibEntryIdentityChanges,
+} from '../utils/bib-editor-identity'
 
 import {
   BIB_ENTRIES_EVENT,
@@ -41,7 +52,10 @@ import {
   BIB_HISTORY_APPLIED_EVENT,
   BIB_REQUEST_STATE_EVENT,
 } from '../utils/bib-editor-events'
-import type { BibEntryIdRemap, BibHistoryUserEvent } from '../utils/bib-editor-events'
+import type {
+  BibEntryIdRemap,
+  BibHistoryUserEvent,
+} from '../utils/bib-editor-events'
 
 export {
   BIB_ENTRIES_EVENT,
@@ -147,19 +161,22 @@ class BibEditorPlugin {
     const oldEntries = this.entries
     // Save ids before recalculating duplicate-key occurrence indexes, since the
     // parsed entries can be reused across projections.
-    const previousIdentities: PreviousBibEntryIdentity[] = oldEntries.map(entry => ({
-      entryId: entry.entry.id,
-      from: entry.from,
-      to: entry.to,
-    }))
+    const previousIdentities: PreviousBibEntryIdentity[] = oldEntries.map(
+      entry => ({
+        entryId: entry.entry.id,
+        from: entry.from,
+        to: entry.to,
+      })
+    )
     const visualTarget = update.transactions
       .map(transaction => transaction.annotation(BIB_VISUAL_TARGET))
       .find(target => target !== undefined)
     const visualUpdate = visualTarget
       ? this.applyVisualChange(update, oldEntries, visualTarget)
       : null
-    const historyEvent = update.transactions.find(transaction =>
-      transaction.isUserEvent('undo') || transaction.isUserEvent('redo')
+    const historyEvent = update.transactions.find(
+      transaction =>
+        transaction.isUserEvent('undo') || transaction.isUserEvent('redo')
     )
 
     if (visualUpdate) {
@@ -168,7 +185,8 @@ class BibEditorPlugin {
       const incremental = historyEvent
         ? this.applyIncrementalChange(update, oldEntries)
         : null
-      this.entries = incremental ?? this.parseEntries(this.view.state.doc.toString())
+      this.entries =
+        incremental ?? this.parseEntries(this.view.state.doc.toString())
     }
 
     this.remapDiagnostics(update, oldEntries)
@@ -185,12 +203,20 @@ class BibEditorPlugin {
       previousIdentities,
       this.entries
     )
-    this.emitState(identityChanges.entryIdRemaps, identityChanges.removedEntryIds)
+    this.emitState(
+      identityChanges.entryIdRemaps,
+      identityChanges.removedEntryIds
+    )
     this.emitHistoryState()
 
     if (!visualUpdate) {
       if (historyEvent) {
-        this.emitHistoryApplied(update, historyEvent, previousIdentities, identityChanges)
+        this.emitHistoryApplied(
+          update,
+          historyEvent,
+          previousIdentities,
+          identityChanges
+        )
       }
       this.scheduleFullValidation()
     }
@@ -207,7 +233,10 @@ class BibEditorPlugin {
       this.dispatchHandler = null
     }
     if (this.requestStateHandler) {
-      document.removeEventListener(BIB_REQUEST_STATE_EVENT, this.requestStateHandler)
+      document.removeEventListener(
+        BIB_REQUEST_STATE_EVENT,
+        this.requestStateHandler
+      )
       this.requestStateHandler = null
     }
     if (this.scrollHandler) {
@@ -239,13 +268,16 @@ class BibEditorPlugin {
     removedEntryIds?: string[]
   ) {
     const diagnosticByOccurrence = new Map<string, BibSourceDiagnostic[]>()
-    const entryByStart = new Map(this.entries.map(entry => [entry.from, entry] as const))
+    const entryByStart = new Map(
+      this.entries.map(entry => [entry.from, entry] as const)
+    )
 
     // Keep all diagnostics for each entry, including independent syntax errors.
     for (const diagnostic of this.diagnostics) {
-      const exact = diagnostic.entryFrom === undefined
-        ? undefined
-        : entryByStart.get(diagnostic.entryFrom)
+      const exact =
+        diagnostic.entryFrom === undefined
+          ? undefined
+          : entryByStart.get(diagnostic.entryFrom)
       const target = exact ?? nearestEntryAt(this.entries, diagnostic.from)
       if (!target) continue
       const messages = diagnosticByOccurrence.get(target.entry.id) ?? []
@@ -263,9 +295,13 @@ class BibEditorPlugin {
         oldDiagnostics.length === nextDiagnostics.length &&
         oldDiagnostics.every((old, index) => {
           const next = nextDiagnostics[index]
-          return old.from === next.from && old.line === next.line &&
-            old.code === next.code && old.field === next.field &&
+          return (
+            old.from === next.from &&
+            old.line === next.line &&
+            old.code === next.code &&
+            old.field === next.field &&
             old.relatedFrom === next.relatedFrom
+          )
         })
       ) {
         return entry
@@ -302,47 +338,70 @@ class BibEditorPlugin {
    * Diagnostics belonging to edited entries are recalculated separately or by
    * the debounced full-document validation.
    */
-  private remapDiagnostics(update: ViewUpdate, previousEntries: PositionedBibtexEntry[]) {
+  private remapDiagnostics(
+    update: ViewUpdate,
+    previousEntries: PositionedBibtexEntry[]
+  ) {
     const changed: Array<{ from: number; to: number }> = []
-    update.changes.iterChangedRanges((fromA, toA) => changed.push({ from: fromA, to: toA }))
+    update.changes.iterChangedRanges((fromA, toA) =>
+      changed.push({ from: fromA, to: toA })
+    )
 
-    const previousEntryByStart = new Map(previousEntries.map(entry => [entry.from, entry] as const))
+    const previousEntryByStart = new Map(
+      previousEntries.map(entry => [entry.from, entry] as const)
+    )
     this.diagnostics = this.diagnostics
       .filter(diagnostic => {
-        const owner = diagnostic.entryFrom === undefined
-          ? undefined
-          : previousEntryByStart.get(diagnostic.entryFrom)
+        const owner =
+          diagnostic.entryFrom === undefined
+            ? undefined
+            : previousEntryByStart.get(diagnostic.entryFrom)
         if (owner) {
-          return !changed.some(range =>
-            range.from < owner.to && range.to > owner.from ||
-            range.from === range.to && range.from > owner.from && range.from < owner.to
+          return !changed.some(
+            range =>
+              (range.from < owner.to && range.to > owner.from) ||
+              (range.from === range.to &&
+                range.from > owner.from &&
+                range.from < owner.to)
           )
         }
-        return !changed.some(range => diagnostic.from >= range.from && diagnostic.from <= range.to)
+        return !changed.some(
+          range => diagnostic.from >= range.from && diagnostic.from <= range.to
+        )
       })
       .map(diagnostic => {
         const from = update.changes.mapPos(diagnostic.from, 1)
-        const entryFrom = diagnostic.entryFrom === undefined
-          ? undefined
-          : update.changes.mapPos(diagnostic.entryFrom, 1)
-        const relatedFrom = diagnostic.relatedFrom === undefined
-          ? undefined
-          : update.changes.mapPos(diagnostic.relatedFrom, 1)
-        return this.withCurrentLine({ ...diagnostic, from, entryFrom, relatedFrom })
+        const entryFrom =
+          diagnostic.entryFrom === undefined
+            ? undefined
+            : update.changes.mapPos(diagnostic.entryFrom, 1)
+        const relatedFrom =
+          diagnostic.relatedFrom === undefined
+            ? undefined
+            : update.changes.mapPos(diagnostic.relatedFrom, 1)
+        return this.withCurrentLine({
+          ...diagnostic,
+          from,
+          entryFrom,
+          relatedFrom,
+        })
       })
       .sort((a, b) => a.from - b.from)
   }
 
-  private withCurrentLine(diagnostic: BibSourceDiagnostic): BibSourceDiagnostic {
+  private withCurrentLine(
+    diagnostic: BibSourceDiagnostic
+  ): BibSourceDiagnostic {
     const document = this.view.state.doc
     const lineAt = (from: number) =>
       document.lineAt(Math.max(0, Math.min(from, document.length))).number
     return {
       ...diagnostic,
       line: lineAt(diagnostic.from),
-      relatedLine: diagnostic.relatedFrom === undefined
-        ? undefined
-        : lineAt(diagnostic.relatedFrom),
+      relatedLine:
+        diagnostic.relatedFrom === undefined
+          ? undefined
+          : lineAt(diagnostic.relatedFrom),
     }
   }
 
@@ -355,9 +414,10 @@ class BibEditorPlugin {
         ...diagnostic,
         from,
         entryFrom: entry.from,
-        relatedFrom: diagnostic.relatedFrom === undefined
-          ? undefined
-          : entry.from + diagnostic.relatedFrom,
+        relatedFrom:
+          diagnostic.relatedFrom === undefined
+            ? undefined
+            : entry.from + diagnostic.relatedFrom,
       })
     })
     this.diagnostics.push(...diagnostics)
@@ -412,7 +472,7 @@ class BibEditorPlugin {
       toLine: doc.lineAt(to).number,
     })
     if (sourceFieldRanges) {
-      (positioned as BibProjectedEntry).sourceFieldRanges = sourceFieldRanges
+      ;(positioned as BibProjectedEntry).sourceFieldRanges = sourceFieldRanges
     }
     setBibEntryDiagnostics(positioned, diagnostics)
     return positioned
@@ -436,9 +496,10 @@ class BibEditorPlugin {
     target: BibVisualTarget
   ): { entries: PositionedBibtexEntry[]; entryFrom: number } | null {
     const source = this.view.state.doc.toString()
-    const previous = target.mode === 'existing'
-      ? oldEntries.find(entry => entry.entry.id === target.entryId)
-      : undefined
+    const previous =
+      target.mode === 'existing'
+        ? oldEntries.find(entry => entry.entry.id === target.entryId)
+        : undefined
     if (target.mode === 'existing' && !previous) return null
 
     const sourceStart = previous
@@ -463,11 +524,25 @@ class BibEditorPlugin {
 
     const entries = oldEntries.map(entry =>
       entry === previous
-        ? this.makePositioned(parsed.entry, parsed.from, parsed.to, [], parsed.sourceFieldRanges)
+        ? this.makePositioned(
+            parsed.entry,
+            parsed.from,
+            parsed.to,
+            [],
+            parsed.sourceFieldRanges
+          )
         : this.mapEntry(update, entry)
     )
     if (target.mode === 'new') {
-      entries.push(this.makePositioned(parsed.entry, parsed.from, parsed.to, [], parsed.sourceFieldRanges))
+      entries.push(
+        this.makePositioned(
+          parsed.entry,
+          parsed.from,
+          parsed.to,
+          [],
+          parsed.sourceFieldRanges
+        )
+      )
     }
     entries.sort((a, b) => a.from - b.from)
     return { entries, entryFrom: parsed.from }
@@ -519,7 +594,15 @@ class BibEditorPlugin {
       const parsed = parseBibEntryAt(source, mappedFrom, mappedTo)
       if (!parsed) return null
 
-      next.push(this.makePositioned(parsed.entry, parsed.from, parsed.to, [], parsed.sourceFieldRanges))
+      next.push(
+        this.makePositioned(
+          parsed.entry,
+          parsed.from,
+          parsed.to,
+          [],
+          parsed.sourceFieldRanges
+        )
+      )
     }
 
     if (change.toB > change.fromB) {
@@ -527,21 +610,30 @@ class BibEditorPlugin {
       // If a neighbor is malformed, use the full Lezer projection instead.
       const before = [...next].reverse().find(entry => entry.to <= change.fromB)
       const after = next.find(entry => entry.from >= change.toB)
-      const trusted = (!before || (before as BibProjectedEntry).sourceFieldRanges) &&
+      const trusted =
+        (!before || (before as BibProjectedEntry).sourceFieldRanges) &&
         (!after || (after as BibProjectedEntry).sourceFieldRanges)
-      const window = trusted ? {
-        from: before?.to ?? 0,
-        to: after?.from ?? source.length,
-      } : undefined
-      const inserted = this.parseEntries(source, {
-        from: change.fromB,
-        to: change.toB,
-      }, window)
+      const window = trusted
+        ? {
+            from: before?.to ?? 0,
+            to: after?.from ?? source.length,
+          }
+        : undefined
+      const inserted = this.parseEntries(
+        source,
+        {
+          from: change.fromB,
+          to: change.toB,
+        },
+        window
+      )
       const existingStarts = new Set(next.map(entry => entry.from))
       for (const entry of inserted) {
         if (
           existingStarts.has(entry.from) ||
-          next.some(current => entry.from > current.from && entry.from < current.to)
+          next.some(
+            current => entry.from > current.from && entry.from < current.to
+          )
         ) {
           continue
         }
@@ -618,9 +710,22 @@ class BibEditorPlugin {
   private setupDispatchListener() {
     this.dispatchHandler = (ev: Event) => {
       const detail = (ev as CustomEvent).detail as
-        | { view: EditorView; accepted?: boolean }
+        | {
+            view: EditorView
+            accepted?: boolean
+            entry?: BibtexEntry
+            entries?: BibtexEntry[]
+            mode: 'existing' | 'new'
+            entryId?: string
+            expectedEntry?: BibtexEntry
+            expectedRevision?: number
+            expectedDocument?: unknown
+            historyUserEvent?: BibHistoryUserEvent
+            fieldTarget?: BibFieldWriteTarget
+          }
         | undefined
-      if (!detail || detail.view !== this.view || this.view.state.readOnly) return
+      if (!detail || detail.view !== this.view || this.view.state.readOnly)
+        return
 
       const {
         entry,
@@ -632,24 +737,16 @@ class BibEditorPlugin {
         expectedDocument,
         historyUserEvent,
         fieldTarget,
-      } = detail as {
-        entry?: BibtexEntry
-        entries?: BibtexEntry[]
-        mode: 'existing' | 'new'
-        entryId?: string
-        expectedEntry?: BibtexEntry
-        expectedRevision?: number
-        expectedDocument?: unknown
-        historyUserEvent?: BibHistoryUserEvent
-        fieldTarget?: BibFieldWriteTarget
-      }
+      } = detail
 
       // Existing field writes target an entry id resolved against the current
       // CodeMirror projection. They intentionally tolerate a React
       // render lag while the user types. Revision/document guards are reserved
       // for structural operations that must not apply to a stale snapshot.
-      const isLiveFieldWrite = ev.type === BIB_WRITE_EVENT &&
-        mode === 'existing' && fieldTarget !== undefined &&
+      const isLiveFieldWrite =
+        ev.type === BIB_WRITE_EVENT &&
+        mode === 'existing' &&
+        fieldTarget !== undefined &&
         entryId !== undefined
       if (
         !isLiveFieldWrite &&
@@ -668,12 +765,18 @@ class BibEditorPlugin {
         if (!entry) return
 
         const source = this.view.state.doc.toString()
-        const current = entryId === undefined
-          ? undefined
-          : this.entries.find(candidate => candidate.entry.id === entryId)
-        const isFieldWrite = mode === 'existing' && fieldTarget !== undefined &&
+        const current =
+          entryId === undefined
+            ? undefined
+            : this.entries.find(candidate => candidate.entry.id === entryId)
+        const isFieldWrite =
+          mode === 'existing' &&
+          fieldTarget !== undefined &&
           entryId !== undefined
-        if (isFieldWrite && (!current || (expectedEntry && current.entry !== expectedEntry))) {
+        if (
+          isFieldWrite &&
+          (!current || (expectedEntry && current.entry !== expectedEntry))
+        ) {
           this.emitWriteFailed('entry-gone')
           ev.preventDefault()
           return
@@ -681,7 +784,9 @@ class BibEditorPlugin {
 
         // Clearing a field that exists only in the form is a source no-op.
         if (
-          isFieldWrite && current && fieldTarget.kind === 'field' &&
+          isFieldWrite &&
+          current &&
+          fieldTarget.kind === 'field' &&
           !entry.hasField(fieldTarget.name) &&
           !current.entry.hasField(fieldTarget.name)
         ) {
@@ -690,14 +795,16 @@ class BibEditorPlugin {
         }
 
         const offset = isFieldWrite && current ? current.from : 0
-        const guard = isFieldWrite && current
-          ? planBibFieldWrite(
-              source.slice(current.from, current.to),
-              entry,
-              fieldTarget,
-              fieldTarget.kind === 'field' && current.entry.hasField(fieldTarget.name)
-            )
-          : planBibWrite(source, entry, mode, current?.from)
+        const guard =
+          isFieldWrite && current
+            ? planBibFieldWrite(
+                source.slice(current.from, current.to),
+                entry,
+                fieldTarget,
+                fieldTarget.kind === 'field' &&
+                  current.entry.hasField(fieldTarget.name)
+              )
+            : planBibWrite(source, entry, mode, current?.from)
 
         if (!guard.ok) {
           this.emitWriteFailed(guard.reason)
@@ -713,11 +820,17 @@ class BibEditorPlugin {
           },
           annotations: [
             Transaction.userEvent.of(
-              historyUserEvent ?? (mode === 'new' ? 'input.complete' : 'input.type')
+              historyUserEvent ??
+                (mode === 'new' ? 'input.complete' : 'input.type')
             ),
-            BIB_VISUAL_TARGET.of(mode === 'existing'
-              ? { mode, entryId, local: isFieldWrite }
-              : { mode, sourceStart: guard.plan.sourceStart ?? guard.plan.from }),
+            BIB_VISUAL_TARGET.of(
+              mode === 'existing'
+                ? { mode, entryId, local: isFieldWrite }
+                : {
+                    mode,
+                    sourceStart: guard.plan.sourceStart ?? guard.plan.from,
+                  }
+            ),
           ],
         })
         detail.accepted = true
@@ -747,7 +860,9 @@ class BibEditorPlugin {
           return
         }
 
-        const byId = new Map(this.entries.map(entry => [entry.entry.id, entry] as const))
+        const byId = new Map(
+          this.entries.map(entry => [entry.entry.id, entry] as const)
+        )
         const starts = ids
           .map(id => byId.get(id)?.from)
           .filter((start): start is number => start !== undefined)
@@ -757,10 +872,7 @@ class BibEditorPlugin {
           return
         }
 
-        const guard = planBibBulkDelete(
-          this.view.state.doc.toString(),
-          starts
-        )
+        const guard = planBibBulkDelete(this.view.state.doc.toString(), starts)
         if (!guard.ok) {
           this.emitWriteFailed(guard.reason)
           return
@@ -816,13 +928,10 @@ class BibEditorPlugin {
 
       const resolvePosition = () => {
         if (detail.entryId) {
-          return this.entries.find(
-            entry => entry.entry.id === detail.entryId
-          )?.from
+          return this.entries.find(entry => entry.entry.id === detail.entryId)
+            ?.from
         }
-        return typeof detail.position === 'number'
-          ? detail.position
-          : undefined
+        return typeof detail.position === 'number' ? detail.position : undefined
       }
 
       if (resolvePosition() === undefined) return
@@ -924,7 +1033,11 @@ class BibEditorPlugin {
             },
             write: measurement => {
               if (cancelled) return
-              if (!measurement || !measurement.usable || measurement.delta === null) {
+              if (
+                !measurement ||
+                !measurement.usable ||
+                measurement.delta === null
+              ) {
                 scrollIssued = false
                 if (performance.now() - startedAt >= 2000) cleanup()
                 else scheduleAlignment()
@@ -935,7 +1048,8 @@ class BibEditorPlugin {
                 const before = viewport.scrollTop
                 viewport.scrollTop = before + measurement.delta
                 const after = viewport.scrollTop
-                const maxScrollTop = viewport.scrollHeight - viewport.clientHeight
+                const maxScrollTop =
+                  viewport.scrollHeight - viewport.clientHeight
                 const cannotScrollFurther =
                   after === before &&
                   ((measurement.delta < 0 && before <= 0) ||
@@ -974,7 +1088,11 @@ class BibEditorPlugin {
 
 const bibEditorPlugin = ViewPlugin.fromClass(BibEditorPlugin)
 
-export function commitBibKeyOnExit(view: EditorView, entryId: string, draft?: BibtexEntry): void {
+export function commitBibKeyOnExit(
+  view: EditorView,
+  entryId: string,
+  draft?: BibtexEntry
+): void {
   view.plugin(bibEditorPlugin)?.commitKeyOnExit(entryId, draft)
 }
 

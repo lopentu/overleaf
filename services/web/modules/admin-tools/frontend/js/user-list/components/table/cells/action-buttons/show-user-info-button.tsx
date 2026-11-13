@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import useIsMounted from '@/shared/hooks/use-is-mounted'
-import { useUserListContext } from '../../../../context/user-list-context'
 import { User } from '../../../../../../../types/user/api'
 import ShowUserInfoModal from '../../../modals/show-user-info-modal'
 
@@ -27,11 +26,6 @@ function ShowUserInfoButton({ user, children }: ShowUserInfoButtonProps) {
       setShowModal(false)
     }
   }, [isMounted])
-
-  const { toggleSelectedUser, updateUserViewData } = useUserListContext()
-  const handleShowUserInfo = useCallback((user: User) => {
-    return performShowUserInfo(user)
-  }, [])
 
   if (user.deleted) return null
 

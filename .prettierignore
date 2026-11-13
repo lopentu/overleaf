@@ -1,0 +1,13 @@
+.yarn/
+.pnp.cjs
+.pnp.loader.mjs
+.cache/
+node_modules/
+**/node_modules/
+**/data/reports/
+**/data/coverage/
+yarn.lock
+services/web/frontend/js/features/source-editor/lezer-latex/latex.mjs
+services/web/frontend/js/features/source-editor/lezer-latex/latex.terms.mjs
+services/web/frontend/js/features/source-editor/lezer-bibtex/bibtex.mjs
+services/web/frontend/js/features/source-editor/lezer-bibtex/bibtex.terms.mjs

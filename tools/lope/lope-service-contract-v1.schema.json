@@ -1,0 +1,384 @@
+{
+  "$defs": {
+    "DashboardContract": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["auto", "declared", "none"],
+          "title": "Mode",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": ["mode", "reason"],
+      "title": "DashboardContract",
+      "type": "object"
+    },
+    "DeploymentContract": {
+      "additionalProperties": false,
+      "properties": {
+        "code_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Code Path"
+        },
+        "config_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Config Path"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Host"
+        },
+        "manifest": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Manifest"
+        },
+        "mechanism": {
+          "anyOf": [
+            {
+              "enum": ["compose", "systemd", "manual"],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mechanism"
+        },
+        "secrets_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Secrets Path"
+        },
+        "state_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "State Path"
+        }
+      },
+      "required": [
+        "mechanism",
+        "host",
+        "manifest",
+        "code_path",
+        "config_path",
+        "secrets_path",
+        "state_path"
+      ],
+      "title": "DeploymentContract",
+      "type": "object"
+    },
+    "DocumentContract": {
+      "additionalProperties": false,
+      "properties": {
+        "handoff": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Handoff"
+        },
+        "operations": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Operations"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recovery"
+        },
+        "rollback": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rollback"
+        }
+      },
+      "required": ["operations", "recovery", "rollback", "handoff"],
+      "title": "DocumentContract",
+      "type": "object"
+    },
+    "NetworkContract": {
+      "additionalProperties": false,
+      "properties": {
+        "functional_checks": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Functional Checks",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "health_urls": {
+          "items": {
+            "format": "uri",
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Health Urls",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "ports": {
+          "items": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "title": "Ports",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": ["ports", "health_urls", "functional_checks"],
+      "title": "NetworkContract",
+      "type": "object"
+    },
+    "ResourceContract": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_cores": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cpu Cores"
+        },
+        "memory_mib": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Memory Mib"
+        },
+        "storage_gib": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Storage Gib"
+        }
+      },
+      "required": ["cpu_cores", "memory_mib", "storage_gib"],
+      "title": "ResourceContract",
+      "type": "object"
+    },
+    "RuntimeContract": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["always-on", "on-demand", "scheduled", "batch"],
+          "title": "Mode",
+          "type": "string"
+        },
+        "start_documented_at": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Start Documented At"
+        },
+        "stop_documented_at": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stop Documented At"
+        }
+      },
+      "required": ["mode", "start_documented_at", "stop_documented_at"],
+      "title": "RuntimeContract",
+      "type": "object"
+    }
+  },
+  "$id": "https://lopen.linguistics.ntu.edu.tw/schemas/lope-service-contract-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Versioned declaration for a managed LOPE lab service.",
+  "properties": {
+    "catalog_refs": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Catalog Refs",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "dashboard": {
+      "$ref": "#/$defs/DashboardContract"
+    },
+    "dependencies": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "title": "Dependencies",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "deployment": {
+      "$ref": "#/$defs/DeploymentContract"
+    },
+    "documents": {
+      "$ref": "#/$defs/DocumentContract"
+    },
+    "id": {
+      "minLength": 1,
+      "pattern": "^service\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "lifecycle": {
+      "enum": ["discovery", "migration-planned", "active", "retired"],
+      "title": "Lifecycle",
+      "type": "string"
+    },
+    "name": {
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "network": {
+      "$ref": "#/$defs/NetworkContract"
+    },
+    "resources": {
+      "$ref": "#/$defs/ResourceContract"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeContract"
+    },
+    "schema": {
+      "const": "lope-service-contract-v1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "catalog_refs",
+    "lifecycle",
+    "runtime",
+    "deployment",
+    "network",
+    "dependencies",
+    "resources",
+    "documents",
+    "dashboard"
+  ],
+  "title": "ServiceContract",
+  "type": "object"
+}

@@ -3,18 +3,22 @@ import OLCol from '@/shared/components/ol/ol-col'
 import OLRow from '@/shared/components/ol/ol-row'
 import GallerySearchSortHeader from './gallery-search-sort-header'
 
-export default function GalleryHeaderTagged({ category }) {
+export default function GalleryHeaderTagged({
+  category,
+}: {
+  category: string
+}) {
   const title = getMeta('og:title')
   const { templateLinks } = getMeta('ol-ExposedSettings') || []
 
-  const description = templateLinks?.find(link => link.url.split("/").pop() === category)?.description
-  const gotoAllLink = (category !== 'all')
+  const description = templateLinks?.find(
+    link => link.url.split('/').pop() === category
+  )?.description
+  const gotoAllLink = category !== 'all'
   return (
     <div className="tagged-header-container">
-      <GallerySearchSortHeader
-        gotoAllLink={gotoAllLink}
-      />
-      { category && (
+      <GallerySearchSortHeader gotoAllLink={gotoAllLink} />
+      {category && (
         <>
           <OLRow>
             <OLCol xs={12}>
