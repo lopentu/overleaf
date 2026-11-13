@@ -33,7 +33,9 @@ Do not substitute that result for a successful production image build.
   backend scope except Python browser-worker tests, which require DOM/JSX and
   are not backend code. Browser runtime is covered by frontend production types.
 - CLSI: original declaration/TypeScript check, plus the real DockerRunner unit
-  suite. The original configuration leaves ordinary unannotated JS unchecked;
+  suite. The bounded archive transfer and ownership tests use a separate strict
+  `tsconfig.archive.json` gate, including `noUncheckedIndexedAccess` and
+  `exactOptionalPropertyTypes`. The original configuration leaves ordinary unannotated JS unchecked;
   this is not a claim of full JavaScript type coverage.
 - New frontend regression tests also have their own strict TypeScript gate,
   `services/web/tsconfig.lope-tests.json`.
@@ -91,3 +93,27 @@ group/other write access, then loads application settings and the native bcrypt
 module as `www-data` under the actual PnP configuration. This build step is
 blocking: a root-only `.yarn` parent must fail the image build rather than first
 appear during service startup. Runtime secrets/state remain external mounts.
+
+## Bounded archive transfer
+
+`BoundedProjectArchive.ts` and the focused `ArchiveFileIo.ts` helper stream
+validated project inputs and untrusted compiler outputs. They are an adapter
+foundation, not an activated replacement runner. The input directory and output
+parent must be private/trusted and protected from concurrent mutation; extraction
+creates a new output directory and never overwrites an existing one.
+
+Limits are 4,096 entries, 50 MiB/file and 100 MiB total input; output is
+16 MiB/file and 64 MiB total, with bounded metadata/wire parsing. Links, devices,
+noncanonical/traversing/duplicate paths and unsafe parents are rejected. UID/GID
+and modes are normalized. Errors cancel the source and settle writers before
+removing only the newly created partial output. FileHandle ownership stays with
+the caller: custom bounded I/O avoids native/PnP stream double-close on abort.
+Tests include active-I/O failure/cancellation and partial writes, not just happy
+paths and pre-aborted signals. CI runs these same blocking regressions.
+
+Use a uniquely named, labeled local-driver tmpfs volume for native archive
+transfer under a read-only root; ordinary Docker tmpfs variants did not establish
+working upload visibility. Pause the container before output collection and
+remove its exact container/volume. Rootless mounts, aggregate memory accounting,
+queue/restart cleanup, authenticated transport and production integration still
+require separate acceptance. Canonical fleet evidence lives in server-utils.

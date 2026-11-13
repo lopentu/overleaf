@@ -13,7 +13,8 @@
     "nodemon": "node --watch app.js",
     "lint": "eslint --cache --cache-location ../../.cache/eslint/ --max-warnings 0 .",
     "lint:fix": "eslint --cache --cache-location ../../.cache/eslint/ --fix .",
-    "types:check": "tsc --noEmit"
+    "types:check": "tsc --noEmit",
+    "types:archive": "tsc -p tsconfig.archive.json --noEmit"
   },
   "dependencies": {
     "@overleaf/fetch-utils": "workspace:*",
@@ -36,11 +37,13 @@
     "p-limit": "^3.1.0",
     "send": "^0.19.0",
     "tar-fs": "^3.1.1",
+    "tar-stream": "3.1.8",
     "workerpool": "^6.1.5"
   },
   "devDependencies": {
     "@istanbuljs/esm-loader-hook": "^0.3.0",
     "@types/node": "^24.5.2",
+    "@types/tar-stream": "3.1.4",
     "chai": "^4.3.6",
     "chai-as-promised": "^7.1.1",
     "eslint": "^10.4.0",

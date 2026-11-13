@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "include": [
+    "app/js/BoundedProjectArchive.ts",
+    "test/unit/js/BoundedProjectArchive.test.ts",
+    "test/unit/js/BoundedProjectArchiveOwnership.test.ts"
+  ]
+}
