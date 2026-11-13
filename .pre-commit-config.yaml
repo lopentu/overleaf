@@ -80,6 +80,7 @@ repos:
         entry: >-
           corepack yarn workspace @overleaf/web exec vitest run
           --config vitest.config.js modules/track-changes/test/unit
+          modules/admin-tools/test/unit
           test/unit/src/Chat/ChatApiHandler.test.mjs
           test/unit/src/LinkedFiles/LinkedFilesController.test.mjs
           test/unit/src/Subscription/CustomerIoPlanHelpers.test.mjs

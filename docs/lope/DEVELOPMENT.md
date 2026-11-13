@@ -39,7 +39,7 @@ Do not substitute that result for a successful production image build.
   `services/web/tsconfig.lope-tests.json`.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
-  and template settings. Unit tests do not replace actual migration or sandbox
+  and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox
   acceptance. Empty focused selections must fail.
 - Changed-source lint: explicit JS/TS configuration with zero warnings. Format
   uses existing single quotes, no semicolons, omitted single-arg arrow parens
@@ -59,3 +59,15 @@ version equivalence to the current stock image is unverified. Re-run every gate,
 review the source diff, build reproducibly and exercise isolated restore before
 promotion. Preserve the stock rollback until feature/security/migration tests
 have passed. No CI deployment or production credentials are configured here.
+
+## Candidate image baseline
+
+Do not use the inherited default `sharelatex/sharelatex-base:latest` as a
+compatible build base: the inspected digest
+`sha256:be5ab5c8c7e9575a29d9d2aab973eeae192ff52f382c9b3e1be6a959cbb05e2e`
+contains Node 16.20.0. Build `server-ce/Dockerfile-base` from its current Noble/
+Node 24 recipe, resolve its OS base to an immutable digest, then supply the
+resulting base explicitly as `OVERLEAF_BASE_TAG` to `server-ce/Dockerfile`.
+Keep dependency and build logs, output image ID, installed versions and source
+revision as private evidence. A successful image build is still separate from
+application, compiler isolation, migration and restore acceptance.

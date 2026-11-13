@@ -1,3 +1,5 @@
+// @ts-check
+
 import logger from '@overleaf/logger'
 import UserListController from './UserListController.mjs'
 import ProjectListController from './ProjectListController.mjs'
@@ -6,13 +8,15 @@ import AuthorizationMiddleware from '../../../../app/src/Features/Authorization/
 import AuthenticationController from '../../../../app/src/Features/Authentication/AuthenticationController.mjs'
 
 export default {
+  /** @param {import('express').Router} webRouter */
   apply(webRouter) {
     logger.debug({}, 'Init AdminTools router')
 
     webRouter.get('/user/activate', UserListController.activateAccountPage)
     AuthenticationController.addEndpointToLoginWhitelist('/user/activate')
 
-    webRouter.get('/admin/user',
+    webRouter.get(
+      '/admin/user',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.manageUsersPage
     )
@@ -21,67 +25,88 @@ export default {
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.registerNewUser
     )
-    webRouter.post('/admin/user/:userId/send-activation',
+    webRouter.post(
+      '/admin/user/:userId/send-activation',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.sendActivationEmail
     )
-    webRouter.get('/admin/user/:userId/info',
+    webRouter.get(
+      '/admin/user/:userId/info',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
-      UserListController.getAdditionalUserInfo,
+      UserListController.getAdditionalUserInfo
     )
-    webRouter.post('/admin/users',
+    webRouter.post(
+      '/admin/users',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.getUsersJson
     )
-    webRouter.post('/admin/user/:userId/delete',
+    webRouter.post(
+      '/admin/user/:userId/delete',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.deleteUser
     )
-    webRouter.post('/admin/user/:userId/update',
+    webRouter.post(
+      '/admin/user/:userId/update',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
-      UserListController.updateUser,
+      UserListController.updateUser
     )
-    webRouter.delete('/admin/user/:userId',
+    webRouter.delete(
+      '/admin/user/:userId',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.purgeDeletedUser
     )
-    webRouter.post('/admin/user/:userId/restore',
+    webRouter.post(
+      '/admin/user/:userId/restore',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       UserListController.restoreDeletedUser
     )
-    webRouter.post('/admin/user/:userId/projects',
+    webRouter.post(
+      '/admin/user/:userId/projects',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.getProjectsJson
     )
 
-    webRouter.get('/admin/project',
+    webRouter.post(
+      '/admin/projects',
+      AuthorizationMiddleware.ensureUserIsSiteAdmin,
+      ProjectListController.getProjectsJson
+    )
+
+    webRouter.get(
+      '/admin/project',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.manageProjectsPage
     )
-    webRouter.post('/admin/project/:project_id/trash',
+    webRouter.post(
+      '/admin/project/:project_id/trash',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.trashProjectForUser
     )
-    webRouter.post('/admin/project/:project_id/untrash',
+    webRouter.post(
+      '/admin/project/:project_id/untrash',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.untrashProjectForUser
     )
-    webRouter.delete('/admin/project/:project_id/purge',
+    webRouter.delete(
+      '/admin/project/:project_id/purge',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.purgeDeletedProject
     )
-    webRouter.delete('/admin/project/:project_id',
+    webRouter.delete(
+      '/admin/project/:project_id',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.deleteProject
     )
-    webRouter.post('/admin/project/:project_id/undelete',
+    webRouter.post(
+      '/admin/project/:project_id/undelete',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
       ProjectListController.undeleteProject
     )
 
-    webRouter.get('/admin/active-projects',
+    webRouter.get(
+      '/admin/active-projects',
       AuthorizationMiddleware.ensureUserIsSiteAdmin,
-      AdminToolsController.activeProjects,
+      AdminToolsController.activeProjects
     )
   },
 }
