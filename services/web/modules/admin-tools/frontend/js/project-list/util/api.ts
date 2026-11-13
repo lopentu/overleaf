@@ -12,7 +12,9 @@ export function getProjects(params: {
   order: Sort['order']
 }): Promise<GetProjectsResponseBody> {
   const { userId, ...sort } = params
-  return postJSON(`/admin/user/${userId}/projects`, { body: { sort } })
+  const path =
+    userId === null ? '/admin/projects' : `/admin/user/${userId}/projects`
+  return postJSON<GetProjectsResponseBody>(path, { body: { sort } })
 }
 
 export function deleteProject(projectId: string) {

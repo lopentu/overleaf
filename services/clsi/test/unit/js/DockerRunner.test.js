@@ -491,6 +491,40 @@ describe('DockerRunner', () => {
     })
   })
 
+  describe('sandbox resource defaults', () => {
+    it('limits aggregate CPU, process count and memory including swap', ctx => {
+      const options = ctx.DockerRunner._getContainerOptions(
+        ['pdflatex', 'main.tex'],
+        ctx.image,
+        { ...ctx.volumes },
+        42000,
+        {},
+        ctx.compileGroup,
+        null
+      )
+      expect(options.HostConfig.NanoCpus).to.equal(1_000_000_000)
+      expect(options.HostConfig.PidsLimit).to.equal(256)
+      expect(options.HostConfig.MemorySwap).to.equal(options.HostConfig.Memory)
+    })
+
+    it('uses a read-only root and bounded home without anonymous volumes by default', ctx => {
+      const options = ctx.DockerRunner._getContainerOptions(
+        ['pdflatex', 'main.tex'],
+        ctx.image,
+        { ...ctx.volumes },
+        42000,
+        {},
+        ctx.compileGroup,
+        null
+      )
+      expect(options.HostConfig.ReadonlyRootfs).to.equal(true)
+      expect(options.HostConfig.Tmpfs['/home/tex']).to.equal(
+        'rw,noexec,nosuid,nodev,size=16777216,mode=1777'
+      )
+      expect(options).not.to.have.property('Volumes')
+    })
+  })
+
   describe('read-only sandbox', () => {
     it('keeps root immutable while providing bounded temporary space and a writable home', ctx => {
       ctx.Settings.clsi.docker.Readonly = true
@@ -505,9 +539,10 @@ describe('DockerRunner', () => {
       )
       expect(options.HostConfig.ReadonlyRootfs).to.equal(true)
       expect(options.HostConfig.Tmpfs).to.deep.equal({
-        '/tmp': 'rw,noexec,nosuid,size=65536k',
+        '/tmp': 'rw,noexec,nosuid,nodev,size=67108864,mode=1777',
+        '/home/tex': 'rw,noexec,nosuid,nodev,size=16777216,mode=1777',
       })
-      expect(options.Volumes).to.deep.equal({ '/home/tex': {} })
+      expect(options).not.to.have.property('Volumes')
       expect(options.NetworkDisabled).to.equal(true)
       expect(options.HostConfig.CapDrop).to.deep.equal(['ALL'])
       expect(options.HostConfig.SecurityOpt).to.include('no-new-privileges')

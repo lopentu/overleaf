@@ -148,6 +148,8 @@ if ((process.env.DOCKER_RUNNER || process.env.SANDBOXED_COMPILES) === 'true') {
         process.env.ALL_TEX_LIVE_DOCKER_IMAGES.split(',')[0].trim(),
       env: {
         HOME: '/tmp',
+        TEXMFVAR: '/tmp/texmf-var',
+        TEXMFCONFIG: '/tmp/texmf-config',
         CLSI: 1,
       },
       socketPath: '/var/run/docker.sock',

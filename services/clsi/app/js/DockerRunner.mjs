@@ -8,6 +8,10 @@ import LockManager from './DockerLockManager.js'
 import Path from 'node:path'
 import _ from 'lodash'
 import { getLastProjectAccessTime } from './LastProjectAccess.js'
+import {
+  sandboxResourceLimits,
+  sandboxTemporaryDirectories,
+} from './SandboxResources.mjs'
 
 const dockerode = new Docker()
 
@@ -257,8 +261,7 @@ const DockerRunner = {
       User: Settings.clsi.docker.user,
       Env: Object.entries(env).map(([key, value]) => `${key}=${value}`),
       HostConfig: {
-        // Memory only takes effect inside HostConfig
-        Memory: 1024 * 1024 * 1024, // 1 Gb
+        ...sandboxResourceLimits(),
         Binds: Object.entries(volumes).map(
           ([hostVol, dockerVol]) => `${hostVol}:${dockerVol}`
         ),
@@ -291,10 +294,9 @@ const DockerRunner = {
       options.HostConfig.Runtime = Settings.clsi.docker.runtime
     }
 
-    if (Settings.clsi.docker.Readonly) {
+    if (Settings.clsi.docker.Readonly !== false) {
       options.HostConfig.ReadonlyRootfs = true
-      options.HostConfig.Tmpfs = { '/tmp': 'rw,noexec,nosuid,size=65536k' }
-      options.Volumes = { '/home/tex': {} }
+      options.HostConfig.Tmpfs = sandboxTemporaryDirectories()
     }
 
     // Allow per-compile group overriding of individual settings
