@@ -6,13 +6,12 @@ import useIsMounted from '@/shared/hooks/use-is-mounted'
 import { useUserListContext } from '../../../../context/user-list-context'
 import { User } from '../../../../../../../types/user/api'
 import SendRegEmailModal from '../../../modals/send-reg-email-modal'
-import { performSendRegEmail } from '../../../../util/user-actions'
+import { performSendRegEmail, PostActions } from '../../../../util/user-actions'
 
-function SendRegEmailsButton({ action }: { action: string }) {
-  const { selectedUsers, toggleSelectedUser } =
-    useUserListContext()
+function SendRegEmailsButton() {
+  const { selectedUsers, toggleSelectedUser } = useUserListContext()
   const { t } = useTranslation()
-  const text = t(action)
+  const text = t('resend')
 
   const [showModal, setShowModal] = useState(false)
   const isMounted = useIsMounted()

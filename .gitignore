@@ -4,3 +4,26 @@
 # user defined files
 .env
 docker-compose.override.yml
+
+# Generated Yarn PnP state and development caches (keep .yarn/patches tracked).
+.pnp.cjs
+.pnp.loader.mjs
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/unplugged/
+.cache/
+__pycache__/
+.pre-commit-cache/
+
+# Generated parser modules; regenerate with web's lezer-latex:generate script.
+services/web/frontend/js/features/source-editor/lezer-latex/latex.mjs
+services/web/frontend/js/features/source-editor/lezer-latex/latex.terms.mjs
+services/web/frontend/js/features/source-editor/lezer-bibtex/bibtex.mjs
+services/web/frontend/js/features/source-editor/lezer-bibtex/bibtex.terms.mjs
+**/node_modules/
+
+# Isolated CI hook runner environment.
+.lope-tools/
+
+# Local hook cache.
+.pre-commit/

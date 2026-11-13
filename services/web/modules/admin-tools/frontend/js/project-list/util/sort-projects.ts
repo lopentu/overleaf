@@ -7,16 +7,16 @@ const order = (order: SortingOrder, projects: Project[]) => {
   return order === 'asc' ? [...projects] : projects.reverse()
 }
 
-function cmp(a, b) {
-  const aEmpty = a == null || a === ""
-  const bEmpty = b == null || b === ""
+function cmp(a: string | null | undefined, b: string | null | undefined) {
+  const aEmpty = a == null || a === ''
+  const bEmpty = b == null || b === ''
   if (aEmpty) return Compare.SORT_A_AFTER_B
   if (bEmpty) return Compare.SORT_A_BEFORE_B
   return a.localeCompare(b)
 }
 
 export const ownerNameComparator =
-  (getUserById: (userId: string) => User | null) =>
+  (getUserById: (userId: string | null | undefined) => User | undefined) =>
   (v1: Project, v2: Project) => {
     const user1 = getUserById(v1.owner)
     const user2 = getUserById(v2.owner)
@@ -63,9 +63,9 @@ export const defaultComparator = (
 }
 
 export default function sortProjects(
-  projects: Project[], 
+  projects: Project[],
   sort: Sort,
-  getUserById: (userId: string) => string
+  getUserById: (userId: string | null | undefined) => User | undefined
 ) {
   let sorted = [...projects]
 

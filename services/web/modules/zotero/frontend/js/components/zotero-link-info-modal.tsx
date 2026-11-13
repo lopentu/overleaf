@@ -19,7 +19,11 @@ type ZoteroLinkInfoModalProps = {
   handleHide: () => void
 }
 
-const ZoteroLinkInfoModal = ({ show, isError, handleHide }: ZoteroLinkInfoModalProps) => {
+const ZoteroLinkInfoModal = ({
+  show,
+  isError,
+  handleHide,
+}: ZoteroLinkInfoModalProps) => {
   const { t } = useTranslation()
   const [showUnlinkInfo, setShowUnlinkInfo] = useState(false)
 
@@ -33,7 +37,9 @@ const ZoteroLinkInfoModal = ({ show, isError, handleHide }: ZoteroLinkInfoModalP
   const handleUnlink = () => {
     runAsyncUnlink(deleteJSON('/user/zotero'))
       .then(handleHide)
-      .catch(err => debugConsole.error(err?.data?.message || err?.message || err))
+      .catch(err =>
+        debugConsole.error(err?.data?.message || err?.message || err)
+      )
   }
 
   useEffect(() => {
@@ -43,14 +49,17 @@ const ZoteroLinkInfoModal = ({ show, isError, handleHide }: ZoteroLinkInfoModalP
   }, [show, resetUnlink])
 
   return (
-    <OLModal show={show} onHide={handleHide} backdrop="static" themed="true">
+    <OLModal show={show} onHide={handleHide} backdrop="static" themed>
       <OLModalHeader closeButton>
         <OLModalTitle>{t('zotero_integration')}</OLModalTitle>
       </OLModalHeader>
 
       <OLModalBody>
         {isErrorUnlink && (
-          <Notification type="error" content={t('generic_something_went_wrong')} />
+          <Notification
+            type="error"
+            content={t('generic_something_went_wrong')}
+          />
         )}
         {showUnlinkInfo ? (
           <Notification
@@ -96,10 +105,7 @@ const ZoteroLinkInfoModal = ({ show, isError, handleHide }: ZoteroLinkInfoModalP
             {t('unlink')}
           </OLButton>
         )}
-        <OLButton
-          variant="secondary"
-          onClick={handleHide}
-        >
+        <OLButton variant="secondary" onClick={handleHide}>
           {t('close')}
         </OLButton>
       </OLModalFooter>

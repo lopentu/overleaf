@@ -1,3 +1,10 @@
+> **LOPE development fork:** based on Overleaf CE+. The current production
+> service remains on its separately managed stock image. See
+> [development and blocking checks](docs/lope/DEVELOPMENT.md),
+> [workflow acceptance matrix](docs/lope/FEATURE_MATRIX.md), and
+> [candidate operations](docs/lope/OPERATIONS.md). Fork creation is not
+> production, migration or sandbox acceptance.
+
 <h1 align="center">
   <br>
   <a href="https://www.overleaf.com"><img src="doc/logo.png" alt="Overleaf" width="300"></a>
@@ -38,14 +45,14 @@ The present "extended" version of Overleaf CE includes:
 - GitHub synchronization
 - Zotero integration
 - Reference Search and Pick Tool
-- Document Import (`.docx`, `.md`) and Export (`.docx`, `.md`, `.html`) 
+- Document Import (`.docx`, `.md`) and Export (`.docx`, `.md`, `.html`)
 - Advanced administrator tools for managing user accounts and projects
 - Python script runner
 - Logo tools
 
 > [!CAUTION]
-> Overleaf Community Edition is intended for use in environments where **all** users are trusted. Community Edition is **not** appropriate for scenarios where isolation of users is required due to Sandbox Compiles not being available. When not using Sandboxed Compiles, users have full read and write access to the `sharelatex` container resources (filesystem, network, environment variables) when running LaTeX compiles. 
-Therefore, in any environment where not all users can be fully trusted, it is strongly recommended to enable the Sandboxed Compiles feature available in the Extended Community Edition.
+> Overleaf Community Edition is intended for use in environments where **all** users are trusted. Community Edition is **not** appropriate for scenarios where isolation of users is required due to Sandbox Compiles not being available. When not using Sandboxed Compiles, users have full read and write access to the `sharelatex` container resources (filesystem, network, environment variables) when running LaTeX compiles.
+> Therefore, in any environment where not all users can be fully trusted, it is strongly recommended to enable the Sandboxed Compiles feature available in the Extended Community Edition.
 
 For more information on Sandbox Compiles check out Overleaf [documentation](https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/sandboxed-compiles).
 

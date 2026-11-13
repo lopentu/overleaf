@@ -18,17 +18,33 @@ import { User } from '../../../../../types/user/api'
 
 type UsersActionModalProps = {
   title?: string
-  action: 'info' | 'update' | 'delete' | 'purge' | 'restore' | 'suspend' | 'resume' | 'set_admin' | 'unset_admin' | 'resend'
+  action:
+    | 'info'
+    | 'update'
+    | 'delete'
+    | 'purge'
+    | 'restore'
+    | 'suspend'
+    | 'resume'
+    | 'set_admin'
+    | 'unset_admin'
+    | 'resend'
   actionHandler?: (user: User, options?: any) => Promise<void>
   handleCloseModal: () => void
   users: Array<User>
   options?: any
   showModal: boolean
-  actionIsDisabled?: boolean 
+  actionIsDisabled?: boolean
   children?: React.ReactNode
 }
 
-const greenActions = new Set(['update', 'restore', 'resume', 'unset_admin', 'resend'])
+const greenActions = new Set([
+  'update',
+  'restore',
+  'resume',
+  'unset_admin',
+  'resend',
+])
 const redActions = new Set(['delete', 'purge', 'set_admin', 'suspend'])
 
 function UsersActionModal({
@@ -47,14 +63,18 @@ function UsersActionModal({
   const [isProcessing, setIsProcessing] = useState(false)
   const isMounted = useIsMounted()
 
-  const variant =
-    redActions.has(action) ? 'danger' :
-    greenActions.has(action) ? 'primary' : 'secondary'
+  const variant = redActions.has(action)
+    ? 'danger'
+    : greenActions.has(action)
+      ? 'primary'
+      : 'secondary'
 
   const actionLabel =
-    action === 'update' ? t('confirm') :
-    action === 'info' ? t('close') :
-    t(action)
+    action === 'update'
+      ? t('confirm')
+      : action === 'info'
+        ? t('close')
+        : t(action)
 
   async function handleActionForUsers(users: Array<User>, options?: any) {
     const errored = []
@@ -98,17 +118,13 @@ function UsersActionModal({
       onHide={handleCloseModal}
       id="action-user-modal"
       backdrop="static"
-      themed="true"
+      themed
     >
       <OLModalHeader>
         <OLModalTitle>{title}</OLModalTitle>
       </OLModalHeader>
       <OLModalBody>
-      <OLForm 
-        id="action-user-form"
-      >
-        {children}
-      </OLForm>
+        <OLForm id="action-user-form">{children}</OLForm>
         {!isProcessing &&
           errors.length > 0 &&
           errors.map((error, i) => (

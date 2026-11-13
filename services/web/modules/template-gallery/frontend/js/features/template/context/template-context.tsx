@@ -1,18 +1,18 @@
 import {
   createContext,
-  FC,
-  useCallback,
+  Dispatch,
+  SetStateAction,
+  ReactNode,
   useContext,
   useState,
   useMemo,
 } from 'react'
-import useEventListener from '@/shared/hooks/use-event-listener'
 import getMeta from '@/utils/meta'
 import { Template } from '../../../../../types/template'
 
 type TemplateContextType = {
   template: Template
-  setTemplate: (template: Template) => void
+  setTemplate: Dispatch<SetStateAction<Template>>
 }
 
 export const TemplateContext = createContext<TemplateContextType | undefined>(
@@ -20,10 +20,10 @@ export const TemplateContext = createContext<TemplateContextType | undefined>(
 )
 
 type TemplateProviderProps = {
-  loadedTemplate: Template
+  children: ReactNode
 }
 
-export const TemplateProvider: FC<TemplateProviderProps> = ({ children }) => {
+export const TemplateProvider = ({ children }: TemplateProviderProps) => {
   const loadedTemplate = useMemo(() => getMeta('ol-template'), [])
   const [template, setTemplate] = useState(loadedTemplate)
 
@@ -45,9 +45,7 @@ export const TemplateProvider: FC<TemplateProviderProps> = ({ children }) => {
 export const useTemplateContext = () => {
   const context = useContext(TemplateContext)
   if (!context) {
-    throw new Error(
-      `useTemplateContext must be used within a TemplateProvider`
-    )
+    throw new Error(`useTemplateContext must be used within a TemplateProvider`)
   }
   return context
 }

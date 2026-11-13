@@ -491,6 +491,29 @@ describe('DockerRunner', () => {
     })
   })
 
+  describe('read-only sandbox', () => {
+    it('keeps root immutable while providing bounded temporary space and a writable home', ctx => {
+      ctx.Settings.clsi.docker.Readonly = true
+      const options = ctx.DockerRunner._getContainerOptions(
+        ['pdflatex', 'main.tex'],
+        ctx.image,
+        { ...ctx.volumes },
+        42000,
+        {},
+        ctx.compileGroup,
+        null
+      )
+      expect(options.HostConfig.ReadonlyRootfs).to.equal(true)
+      expect(options.HostConfig.Tmpfs).to.deep.equal({
+        '/tmp': 'rw,noexec,nosuid,size=65536k',
+      })
+      expect(options.Volumes).to.deep.equal({ '/home/tex': {} })
+      expect(options.NetworkDisabled).to.equal(true)
+      expect(options.HostConfig.CapDrop).to.deep.equal(['ALL'])
+      expect(options.HostConfig.SecurityOpt).to.include('no-new-privileges')
+    })
+  })
+
   describe('run with _getOptions', () => {
     beforeEach(async ctx => {
       await new Promise((resolve, reject) => {

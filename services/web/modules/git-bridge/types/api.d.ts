@@ -1,7 +1,7 @@
 export type Token = {
   _id: string
   accessTokenPartial: string
-  created_at: string
+  createdAt: string
   lastUsedAt?: string
   expiresAt: string
 }

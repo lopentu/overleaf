@@ -17,7 +17,6 @@ import { useFocusTrap } from '../../hooks/use-focus-trap'
 import TemplateFormFields from '../form/template-form-fields'
 import type { Template } from '../../../../../../types/template'
 
-
 interface ManageTemplateModalContentProps {
   handleHide: () => void
   inFlight: boolean
@@ -46,7 +45,9 @@ export default function ManageTemplateModalContent({
   const [override, setOverride] = useState(false)
   const [titleConflict, setTitleConflict] = useState(false)
   const [error, setError] = useState<string | false>(false)
-  const [notificationType, setNotificationType] = useState<'error' | 'warning'>('error')
+  const [notificationType, setNotificationType] = useState<'error' | 'warning'>(
+    'error'
+  )
   const [disablePublish, setDisablePublish] = useState(false)
 
   // Only the trimmed name gates submission
@@ -55,7 +56,7 @@ export default function ManageTemplateModalContent({
   useEffect(() => {
     const queryParams = new URLSearchParams({ key: 'name', val: projectName })
     getJSON(`/api/template?${queryParams}`)
-      .then((data) => {
+      .then(data => {
         if (!data) return
         setTemplate(prev => ({
           ...prev,
@@ -71,7 +72,7 @@ export default function ManageTemplateModalContent({
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (!valid) return
+    if (!valid || !pdfFile) return
 
     setError(false)
     setInFlight(true)
@@ -157,11 +158,17 @@ export default function ManageTemplateModalContent({
         <OLButton
           id="submit-publish-template"
           variant={override ? 'danger' : 'primary'}
-          disabled={inFlight || !valid || disablePublish}
+          disabled={inFlight || !valid || !pdfFile || disablePublish}
           form="publish-template-form"
           type="submit"
         >
-          {inFlight ? <>{t('publishing')}…</> : override ? t('overwrite') : t('publish')}
+          {inFlight ? (
+            <>{t('publishing')}…</>
+          ) : override ? (
+            t('overwrite')
+          ) : (
+            t('publish')
+          )}
         </OLButton>
       </OLModalFooter>
     </div>

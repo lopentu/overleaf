@@ -18,7 +18,7 @@ import { useFocusTrap } from '../../hooks/use-focus-trap'
 
 type TemplateActionModalProps = {
   title: string
-  size?: string
+  size?: React.ComponentProps<typeof OLModal>['size']
   action: 'delete' | 'edit'
   actionHandler: (template: Template) => Promise<void>
   handleCloseModal: () => void
@@ -46,7 +46,9 @@ function TemplateActionModal({
   onClearError,
 }: TemplateActionModalProps) {
   const { t } = useTranslation()
-  const [error, setError] = useState<false | { name: string; error: unknown }>(false)
+  const [error, setError] = useState<false | { name: string; error: Error }>(
+    false
+  )
   const [isProcessing, setIsProcessing] = useState(false)
   const isMounted = useIsMounted()
   const modalRef = useRef<HTMLDivElement>(null)
@@ -67,7 +69,10 @@ function TemplateActionModal({
     try {
       await actionHandler(template)
     } catch (e) {
-      errored = { name: template.name, error: e }
+      errored = {
+        name: template.name,
+        error: e instanceof Error ? e : new Error(String(e)),
+      }
     }
 
     if (isMounted.current) {

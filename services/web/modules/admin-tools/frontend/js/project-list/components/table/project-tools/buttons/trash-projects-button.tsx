@@ -34,7 +34,6 @@ function TrashProjectsButton() {
     updateProjectViewData({
       ...project,
       trashed: true,
-      archived: false,
     })
   }
 

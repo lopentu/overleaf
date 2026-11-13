@@ -2,22 +2,25 @@ import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
 import UsersActionModal from './users-action-modal'
-import UsersList from './users-list'
-import Notification from '@/shared/components/notification'
 import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
 import OLFormCheckbox from '@/shared/components/ol/ol-form-checkbox'
-import OLButton from '@/shared/components/ol/ol-button'
 import OLRow from '@/shared/components/ol/ol-row'
 import OLCol from '@/shared/components/ol/ol-col'
+import type { User } from '../../../../../types/user/api'
 import { useRefWithAutoFocus } from '@/shared/hooks/use-ref-with-auto-focus'
 
 type UpdateUserModalProps = Pick<
   React.ComponentProps<typeof UsersActionModal>,
   'users' | 'actionHandler' | 'showModal' | 'handleCloseModal'
 >
-const pickUserFields = ({ firstName, lastName, email, isAdmin }) => ({ firstName, lastName, email, isAdmin })
+const pickUserFields = ({ firstName, lastName, email, isAdmin }: User) => ({
+  firstName,
+  lastName,
+  email,
+  isAdmin,
+})
 
 function UpdateUserModal({
   users,
@@ -65,7 +68,7 @@ function UpdateUserModal({
         <OLFormLabel>{t('email_address')}</OLFormLabel>
         <OLFormControl
           ref={autoFocusedRef}
-          maxLength="128"
+          maxLength={128}
           autoComplete="off"
           type="text"
           name="email"
@@ -76,7 +79,7 @@ function UpdateUserModal({
       <OLFormGroup controlId="first-name">
         <OLFormLabel>{t('first_name')}</OLFormLabel>
         <OLFormControl
-          maxLength="128"
+          maxLength={128}
           autoComplete="off"
           type="text"
           name="firstName"
@@ -88,7 +91,7 @@ function UpdateUserModal({
       <OLFormGroup controlId="last-name">
         <OLFormLabel>{t('last_name')}</OLFormLabel>
         <OLFormControl
-          maxLength="128"
+          maxLength={128}
           autoComplete="off"
           type="text"
           name="lastName"

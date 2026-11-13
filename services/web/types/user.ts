@@ -1,4 +1,4 @@
-import { SharingPermissions } from '../modules/sharing-permissions/app/src/types'
+import { SharingPermissions } from './sharing-permissions'
 import { Brand } from './helpers/brand'
 
 export type RefProviders = {

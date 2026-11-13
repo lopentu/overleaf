@@ -1,9 +1,6 @@
 import { useTranslation, Trans } from 'react-i18next'
 import Notification from '@/shared/components/notification'
-import {
-  OLModalBody,
-  OLModalFooter,
-} from '@/shared/components/ol/ol-modal'
+import { OLModalBody, OLModalFooter } from '@/shared/components/ol/ol-modal'
 import OLButton from '@/shared/components/ol/ol-button'
 import { ProjectSyncState } from '../../types/git-sync-types'
 
@@ -12,14 +9,17 @@ type GitSyncNeedPermissionModalProps = {
   handleHide: () => void
 }
 
-const GitSyncNeedPermissionModal = ({ projectSyncState, handleHide }: GitSyncConflictModalProps) => {
+const GitSyncNeedPermissionModal = ({
+  projectSyncState,
+  handleHide,
+}: GitSyncNeedPermissionModalProps) => {
   const { t } = useTranslation()
   return (
     <>
       <OLModalBody>
         <Notification
           type="warning"
-          content={(
+          content={
             <Trans
               i18nKey="ask_proj_owner_to_add_you_as_github_collaborator"
               values={{
@@ -36,17 +36,18 @@ const GitSyncNeedPermissionModal = ({ projectSyncState, handleHide }: GitSyncCon
                 ) : (
                   <></>
                 ),
-                projectSyncState.ownerEmail ? <a href={`mailto:${projectSyncState.ownerEmail}`} /> : <></>
+                projectSyncState.ownerEmail ? (
+                  <a href={`mailto:${projectSyncState.ownerEmail}`} />
+                ) : (
+                  <></>
+                ),
               ]}
             />
-          )}
+          }
         />
       </OLModalBody>
       <OLModalFooter>
-        <OLButton
-          variant="secondary"
-          onClick={handleHide}
-        >
+        <OLButton variant="secondary" onClick={handleHide}>
           {t('close')}
         </OLButton>
       </OLModalFooter>

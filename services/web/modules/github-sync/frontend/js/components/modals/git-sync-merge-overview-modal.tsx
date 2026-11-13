@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import useAsync from '@/shared/hooks/use-async'
-import { getJSON } from '@/infrastructure/fetch-json'
+import { FetchError, getJSON } from '@/infrastructure/fetch-json'
 import { OLModalBody, OLModalFooter } from '@/shared/components/ol/ol-modal'
 import OLForm from '@/shared/components/ol/ol-form'
 import OLFormGroup from '@/shared/components/ol/ol-form-group'
@@ -12,7 +12,10 @@ import OLButton from '@/shared/components/ol/ol-button'
 import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import Notification from '@/shared/components/notification'
 import { debugConsole } from '@/utils/debugging'
-import { ProjectSyncState, GitSyncModalStatus } from '../../types/git-sync-types'
+import {
+  ProjectSyncState,
+  GitSyncModalStatus,
+} from '../../types/git-sync-types'
 
 type GitSyncMergeOverviewModalProps = {
   handleHide: () => void
@@ -21,7 +24,6 @@ type GitSyncMergeOverviewModalProps = {
   projectId: string
   commitMessage: string
   setCommitMessage: (message: string) => void
-
 }
 
 type GitCommit = {
@@ -46,31 +48,31 @@ const GitSyncMergeOverviewModal = ({
   projectSyncState,
   projectId,
   commitMessage,
-  setCommitMessage
+  setCommitMessage,
 }: GitSyncMergeOverviewModalProps) => {
   const { t } = useTranslation()
   const appName = 'Overleaf'
 
-  const {
-    data,
-    setData,
-    error,
-    isSuccess,
-    isLoading,
-    runAsync,
-  } = useAsync<UnmergedCommitsResponse | null>()
+  const { data, setData, error, isSuccess, isLoading, runAsync } = useAsync<
+    UnmergedCommitsResponse | null,
+    FetchError
+  >()
 
   const loadUnmergedCommits = () => {
-    setData({})
+    setData(null)
 
     runAsync(getJSON(`/project/${projectId}/github-sync/merge/overview`))
-      .then(data => { if (!data) setModalStatus('loading') })
+      .then(data => {
+        if (!data) setModalStatus('loading')
+      })
       .catch(err => {
         debugConsole.error(err?.data?.message || err?.message || err)
-        if (err?.info?.statusCode === 403 ||
-            err?.info?.statusCode === 404 ||
-            err?.info?.statusCode === 401
-        ) setModalStatus('loading')
+        if (
+          err?.info?.statusCode === 403 ||
+          err?.info?.statusCode === 404 ||
+          err?.info?.statusCode === 401
+        )
+          setModalStatus('loading')
       })
   }
 
@@ -105,7 +107,7 @@ const GitSyncMergeOverviewModal = ({
           </>
         )}
 
-        {isSuccess && (
+        {isSuccess && data && (
           <>
             <hr />
 
@@ -177,8 +179,10 @@ const GitSyncMergeOverviewModal = ({
                           as="textarea"
                           rows={1}
                           value={commitMessage}
-                          placeholder={t('github_commit_message_placeholder', { appName })}
-                          onChange={(e) => setCommitMessage(e.target.value)}
+                          placeholder={t('github_commit_message_placeholder', {
+                            appName,
+                          })}
+                          onChange={e => setCommitMessage(e.target.value)}
                         />
                       </OLFormGroup>
                     </OLCol>
@@ -195,17 +199,15 @@ const GitSyncMergeOverviewModal = ({
             content={t('generic_something_went_wrong')}
           />
         )}
-
       </OLModalBody>
 
       <OLModalFooter>
         <div className="d-flex justify-content-between w-100">
-
           <div className="d-flex gap-2">
             <OLButton
               variant="danger-ghost"
               onClick={() => setModalStatus('confirm-unlink')}
-              disabled={!isSuccess && error?.info?.statusCode !== 404}
+              disabled={!isSuccess && error?.response?.status !== 404}
             >
               {t('unlink')}
             </OLButton>
@@ -221,14 +223,10 @@ const GitSyncMergeOverviewModal = ({
               {t('sync')}
             </OLButton>
 
-            <OLButton
-              variant="secondary"
-              onClick={handleHide}
-            >
+            <OLButton variant="secondary" onClick={handleHide}>
               {t('close')}
             </OLButton>
           </div>
-
         </div>
       </OLModalFooter>
     </>

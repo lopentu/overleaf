@@ -5,7 +5,7 @@ import SettingsMenuSelect from './settings-menu-select'
 import type { Option } from './settings-menu-select'
 
 interface SettingsTemplateCategoryProps {
-  value: string
+  value?: string
   onChange: (value: string) => void
 }
 

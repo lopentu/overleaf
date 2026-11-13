@@ -35,11 +35,7 @@ export default function DeleteTokenModal({
   }
 
   const handleDelete = () => {
-    runAsync(
-      deleteJSON(`/git-bridge/personal-access-tokens/${tokenId}`, {
-        body: { _csrf: window.csrfToken },
-      })
-    )
+    runAsync(deleteJSON(`/git-bridge/personal-access-tokens/${tokenId}`))
       .then(() => {
         onDeleted(tokenId)
         handleClose()
@@ -67,7 +63,11 @@ export default function DeleteTokenModal({
       </OLModalBody>
 
       <OLModalFooter>
-        <OLButton variant="secondary" onClick={handleClose} disabled={isLoading}>
+        <OLButton
+          variant="secondary"
+          onClick={handleClose}
+          disabled={isLoading}
+        >
           {t('cancel')}
         </OLButton>
 

@@ -1,8 +1,13 @@
+export type TemplateListEntry = Pick<
+  Template,
+  'id' | 'version' | 'name' | 'lastUpdated' | 'author' | 'description'
+>
+
 export type Template = {
   id: string
-  version: number
+  version: string
   name: string
-  lastUpdated: Date
+  lastUpdated: string
   author: string
   authorMD: string
   description: string
@@ -11,6 +16,7 @@ export type Template = {
   category: string
   compiler?: string
   language?: string
+  mainFile: string
+  imageName?: string
   owner: string
 }
-

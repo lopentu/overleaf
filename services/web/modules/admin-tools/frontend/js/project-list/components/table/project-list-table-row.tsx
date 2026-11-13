@@ -1,5 +1,4 @@
 import { memo } from 'react'
-import OwnerCell from './cells/owner-cell'
 import DateCell from './cells/date-cell'
 import { Filter } from '../../context/project-list-context'
 import ActionsCell from './cells/actions-cell'
@@ -14,13 +13,19 @@ type ProjectListTableRowProps = {
   selected: boolean
   filter: Filter
 }
-function ProjectListTableRow({ project, selected, filter }: ProjectListTableRowProps) {
+function ProjectListTableRow({
+  project,
+  selected,
+  filter,
+}: ProjectListTableRowProps) {
   const { getUserNameById } = useUserIdentityContext()
   const ownerName = getUserNameById(project.owner)
-  const actorName = filter !== 'deleted' ?
-    getUserNameById(project.lastUpdatedBy) :
-    getUserNameById(project.deleterId)
-  const eventDate = filter !== 'deleted' ? project.lastUpdated : project.deletedAt
+  const actorName =
+    filter !== 'deleted'
+      ? getUserNameById(project.lastUpdatedBy)
+      : getUserNameById(project.deleterId)
+  const eventDate =
+    filter !== 'deleted' ? project.lastUpdated : project.deletedAt
 
   return (
     <tr className={selected ? 'table-active' : undefined}>
@@ -31,10 +36,10 @@ function ProjectListTableRow({ project, selected, filter }: ProjectListTableRowP
         {project.name}
       </td>
       <td className="dash-cell-date-owner pb-0 d-md-none">
-        <DateCell 
-          projectId={project.id} 
+        <DateCell
+          projectId={project.id}
           actorName={actorName}
-          date={eventDate} 
+          date={eventDate}
         />
         <ProjectListOwnerName ownerName={ownerName} />
       </td>
@@ -42,10 +47,10 @@ function ProjectListTableRow({ project, selected, filter }: ProjectListTableRowP
         <span translate="no">{ownerName}</span>
       </td>
       <td className="dash-cell-date d-none d-md-table-cell">
-        <DateCell 
-          projectId={project.id} 
+        <DateCell
+          projectId={project.id}
           actorName={actorName}
-          date={eventDate} 
+          date={eventDate}
         />
       </td>
       <td className="dash-cell-actions">

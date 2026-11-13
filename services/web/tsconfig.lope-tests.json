@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "test/frontend/features/file-tree/flows/create-linked-file.test.tsx",
+    "modules/github-sync/test/frontend/modal-state.test.tsx",
+    "test/frontend/modules/admin-tools/unit/*.test.ts",
+    "test/frontend/modules/template-gallery/unit/*.test.tsx",
+    "types/**/*.*"
+  ]
+}

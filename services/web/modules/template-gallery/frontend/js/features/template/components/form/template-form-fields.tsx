@@ -37,7 +37,7 @@ function TemplateFormFields({
       <LabeledRowFormGroup controlId="form-title" label={t('title') + ':'}>
         <FormFieldInput
           required
-          maxLength="255"
+          maxLength={255}
           value={template.name ?? ''}
           placeholder={t('title')}
           onChange={e => onChange({ name: e.target.value })}
@@ -47,7 +47,7 @@ function TemplateFormFields({
 
       <LabeledRowFormGroup controlId="form-author" label={t('author') + ':'}>
         <FormFieldInput
-          maxLength="255"
+          maxLength={255}
           value={template.authorMD ?? ''}
           placeholder={t('author')}
           onChange={e => onChange({ authorMD: e.target.value })}
@@ -55,18 +55,24 @@ function TemplateFormFields({
         />
       </LabeledRowFormGroup>
 
-      <LabeledRowFormGroup controlId="form-category" label={t('category') + ':'}>
+      <LabeledRowFormGroup
+        controlId="form-category"
+        label={t('category') + ':'}
+      >
         <SettingsTemplateCategory
           value={template.category}
           onChange={val => onChange({ category: val })}
         />
       </LabeledRowFormGroup>
 
-      <LabeledRowFormGroup controlId="form-description" label={t('description') + ':'}>
+      <LabeledRowFormGroup
+        controlId="form-description"
+        label={t('description') + ':'}
+      >
         <FormFieldInput
           as="textarea"
           rows={8}
-          maxLength="5000"
+          maxLength={5000}
           value={template.descriptionMD ?? ''}
           placeholder={t('description')}
           onChange={e => onChange({ descriptionMD: e.target.value })}
@@ -82,7 +88,10 @@ function TemplateFormFields({
       </LabeledRowFormGroup>
 
       {includeLanguage && (
-        <LabeledRowFormGroup controlId="form-language" label={t('language') + ':'}>
+        <LabeledRowFormGroup
+          controlId="form-language"
+          label={t('language') + ':'}
+        >
           <SettingsLanguage
             value={template.language}
             onChange={val => onChange({ language: val })}

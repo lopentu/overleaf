@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { useProjectContext } from '@/shared/context/project-context'
-import { OLModal } from '@/shared/components/ol/ol-modal'
 import IntegrationCard from '@/features/integrations-panel/integration-card.tsx'
 import GitLogoOrange from '@/shared/svgs/git-logo-orange'
 import GitModal from './git-modal'
@@ -17,6 +16,7 @@ function GitSyncCard() {
   return (
     <>
       <IntegrationCard
+        showPaywallBadge={false}
         title={t('git')}
         description={t('git_clone_this_project')}
         icon={<GitLogoOrange size={32} />}

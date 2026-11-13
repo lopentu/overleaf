@@ -3,7 +3,14 @@
  * changes (including temporarily invalid input); the host decides when and
  * whether to commit them to CodeMirror. Abstract uses the same field model.
  */
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
+import {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+} from 'react'
 import { BIBTEX_IDENTIFIER_REGEX } from '@shared/bibtex/bibtex-identifier.mts'
 import { getAllEntryTypes, getEntryType } from '@shared/bibtex/entry-types.mts'
 import { useTranslation } from 'react-i18next'
@@ -37,7 +44,11 @@ import {
 } from '../utils/bib-validate'
 import { helperKeyForField } from '../utils/bib-form-helper'
 import { fieldLabel } from '../utils/bib-field-labels'
-import { fromBibFormString, sameBibFormValue, toBibFormString } from '../utils/bib-field-edit'
+import {
+  fromBibFormString,
+  sameBibFormValue,
+  toBibFormString,
+} from '../utils/bib-field-edit'
 import {
   createAuthorDraft,
   isAuthorDraftValid,
@@ -84,10 +95,17 @@ type Props = {
   /** Disable the primary action while the host is saving. */
   submitDisabled?: boolean
   /** Supplies the modal host with the current submit action and disabled state. */
-  onFooterStateChange?: (state: { disabled: boolean; submit: () => void }) => void
+  onFooterStateChange?: (state: {
+    disabled: boolean
+    submit: () => void
+  }) => void
 }
 
-import { BibEntryTypeCombobox, BibAddFieldCombobox, displayCustomType } from './bib-entry-form-comboboxes'
+import {
+  BibEntryTypeCombobox,
+  BibAddFieldCombobox,
+  displayCustomType,
+} from './bib-entry-form-comboboxes'
 import BibNameField, { resizeTextarea } from './bib-name-field'
 
 const ENTRY_TYPES = getAllEntryTypes()
@@ -110,10 +128,9 @@ function shouldBlockSubmission({
   return (
     submitDisabled ||
     unbalancedCurlyBraces ||
-    (kind === 'new' && (
-      hasPendingStructuralErrors ||
-      hasBlockingValidationErrors(validationResult)
-    ))
+    (kind === 'new' &&
+      (hasPendingStructuralErrors ||
+        hasBlockingValidationErrors(validationResult)))
   )
 }
 
@@ -138,12 +155,15 @@ export default function BibEntryForm({
   const { t } = useTranslation()
   // This set initializes a ref; changing props must not reset validation of
   // the user's in-progress name rows. Compute it only on the first render.
-  const [initiallyInvalidNameFields] = useState(() => NAME_FIELDS.filter(field =>
-    !isAuthorDraftValid(
-      initialNameDrafts?.[field] ??
-        createAuthorDraft(toBibFormString(entry.getField(field), field))
+  const [initiallyInvalidNameFields] = useState(() =>
+    NAME_FIELDS.filter(
+      field =>
+        !isAuthorDraftValid(
+          initialNameDrafts?.[field] ??
+            createAuthorDraft(toBibFormString(entry.getField(field), field))
+        )
     )
-  ))
+  )
   const [draft, setDraft] = useState(entry)
   const draftRef = useRef(entry)
   // BibtexFieldValue.toEditableString() uses canonical escaping (e.g. # -> ##).
@@ -159,7 +179,8 @@ export default function BibEntryForm({
   // Previews share this state per open file; standalone forms own it locally.
   const [localOptionalExpanded, setLocalOptionalExpanded] = useState(false)
   const optionalExpanded = sharedOptionalExpanded ?? localOptionalExpanded
-  const setOptionalExpanded = onOptionalExpandedChange ?? setLocalOptionalExpanded
+  const setOptionalExpanded =
+    onOptionalExpandedChange ?? setLocalOptionalExpanded
   const [checked, setChecked] = useState(false)
   // Optional controls remain mounted after their value is cleared. They disappear
   // only when this form instance is recreated (for example, after reopening).
@@ -169,7 +190,9 @@ export default function BibEntryForm({
   const [removedOptionals, setRemovedOptionals] = useState<string[]>([])
   // Each name-list row is validated separately: concatenating two malformed
   // rows could otherwise accidentally produce balanced braces.
-  const pendingInvalidFieldsRef = useRef(new Set<string>(initiallyInvalidNameFields))
+  const pendingInvalidFieldsRef = useRef(
+    new Set<string>(initiallyInvalidNameFields)
+  )
   const nameDraftValid = (field: string) =>
     !pendingInvalidFieldsRef.current.has(field)
 
@@ -215,7 +238,8 @@ export default function BibEntryForm({
           targetValueIsValid = true
           break
         default:
-          targetValueIsValid = citationKeyIsWritable && !draftHasUnbalancedBraces
+          targetValueIsValid =
+            citationKeyIsWritable && !draftHasUnbalancedBraces
       }
       const targetIsValid = fieldIsValid && targetValueIsValid
 
@@ -275,7 +299,12 @@ export default function BibEntryForm({
     // A source edit from outside this form takes precedence over locally
     // preserved input spelling. Local writes retain the same canonical value.
     for (const [field, input] of fieldInputRef.current) {
-      if (!sameBibFormValue(input.canonical, toBibFormString(entry.getField(field), field))) {
+      if (
+        !sameBibFormValue(
+          input.canonical,
+          toBibFormString(entry.getField(field), field)
+        )
+      ) {
         fieldInputRef.current.delete(field)
       }
     }
@@ -311,7 +340,10 @@ export default function BibEntryForm({
   const starMembers = new Set(missingRequiredFieldGroups(draft).flat())
 
   const validationResult = useMemo(() => validateEntry(draft), [draft])
-  const sourceValidationResult = useMemo(() => validateEntry(sourceEntry), [sourceEntry])
+  const sourceValidationResult = useMemo(
+    () => validateEntry(sourceEntry),
+    [sourceEntry]
+  )
   const checkResult = checked ? validationResult : null
 
   const unbalancedCurlyBraces =
@@ -358,7 +390,11 @@ export default function BibEntryForm({
   // Expand Optional to expose structural errors or format warnings. A syntax
   // error takes precedence over a format warning in the same field.
   const hasInvalidOptionalField = optionalRows.some(fieldName => {
-    if (!hasBalancedCurlyBraces(toBibFormString(draft.getField(fieldName), fieldName))) {
+    if (
+      !hasBalancedCurlyBraces(
+        toBibFormString(draft.getField(fieldName), fieldName)
+      )
+    ) {
       return true
     }
     const sourceMessage = !draft.hasField(fieldName)
@@ -374,9 +410,7 @@ export default function BibEntryForm({
   const offeredFields = useMemo(
     () =>
       offeredOptionalFields(entryTypeDef).filter(
-        field =>
-          !optionalRows.includes(field) &&
-          !fieldRows.includes(field)
+        field => !optionalRows.includes(field) && !fieldRows.includes(field)
       ),
     [entryTypeDef, optionalRows, fieldRows]
   )
@@ -404,7 +438,9 @@ export default function BibEntryForm({
       nameDraft?: BibAuthorDraft
     ) => {
       const current = draftRef.current
-      const next = (getFieldType(name) === 'large' ? value !== '' : value.trim() !== '')
+      const next = (
+        getFieldType(name) === 'large' ? value !== '' : value.trim() !== ''
+      )
         ? current.setField(
             name,
             fromBibFormString(value, name, current.getField(name))
@@ -423,26 +459,37 @@ export default function BibEntryForm({
         else fieldInputRef.current.set(name, { text: value, canonical })
       }
       reportDraft(
-        next, historyUserEvent, name, rawValueIsValid,
-        { kind: 'field', name }, nameDraft
+        next,
+        historyUserEvent,
+        name,
+        rawValueIsValid,
+        { kind: 'field', name },
+        nameDraft
       )
     },
     [reportDraft]
   )
 
-  const handleGenerateKey = useCallback((focusAfter: boolean) => {
-    const current = draftRef.current
-    // Existing entries may reuse their own source key; new entries may not.
-    const key = generateAvailableCitationKey(
-      current, existingIds, kind === 'new' ? undefined : sourceEntry.key
-    )
-    reportDraft(current.setKey(key), 'input.complete', 'id', true, { kind: 'citation-key' })
-    if (focusAfter) {
-      requestAnimationFrame(() => {
-        document.getElementById(`${idPrefix}ref-key`)?.focus()
+  const handleGenerateKey = useCallback(
+    (focusAfter: boolean) => {
+      const current = draftRef.current
+      // Existing entries may reuse their own source key; new entries may not.
+      const key = generateAvailableCitationKey(
+        current,
+        existingIds,
+        kind === 'new' ? undefined : sourceEntry.key
+      )
+      reportDraft(current.setKey(key), 'input.complete', 'id', true, {
+        kind: 'citation-key',
       })
-    }
-  }, [existingIds, idPrefix, kind, reportDraft, sourceEntry.key])
+      if (focusAfter) {
+        requestAnimationFrame(() => {
+          document.getElementById(`${idPrefix}ref-key`)?.focus()
+        })
+      }
+    },
+    [existingIds, idPrefix, kind, reportDraft, sourceEntry.key]
+  )
 
   const hasPendingStructuralErrors = pendingInvalidFieldsRef.current.size > 0
   const submissionBlocked =
@@ -484,14 +531,18 @@ export default function BibEntryForm({
   useEffect(() => {
     onFooterStateChange?.({
       disabled: submissionBlocked,
-      submit: () => { void handleCheck() },
+      submit: () => {
+        void handleCheck()
+      },
     })
   }, [handleCheck, onFooterStateChange, submissionBlocked])
 
   const handleTypeChange = useCallback(
     (name: string) => {
       const nextEntry = draftRef.current.setType(name)
-      reportDraft(nextEntry, 'input.complete', 'type', true, { kind: 'entry-type' })
+      reportDraft(nextEntry, 'input.complete', 'type', true, {
+        kind: 'entry-type',
+      })
       setEntryTypeSelected(true)
       setChecked(false)
       setVisibleOptionals([])
@@ -503,27 +554,29 @@ export default function BibEntryForm({
     const normalized = field.trim().toLowerCase()
     if (!BIBTEX_IDENTIFIER_REGEX.test(normalized)) return
 
-    setRemovedOptionals(previous => previous.filter(name => name !== normalized))
+    setRemovedOptionals(previous =>
+      previous.filter(name => name !== normalized)
+    )
     pendingOptionalFocusRef.current = normalized
     setVisibleOptionals(prev =>
       prev.includes(normalized) ? prev : [...prev, normalized]
     )
   }, [])
 
-  const handleRemoveOptional = useCallback((field: string) => {
-    fieldInputRef.current.delete(field)
-    setRemovedOptionals(previous =>
-      previous.includes(field) ? previous : [...previous, field]
-    )
-    setVisibleOptionals(previous => previous.filter(name => name !== field))
-    reportDraft(
-      draftRef.current.deleteField(field),
-      'delete',
-      field,
-      true,
-      { kind: 'field', name: field }
-    )
-  }, [reportDraft])
+  const handleRemoveOptional = useCallback(
+    (field: string) => {
+      fieldInputRef.current.delete(field)
+      setRemovedOptionals(previous =>
+        previous.includes(field) ? previous : [...previous, field]
+      )
+      setVisibleOptionals(previous => previous.filter(name => name !== field))
+      reportDraft(draftRef.current.deleteField(field), 'delete', field, true, {
+        kind: 'field',
+        name: field,
+      })
+    },
+    [reportDraft]
+  )
 
   const selectedType = ENTRY_TYPES.find(et => et.key === type)
 
@@ -578,12 +631,9 @@ export default function BibEntryForm({
   const messageFor = (fieldName: string): string | null => {
     // Syntax errors take priority only within their own field. Citation keys
     // are validated as identifiers and must never receive brace/backslash errors.
-    const fieldHasSyntaxError =
-      isNameField(fieldName)
-        ? !nameDraftValid(fieldName)
-        : !hasBalancedCurlyBraces(
-            draft.getField(fieldName).toEditableString()
-          )
+    const fieldHasSyntaxError = isNameField(fieldName)
+      ? !nameDraftValid(fieldName)
+      : !hasBalancedCurlyBraces(draft.getField(fieldName).toEditableString())
     if (fieldHasSyntaxError) return null
 
     let msg: ReturnType<typeof validateEntry>['byField'][string] | undefined
@@ -635,13 +685,18 @@ export default function BibEntryForm({
       firstStructuralField ??
       (keyNeedsFocus
         ? undefined
-        : fields.find(fieldName =>
-            validationResult.byField[fieldName] != null ||
-            (!draft.hasField(fieldName) &&
-              sourceValidationResult.byField[fieldName] != null)
+        : fields.find(
+            fieldName =>
+              validationResult.byField[fieldName] != null ||
+              (!draft.hasField(fieldName) &&
+                sourceValidationResult.byField[fieldName] != null)
           ))
 
-    if (firstWrongField && optionalRows.includes(firstWrongField) && !optionalExpanded) {
+    if (
+      firstWrongField &&
+      optionalRows.includes(firstWrongField) &&
+      !optionalExpanded
+    ) {
       setOptionalExpanded(true)
       return
     }
@@ -673,7 +728,8 @@ export default function BibEntryForm({
   // Ordinary fields show their own brace warning. Author and Editor validate
   // their name inputs individually, so they render feedback inside the control.
   const renderField = (fieldName: string) => {
-    const isAbstractPreview = previewTab !== undefined && fieldName === 'abstract'
+    const isAbstractPreview =
+      previewTab !== undefined && fieldName === 'abstract'
     const isStarred = starMembers.has(fieldName)
     const isOptional = optionalRows.includes(fieldName)
     const message = messageFor(fieldName)
@@ -681,12 +737,13 @@ export default function BibEntryForm({
     const canonical = toBibFormString(draft.getField(fieldName), fieldName)
     const typeOfField = getFieldType(fieldName)
     const input = fieldInputRef.current.get(fieldName)
-    const value = input && sameBibFormValue(input.canonical, canonical)
-      ? input.text
-      : typeOfField === 'large' &&
-          sourceEntry.getField(fieldName).toEditableString() === canonical
-        ? textareaSourceValues?.[fieldName] ?? canonical
-        : canonical
+    const value =
+      input && sameBibFormValue(input.canonical, canonical)
+        ? input.text
+        : typeOfField === 'large' &&
+            sourceEntry.getField(fieldName).toEditableString() === canonical
+          ? (textareaSourceValues?.[fieldName] ?? canonical)
+          : canonical
     const unbalanced = !hasBalancedCurlyBraces(value)
     const braceFeedback = typeOfField !== 'name' && unbalanced && (
       <BibEntryFeedback message={t('curly_braces_must_be_balanced')} />
@@ -694,51 +751,66 @@ export default function BibEntryForm({
     const messageFeedback = message && (
       <BibEntryFeedback message={message} variant="warning" />
     )
-    const fieldControl = typeOfField === 'name' ? (
-      <BibNameField
-        key={draftReset?.version ?? 0}
-        fieldName={fieldName}
-        value={value}
-        initialDraft={initialNameDrafts?.[fieldName]}
-        onChange={(val, historyUserEvent, fieldIsValid, nameDraft) =>
-          handleFieldChange(fieldName, val, historyUserEvent, fieldIsValid, nameDraft)
-        }
-        error={!!message}
-        idPrefix={idPrefix}
-      />
-    ) : typeOfField === 'large' ? (
-      <OLFormControl
-        as="textarea"
-        ref={isAbstractPreview ? undefined : resizeTextarea}
-        id={`${idPrefix}${fieldName}`}
-        className={`${isOptional ? 'bibtex-form-input ' : ''}${
-          fieldName === 'abstract' ? 'bibtex-abstract-textarea' : ''
-        } ${message || unbalanced ? 'is-invalid' : ''}`}
-        maxLength={fieldName === 'abstract' ? '8192' : '4096'}
-        autoComplete="off"
-        value={value}
-        onChange={e => handleFieldChange(fieldName, e.target.value)}
-        onInput={isAbstractPreview ? undefined : event => {
-          resizeTextarea(event.currentTarget)
-        }}
-        rows={isAbstractPreview ? 18 : 1}
-      />
-    ) : (
-      <OLFormControl
-        id={`${idPrefix}${fieldName}`}
-        className={`${isOptional ? 'bibtex-form-input ' : ''}${
-          message || unbalanced ? 'is-invalid' : ''
-        }`}
-        maxLength="512"
-        type="text"
-        value={value}
-        onChange={e => handleFieldChange(fieldName, e.target.value)}
-      />
-    )
+    const fieldControl =
+      typeOfField === 'name' ? (
+        <BibNameField
+          key={draftReset?.version ?? 0}
+          fieldName={fieldName}
+          value={value}
+          initialDraft={initialNameDrafts?.[fieldName]}
+          onChange={(val, historyUserEvent, fieldIsValid, nameDraft) =>
+            handleFieldChange(
+              fieldName,
+              val,
+              historyUserEvent,
+              fieldIsValid,
+              nameDraft
+            )
+          }
+          error={!!message}
+          idPrefix={idPrefix}
+        />
+      ) : typeOfField === 'large' ? (
+        <OLFormControl
+          as="textarea"
+          ref={isAbstractPreview ? undefined : resizeTextarea}
+          id={`${idPrefix}${fieldName}`}
+          className={`${isOptional ? 'bibtex-form-input ' : ''}${
+            fieldName === 'abstract' ? 'bibtex-abstract-textarea' : ''
+          } ${message || unbalanced ? 'is-invalid' : ''}`}
+          maxLength={fieldName === 'abstract' ? 8192 : 4096}
+          autoComplete="off"
+          value={value}
+          onChange={e => handleFieldChange(fieldName, e.target.value)}
+          onInput={
+            isAbstractPreview
+              ? undefined
+              : event => {
+                  resizeTextarea(event.currentTarget)
+                }
+          }
+          rows={isAbstractPreview ? 18 : 1}
+        />
+      ) : (
+        <OLFormControl
+          id={`${idPrefix}${fieldName}`}
+          className={`${isOptional ? 'bibtex-form-input ' : ''}${
+            message || unbalanced ? 'is-invalid' : ''
+          }`}
+          maxLength={512}
+          type="text"
+          value={value}
+          onChange={e => handleFieldChange(fieldName, e.target.value)}
+        />
+      )
 
     return (
       <div
-        className={isAbstractPreview ? 'form-group bibtex-abstract-form-group' : 'form-group'}
+        className={
+          isAbstractPreview
+            ? 'form-group bibtex-abstract-form-group'
+            : 'form-group'
+        }
         key={fieldName}
       >
         <OLFormLabel
@@ -746,9 +818,7 @@ export default function BibEntryForm({
           htmlFor={`${idPrefix}${fieldName}`}
         >
           {fieldLabel(fieldName)}
-          {isStarred && (
-            <span className="bibtex-form-required"> *</span>
-          )}
+          {isStarred && <span className="bibtex-form-required"> *</span>}
         </OLFormLabel>
         {isOptional ? (
           <div className="bibtex-field-with-actions bibtex-optional-field-row">
@@ -760,7 +830,9 @@ export default function BibEntryForm({
                 icon="close"
                 variant="ghost"
                 unfilled
-                accessibilityLabel={t('remove_field', { a: fieldLabel(fieldName) })}
+                accessibilityLabel={t('remove_field', {
+                  a: fieldLabel(fieldName),
+                })}
                 onMouseDown={event => event.preventDefault()}
                 onClick={() => handleRemoveOptional(fieldName)}
               />
@@ -787,7 +859,9 @@ export default function BibEntryForm({
         <BibEntryTypeCombobox
           id={`${idPrefix}ref-type`}
           selected={
-            entryTypeSelected ? selectedType?.label ?? displayCustomType(type) : ''
+            entryTypeSelected
+              ? (selectedType?.label ?? displayCustomType(type))
+              : ''
           }
           currentType={entryTypeSelected ? type : ''}
           entryTypes={ENTRY_TYPES}
@@ -798,95 +872,114 @@ export default function BibEntryForm({
         <OLFormText>{t('select_a_type_to_see_the_required_fields')}</OLFormText>
       ) : (
         <div>
-
-        <OLFormGroup>
-          <OLFormLabel htmlFor={`${idPrefix}ref-key`}>
-            {t('citation_key')}
-          </OLFormLabel>
-          <div className="bibtex-field-with-actions">
-            <OLFormControl
-              className={`bibtex-form-input ${
-                citationKeyMessage ? 'is-invalid' : ''
-              }`}
-              maxLength="128"
-              autoComplete="off"
-              type="text"
-              id={`${idPrefix}ref-key`}
-              value={id}
-              onChange={e => {
-                // Existing Visual entries keep an empty source key until the
-                // preview closes. The displayed suggestion is only a placeholder.
-                const key = kind === 'new' && !e.target.value.trim()
-                  ? generateAvailableCitationKey(draftRef.current, existingIds)
-                  : e.target.value
-                reportDraft(
-                  draftRef.current.setKey(key),
-                  'input.type',
-                  'id',
-                  true,
-                  { kind: 'citation-key' }
-                )
-              }}
-              placeholder={id ? 'e.g. Doe0000' : generateAvailableCitationKey(
-                draft, existingIds, kind === 'new' ? undefined : sourceEntry.key
-              )}
-            />
-            {citationKeyMessage && (
-              <BibEntryFeedback message={citationKeyMessage} />
-            )}
-            <div className="bibtex-form-actions">
-              <OLButton
-                variant="secondary"
-                size="sm"
-                onMouseDown={event => event.preventDefault()}
-                onClick={() => handleGenerateKey(true)}
-              >
-                {t('generate')}
-              </OLButton>
-            </div>
-          </div>
-          <OLFormText>{t('citation_key_autogenerate_helper')}</OLFormText>
-        </OLFormGroup>
-
-        {/* Keep the entry type's defined field order; it is not alphabetical. */}
-        {fieldRows.filter(field => previewTab === undefined || field !== 'abstract').map(renderField)}
-
-        {/* Optional fields are hidden until requested, except validation can force the
-            section open when a hidden field contains unbalanced braces. */}
-        <div className="ms-2">
-          <button
-            type="button"
-            className="bibtex-collapsible-heading"
-            aria-expanded={optionalExpanded}
-            aria-label={
-              optionalExpanded ? t('collapse_optional') : t('expand_optional')
-            }
-            onClick={() => setOptionalExpanded(!optionalExpanded)}
-          >
-            <span className="mb-0 form-label">{t('optional')}</span>
-            <span className="material-symbols bibtex-collapsible-heading-icon" aria-hidden="true" translate="no">
-              {optionalExpanded ? 'keyboard_arrow_up' : 'keyboard_arrow_down'}
-            </span>
-          </button>
-        {optionalExpanded && (
-          <div className="position-relative">
-            {optionalRows.filter(field => previewTab === undefined || field !== 'abstract').map(renderField)}
-              <BibAddFieldCombobox
-                placeholder={t('enter_field_name')}
-                offered={offeredFields}
-                standardFields={standardFieldNames}
-                existingFields={existingFieldNames}
-                onSelect={field => {
-                  if (field === 'abstract' && onSelectAbstract) {
-                    onSelectAbstract()
-                    return
-                  }
-                  handleAddOptional(field)
+          <OLFormGroup>
+            <OLFormLabel htmlFor={`${idPrefix}ref-key`}>
+              {t('citation_key')}
+            </OLFormLabel>
+            <div className="bibtex-field-with-actions">
+              <OLFormControl
+                className={`bibtex-form-input ${
+                  citationKeyMessage ? 'is-invalid' : ''
+                }`}
+                maxLength={128}
+                autoComplete="off"
+                type="text"
+                id={`${idPrefix}ref-key`}
+                value={id}
+                onChange={e => {
+                  // Existing Visual entries keep an empty source key until the
+                  // preview closes. The displayed suggestion is only a placeholder.
+                  const key =
+                    kind === 'new' && !e.target.value.trim()
+                      ? generateAvailableCitationKey(
+                          draftRef.current,
+                          existingIds
+                        )
+                      : e.target.value
+                  reportDraft(
+                    draftRef.current.setKey(key),
+                    'input.type',
+                    'id',
+                    true,
+                    { kind: 'citation-key' }
+                  )
                 }}
+                placeholder={
+                  id
+                    ? 'e.g. Doe0000'
+                    : generateAvailableCitationKey(
+                        draft,
+                        existingIds,
+                        kind === 'new' ? undefined : sourceEntry.key
+                      )
+                }
               />
+              {citationKeyMessage && (
+                <BibEntryFeedback message={citationKeyMessage} />
+              )}
+              <div className="bibtex-form-actions">
+                <OLButton
+                  variant="secondary"
+                  size="sm"
+                  onMouseDown={event => event.preventDefault()}
+                  onClick={() => handleGenerateKey(true)}
+                >
+                  {t('generate')}
+                </OLButton>
+              </div>
+            </div>
+            <OLFormText>{t('citation_key_autogenerate_helper')}</OLFormText>
+          </OLFormGroup>
+
+          {/* Keep the entry type's defined field order; it is not alphabetical. */}
+          {fieldRows
+            .filter(field => previewTab === undefined || field !== 'abstract')
+            .map(renderField)}
+
+          {/* Optional fields are hidden until requested, except validation can force the
+            section open when a hidden field contains unbalanced braces. */}
+          <div className="ms-2">
+            <button
+              type="button"
+              className="bibtex-collapsible-heading"
+              aria-expanded={optionalExpanded}
+              aria-label={
+                optionalExpanded ? t('collapse_optional') : t('expand_optional')
+              }
+              onClick={() => setOptionalExpanded(!optionalExpanded)}
+            >
+              <span className="mb-0 form-label">{t('optional')}</span>
+              <span
+                className="material-symbols bibtex-collapsible-heading-icon"
+                aria-hidden="true"
+                translate="no"
+              >
+                {optionalExpanded ? 'keyboard_arrow_up' : 'keyboard_arrow_down'}
+              </span>
+            </button>
+            {optionalExpanded && (
+              <div className="position-relative">
+                {optionalRows
+                  .filter(
+                    field => previewTab === undefined || field !== 'abstract'
+                  )
+                  .map(renderField)}
+                <BibAddFieldCombobox
+                  placeholder={t('enter_field_name')}
+                  offered={offeredFields}
+                  standardFields={standardFieldNames}
+                  existingFields={existingFieldNames}
+                  onSelect={field => {
+                    if (field === 'abstract' && onSelectAbstract) {
+                      onSelectAbstract()
+                      return
+                    }
+                    handleAddOptional(field)
+                  }}
+                />
+              </div>
+            )}
           </div>
-        )}
-        </div>
         </div>
       )}
     </>

@@ -2,6 +2,7 @@ import 'express'
 import OAuth2Server from '@node-oauth/oauth2-server'
 import type SessionData from 'express-session'
 import type { Capability } from '../../capabilities'
+import type { MongoUser } from '../../user'
 
 // Request-scoped logger attached by @overleaf/metrics http.monitor() middleware.
 // See libraries/metrics/http.js RequestLogger class.
@@ -14,11 +15,12 @@ interface RequestLogger {
 // Add properties to Express's Request object that are defined in JS middleware
 // or controllers and expected to be present in controllers.
 declare module 'express' {
-  // eslint-disable-next-line no-unused-vars
   interface Request {
     session: SessionData
     userRestrictions?: Set
     oauth_user?: OAuth2Server.User
+    // AuthenticationController.authenticate attaches the serialized session user.
+    user?: MongoUser
     logger: RequestLogger
     // Set by a body-parser `verify` callback on routes that check a webhook
     // signature, which needs the bytes exactly as received.

@@ -2,6 +2,7 @@ type TemplateLink = {
   name: string
   url: string
   trackingKey: string
+  description?: string
 }
 
 export type ExposedSettings = {

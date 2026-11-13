@@ -6,9 +6,9 @@ const order = (order: SortingOrder, users: User[]) => {
   return order === 'asc' ? [...users] : users.reverse()
 }
 
-function cmp(a, b) {
-  const aEmpty = a == null || a === ""
-  const bEmpty = b == null || b === ""
+function cmp(a: string | null | undefined, b: string | null | undefined) {
+  const aEmpty = a == null || a === ''
+  const bEmpty = b == null || b === ''
   if (aEmpty && bEmpty) return Compare.SORT_KEEP_ORDER
   if (aEmpty) return Compare.SORT_A_AFTER_B
   if (bEmpty) return Compare.SORT_A_BEFORE_B

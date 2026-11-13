@@ -1,5 +1,11 @@
 import { User } from '../../../../types/user/api'
-import { updateUser, deleteUser, purgeUser, restoreUser, sendRegEmail } from './api'
+import {
+  updateUser,
+  deleteUser,
+  purgeUser,
+  restoreUser,
+  sendRegEmail,
+} from './api'
 
 export type PostActions = {
   toggleSelectedUser?: (id: string, selected: boolean) => void
@@ -10,11 +16,11 @@ export type PostActions = {
 export async function performDeleteUser(
   user: User,
   postActions: PostActions,
-  options: { sendEmail: boolean, toUserId: string | null },
+  options: { sendEmail: boolean; toUserId: string | null }
 ) {
   return deleteUser(user.id, options).then(data => {
-    postActions.toggleSelectedUser(user.id, false)
-    postActions.updateUserViewData({
+    postActions.toggleSelectedUser?.(user.id, false)
+    postActions.updateUserViewData?.({
       ...user,
       ...data,
       deleted: true,
@@ -25,10 +31,9 @@ export async function performDeleteUser(
 export function performUpdateUser(
   user: User,
   postActions: PostActions,
-  options: { userData: Partial<User> },
+  options: { userData: Partial<User> }
 ) {
-
-  const dataToUpdate = { ...options.userData}
+  const dataToUpdate = { ...options.userData }
   if (!user.allowUpdateDetails) {
     delete dataToUpdate.firstName
     delete dataToUpdate.lastName
@@ -38,22 +43,18 @@ export function performUpdateUser(
   }
 
   return updateUser(user.id, dataToUpdate).then(data => {
-    postActions.toggleSelectedUser(user.id, false)
-    postActions.updateUserViewData({
+    postActions.toggleSelectedUser?.(user.id, false)
+    postActions.updateUserViewData?.({
       ...user,
-      ...data
+      ...data,
     })
   })
 }
 
-export function performRestoreUser(
-  user: User,
-  postActions: PostActions,
-) {
-
+export function performRestoreUser(user: User, postActions: PostActions) {
   return restoreUser(user.id).then(() => {
-    postActions.toggleSelectedUser(user.id, false)
-    postActions.updateUserViewData({
+    postActions.toggleSelectedUser?.(user.id, false)
+    postActions.updateUserViewData?.({
       ...user,
       deletedAt: undefined,
       deleted: false,
@@ -61,21 +62,14 @@ export function performRestoreUser(
   })
 }
 
-export function performPurgeUser(
-  user: User,
-  postActions: PostActions
-) {
+export function performPurgeUser(user: User, postActions: PostActions) {
   return purgeUser(user.id).then(() => {
-    postActions.removeUserFromView(user)
+    postActions.removeUserFromView?.(user)
   })
 }
 
-export function performSendRegEmail(
-  user: User,
-  postActions: PostActions,
-) {
-
+export function performSendRegEmail(user: User, postActions: PostActions) {
   return sendRegEmail(user.id).then(() => {
-    postActions.toggleSelectedUser(user.id, false)
+    postActions.toggleSelectedUser?.(user.id, false)
   })
 }

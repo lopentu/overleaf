@@ -5,7 +5,7 @@ import SettingsMenuSelect from './settings-menu-select'
 import type { Optgroup } from './settings-menu-select'
 
 interface SettingsLanguageProps {
-  value: string
+  value?: string
   onChange: (value: string) => void
 }
 

@@ -31,9 +31,12 @@ function DeleteUserButton({ user, children }: DeleteUserButtonProps) {
 
   const { toggleSelectedUser, updateUserViewData } = useUserListContext()
   const postActions: PostActions = { toggleSelectedUser, updateUserViewData }
-  const handleDeleteUser = useCallback((user: User, options: any) => {
-    return performDeleteUser(user, postActions, options)
-  }, [postActions])
+  const handleDeleteUser = useCallback(
+    (user: User, options: any) => {
+      return performDeleteUser(user, postActions, options)
+    },
+    [postActions]
+  )
 
   if (user.deleted) return null
 
@@ -70,7 +73,7 @@ const DeleteUserButtonTooltip = memo(function DeleteUserButtonTooltip({
             accessibilityLabel={text}
             className="action-btn"
             icon="delete"
-            unfilled="true"
+            unfilled
           />
         </OLTooltip>
       )}

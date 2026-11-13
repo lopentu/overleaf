@@ -1,0 +1,42 @@
+{
+  "schema": "lope-service-contract-v1",
+  "id": "service.overleaf",
+  "name": "LOPE Overleaf CE+ source candidate",
+  "catalog_refs": ["service.overleaf", "resource.overleaf-data"],
+  "lifecycle": "discovery",
+  "runtime": {
+    "mode": "always-on",
+    "start_documented_at": "docs/lope/OPERATIONS.md#build-and-local-checks",
+    "stop_documented_at": "docs/lope/OPERATIONS.md#recovery-and-rollback"
+  },
+  "deployment": {
+    "mechanism": null,
+    "host": null,
+    "manifest": null,
+    "code_path": null,
+    "config_path": null,
+    "secrets_path": null,
+    "state_path": null
+  },
+  "network": {
+    "ports": [],
+    "health_urls": [],
+    "functional_checks": []
+  },
+  "dependencies": ["resource.overleaf-data"],
+  "resources": {
+    "cpu_cores": null,
+    "memory_mib": null,
+    "storage_gib": null
+  },
+  "documents": {
+    "operations": "docs/lope/OPERATIONS.md",
+    "recovery": "docs/lope/OPERATIONS.md",
+    "rollback": "docs/lope/OPERATIONS.md#recovery-and-rollback",
+    "handoff": "docs/lope/OPERATIONS.md"
+  },
+  "dashboard": {
+    "mode": "none",
+    "reason": "Source candidate only; the separately managed stock service retains the active fleet listing until promotion is verified."
+  }
+}

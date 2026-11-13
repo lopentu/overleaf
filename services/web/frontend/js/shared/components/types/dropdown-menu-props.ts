@@ -42,6 +42,7 @@ export type OLDropdownItemProps = PropsWithChildren<
     onClick?: React.MouseEventHandler
     onMouseEnter?: React.MouseEventHandler
     trailingIcon?: string | React.ReactNode
+    unfilled?: boolean
     variant?: 'default' | 'danger'
     className?: string
     role?: string

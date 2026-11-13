@@ -43,7 +43,10 @@ const DockerRunner = {
       return callback(new Error('image not allowed'))
     }
 
-    if (Settings.texliveImageNameOveride != null && compileGroup != 'conversions') {
+    if (
+      Settings.texliveImageNameOveride != null &&
+      compileGroup != 'conversions'
+    ) {
       const img = Path.basename(image)
       image = `${Settings.texliveImageNameOveride}/${img}`
     }
@@ -249,9 +252,7 @@ const DockerRunner = {
     const options = {
       Cmd: command,
       Image: image,
-      WorkingDir: cwd
-        ? Path.posix.join('/compile', cwd)
-        : '/compile',
+      WorkingDir: cwd ? Path.posix.join('/compile', cwd) : '/compile',
       NetworkDisabled: true,
       User: Settings.clsi.docker.user,
       Env: Object.entries(env).map(([key, value]) => `${key}=${value}`),
@@ -293,7 +294,7 @@ const DockerRunner = {
     if (Settings.clsi.docker.Readonly) {
       options.HostConfig.ReadonlyRootfs = true
       options.HostConfig.Tmpfs = { '/tmp': 'rw,noexec,nosuid,size=65536k' }
-      options.Volumes['/home/tex'] = {}
+      options.Volumes = { '/home/tex': {} }
     }
 
     // Allow per-compile group overriding of individual settings
@@ -563,7 +564,10 @@ const DockerRunner = {
             const lastAccess = getLastProjectAccessTime(projectId)
             // if last access time is missing, lastAccess === 0, container will be destroyed
             // provided that MAX_CONTAINER_AGE is less that 56 years, but anyway, let's check it
-            if (lastAccess && lastAccess > Date.now() - DockerRunner.MAX_CONTAINER_AGE) {
+            if (
+              lastAccess &&
+              lastAccess > Date.now() - DockerRunner.MAX_CONTAINER_AGE
+            ) {
               continue
             }
           }

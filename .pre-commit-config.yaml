@@ -1,0 +1,101 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-yaml
+  - repo: local
+    hooks:
+      - id: candidate-service-schema
+        name: Candidate service declaration schema
+        entry: check-jsonschema --schemafile tools/lope/lope-service-contract-v1.schema.json lope-service.json
+        language: python
+        additional_dependencies: [check-jsonschema==0.36.0]
+        pass_filenames: false
+        always_run: true
+      - id: node-version
+        name: Pinned Node toolchain
+        entry: >-
+          node -e "if (process.versions.node !== '24.18.1') { throw new Error('Use Node 24.18.1 from .nvmrc') }"
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: immutable-dependencies
+        name: CE+ dependency graph is immutable
+        entry: corepack yarn install --immutable --mode=skip-build
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: generate-public-parsers
+        name: Generate actual public LaTeX and BibTeX parsers
+        entry: corepack yarn workspace @overleaf/web lezer-latex:generate
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: public-backend-types
+        name: Public CE+ backend types
+        entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.backend.ce.json --noEmit --pretty false
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: public-frontend-types
+        name: Public CE+ production frontend types
+        entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.ce.json --noEmit --pretty false
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: new-frontend-test-types
+        name: Strict types for new frontend regression tests
+        entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.lope-tests.json --noEmit --pretty false
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: clsi-types
+        name: CLSI upstream declaration and TypeScript check
+        entry: corepack yarn workspace @overleaf/clsi types:check
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: eslint
+        name: Lint changed JavaScript and TypeScript (zero warnings)
+        entry: corepack yarn exec eslint --max-warnings 0
+        language: system
+        files: '\.(cjs|mjs|js|jsx|ts|tsx|mts)$'
+      - id: prettier
+        name: Check formatting of changed maintained files
+        entry: corepack yarn exec prettier --check --ignore-unknown
+        language: system
+        files: '\.(cjs|mjs|js|jsx|ts|tsx|mts|json|ya?ml|md)$'
+      - id: compile-runner-regressions
+        name: Compile runner isolation regressions
+        entry: corepack yarn workspace @overleaf/clsi exec vitest run --config vitest.config.unit.cjs test/unit/js/DockerRunner.test.js --passWithNoTests=false
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: backend-regressions
+        name: Public comment permissions and linked-file backend regressions
+        entry: >-
+          corepack yarn workspace @overleaf/web exec vitest run
+          --config vitest.config.js modules/track-changes/test/unit
+          test/unit/src/Chat/ChatApiHandler.test.mjs
+          test/unit/src/LinkedFiles/LinkedFilesController.test.mjs
+          test/unit/src/Subscription/CustomerIoPlanHelpers.test.mjs
+          --passWithNoTests=false
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: frontend-regressions
+        name: Public integration and administration frontend regressions
+        entry: >-
+          env NODE_ENV=test TZ=GMT corepack yarn workspace @overleaf/web exec
+          mocha --timeout 15000 --exit --require test/frontend/bootstrap.js
+          test/frontend/features/file-tree/flows/create-linked-file.test.tsx
+          modules/github-sync/test/frontend/modal-state.test.tsx
+          test/frontend/modules/admin-tools/unit/*.test.ts
+          test/frontend/modules/template-gallery/unit/*.test.tsx
+        language: system
+        pass_filenames: false
+        always_run: true

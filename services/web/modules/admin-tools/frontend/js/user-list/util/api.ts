@@ -1,4 +1,4 @@
-import { GetUsersResponseBody, Sort } from '../../../../types/user/api'
+import { GetUsersResponseBody, Sort, User } from '../../../../types/user/api'
 import { deleteJSON, getJSON, postJSON } from '@/infrastructure/fetch-json'
 
 export function getUsers(sortBy: Sort): Promise<GetUsersResponseBody> {
@@ -16,7 +16,7 @@ export function deleteUser(
     toUserId: string | null
   }
 ) {
-  return postJSON(`/admin/user/${userId}/delete`, { body: options } )
+  return postJSON(`/admin/user/${userId}/delete`, { body: options })
 }
 
 export function restoreUser(userId: string) {

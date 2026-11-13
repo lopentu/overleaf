@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "frontend/js/**/*.*",
+    "shared/**/*.*",
+    "modules/**/frontend/**/*.*",
+    "modules/**/shared/**/*.*",
+    "types/**/*.*"
+  ],
+  "exclude": [
+    "**/*.min.js",
+    "**/test/**",
+    "**/tests/**",
+    "**/stories/**",
+    "**/*.stories.*",
+    "**/cypress/**",
+    "modules/writefull/frontend/js/integration/src/vite-env.d.ts"
+  ]
+}

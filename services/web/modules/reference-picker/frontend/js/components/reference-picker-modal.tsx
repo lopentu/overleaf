@@ -77,7 +77,10 @@ function highlight(text: string, tokens: string[]) {
       while ((idx = lower.indexOf(t, start)) !== -1) {
         if (idx > start) next.push(part.slice(start, idx))
         next.push(
-          <span key={`${idx}-${token}-${globalIndex++}`} className="found-token">
+          <span
+            key={`${idx}-${token}-${globalIndex++}`}
+            className="found-token"
+          >
             {part.slice(idx, idx + t.length)}
           </span>
         )
@@ -164,7 +167,9 @@ export default function ReferencePickerModal({
     Promise.resolve(searchFnRef.current('')).then(response => {
       if (active) setAllResults(response.hits)
     })
-    return () => { active = false }
+    return () => {
+      active = false
+    }
   }, [])
 
   useEffect(() => {
@@ -174,7 +179,9 @@ export default function ReferencePickerModal({
     Promise.resolve(searchFnRef.current(search)).then(response => {
       if (active) setFilteredResults(response.hits)
     })
-    return () => { active = false }
+    return () => {
+      active = false
+    }
   }, [search])
 
   const filteredKeys = results.map(r => r._source.EntryKey)
@@ -185,25 +192,24 @@ export default function ReferencePickerModal({
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null)
   const saveButtonRef = useRef<HTMLButtonElement | null>(null)
 
-const scrollToReference = useCallback((key: string) => {
-  const index = results.findIndex(
-    r => r._source.EntryKey === key
+  const scrollToReference = useCallback(
+    (key: string) => {
+      const index = results.findIndex(r => r._source.EntryKey === key)
+
+      if (index === -1) return
+
+      const el = document.getElementById(`reference-picker-item-${index}`)
+
+      el?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      })
+
+      setFocusArea('list')
+      setFocusedIndex(index)
+    },
+    [results]
   )
-
-  if (index === -1) return
-
-  const el = document.getElementById(
-    `reference-picker-item-${index}`
-  )
-
-  el?.scrollIntoView({
-    behavior: 'smooth',
-    block: 'nearest',
-  })
-
-  setFocusArea('list')
-  setFocusedIndex(index)
-}, [results])
 
   const removeOne = useCallback((key: string) => {
     setSelectedKeys(prev => {
@@ -253,9 +259,7 @@ const scrollToReference = useCallback((key: string) => {
           )
         } else if (event.key === 'ArrowUp') {
           event.preventDefault()
-          setFocusedIndex(prev =>
-            prev == null ? 0 : Math.max(0, prev - 1)
-          )
+          setFocusedIndex(prev => (prev == null ? 0 : Math.max(0, prev - 1)))
         } else if (event.key === ' ') {
           event.preventDefault()
           if (focusedIndex !== null) {
@@ -329,7 +333,9 @@ const scrollToReference = useCallback((key: string) => {
 
   useEffect(() => {
     if (focusArea === 'list' && focusedIndex !== null) {
-      const el = document.getElementById(`reference-picker-item-${focusedIndex}`)
+      const el = document.getElementById(
+        `reference-picker-item-${focusedIndex}`
+      )
       if (el) el.focus()
     }
   }, [focusArea, focusedIndex])
@@ -338,7 +344,7 @@ const scrollToReference = useCallback((key: string) => {
     drag && drag.from === null && dropTarget !== null
       ? [...selectedKeys, drag.key]
       : selectedKeys
-  const sourceIndex = drag ? drag.from ?? selectedKeys.length : null
+  const sourceIndex = drag ? (drag.from ?? selectedKeys.length) : null
 
   return (
     <OLModal show={show} onHide={onClose} size="lg" themed>
@@ -369,11 +375,16 @@ const scrollToReference = useCallback((key: string) => {
                 onDragOver={event => {
                   if (!drag) return
                   event.preventDefault()
-                  event.dataTransfer.dropEffect = drag.from === null ? 'copy' : 'move'
+                  event.dataTransfer.dropEffect =
+                    drag.from === null ? 'copy' : 'move'
                   setDropTarget(insertionSlot(event))
                 }}
                 onDragLeave={event => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  if (
+                    !event.currentTarget.contains(
+                      event.relatedTarget as Node | null
+                    )
+                  ) {
                     setDropTarget(null)
                   }
                 }}
@@ -383,9 +394,13 @@ const scrollToReference = useCallback((key: string) => {
                   <span
                     key={`${key}-${idx}`}
                     draggable={selectedKeys.length > 1}
-                    onDragStart={event => startDrag(event, { key, from: idx, source: 'badge' })}
+                    onDragStart={event =>
+                      startDrag(event, { key, from: idx, source: 'badge' })
+                    }
                     onDragEnd={endDrag}
-                    data-drag-source={idx === sourceIndex ? drag?.source : undefined}
+                    data-drag-source={
+                      idx === sourceIndex ? drag?.source : undefined
+                    }
                     data-drop-slot={
                       (idx === sourceIndex && dropTarget !== null) || undefined
                     }
@@ -417,8 +432,12 @@ const scrollToReference = useCallback((key: string) => {
                 <ul className="list-unstyled">
                   {results.map((hit, index) => {
                     const key = hit._source.EntryKey
-                    const { title = '', author = '', year = '', journal = '' } =
-                      hit._source.Fields ?? {}
+                    const {
+                      title = '',
+                      author = '',
+                      year = '',
+                      journal = '',
+                    } = hit._source.Fields ?? {}
 
                     return (
                       <li
@@ -433,16 +452,22 @@ const scrollToReference = useCallback((key: string) => {
                             from: index === -1 ? null : index,
                             source: 'row',
                           })
-                          const label = event.currentTarget.querySelector<HTMLElement>(
-                            '.reference-result-key'
-                          )
+                          const label =
+                            event.currentTarget.querySelector<HTMLElement>(
+                              '.reference-result-key'
+                            )
                           if (label) {
                             label.classList.add('drag-image')
-                            event.dataTransfer.setDragImage(label, 8, label.offsetHeight / 2)
+                            event.dataTransfer.setDragImage(
+                              label,
+                              8,
+                              label.offsetHeight / 2
+                            )
                           }
                         }}
                         onDragEnd={event => {
-                          event.currentTarget.querySelector('.reference-result-key')
+                          event.currentTarget
+                            .querySelector('.reference-result-key')
                             ?.classList.remove('drag-image')
                           endDrag()
                         }}
@@ -474,9 +499,13 @@ const scrollToReference = useCallback((key: string) => {
                               highlight(year, tokens),
                             ]
                               .filter(Boolean)
-                              .reduce((acc, val, i) =>
-                                i === 0 ? [val] : acc.concat('\u00A0—\u00A0', val),
-                              [])}
+                              .reduce<React.ReactNode[]>(
+                                (acc, val, i) =>
+                                  i === 0
+                                    ? [val]
+                                    : acc.concat('\u00A0—\u00A0', val),
+                                []
+                              )}
                           </OLCol>
                         </OLRow>
                       </li>

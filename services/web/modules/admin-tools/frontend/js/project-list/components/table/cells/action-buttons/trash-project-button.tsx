@@ -14,8 +14,7 @@ type TrashProjectButtonProps = {
 }
 
 function TrashProjectButton({ project, children }: TrashProjectButtonProps) {
-
-  if (project.trashed || project.deleted ) return null
+  if (project.trashed || project.deleted) return null
 
   const { toggleSelectedProject, updateProjectViewData } =
     useProjectListContext()
@@ -40,7 +39,6 @@ function TrashProjectButton({ project, children }: TrashProjectButtonProps) {
     updateProjectViewData({
       ...project,
       trashed: true,
-      archived: false,
     })
   }, [project, toggleSelectedProject, updateProjectViewData])
 

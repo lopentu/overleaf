@@ -7,7 +7,7 @@ import PlansLocator from './PlansLocator.mjs'
 /**
  * @typedef {InstanceType<typeof import('../../models/Subscription.mjs').Subscription>} MongoSubscription
  * @typedef {import('../../../../types/subscription/plan').Plan} Plan
- * @typedef {import('../../../../modules/subscriptions/app/src/PaymentService.mjs').PaymentRecord} PaymentRecord
+ * @typedef {import('../../../../types/subscription/plan-telemetry').PaymentPlanTelemetry} PaymentRecord
  * @typedef {import('../../../../types/user-email').UserEmailData} UserEmailData
  */
 

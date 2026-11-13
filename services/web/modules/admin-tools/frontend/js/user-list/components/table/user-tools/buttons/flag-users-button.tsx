@@ -1,7 +1,9 @@
 import { memo, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
-import OLIconButton from '@/shared/components/ol/ol-icon-button'
+import OLIconButton, {
+  OLIconButtonProps,
+} from '@/shared/components/ol/ol-icon-button'
 import useIsMounted from '@/shared/hooks/use-is-mounted'
 import { useUserListContext } from '../../../../context/user-list-context'
 import { User } from '../../../../../../../types/user/api'
@@ -32,24 +34,19 @@ function FlagUsersButton({ action }: { action: string }) {
     await performUpdateUser(user, postActions, options)
   }
 
-  let icon
-  let unfilled
+  let iconProps: OLIconButtonProps
   switch (action) {
     case 'set_admin':
-      icon = 'add_moderator'
-      unfilled = true
+      iconProps = { icon: 'add_moderator', unfilled: true }
       break
     case 'unset_admin':
-      icon = 'remove_moderator'
-      unfilled = true
+      iconProps = { icon: 'remove_moderator', unfilled: true }
       break
     case 'suspend':
-      icon = 'pause'
-      unfilled = false
+      iconProps = { icon: 'pause', unfilled: false }
       break
     case 'resume':
-      icon = 'resume'
-      unfilled = false
+      iconProps = { icon: 'resume', unfilled: false }
       break
     default:
       return null
@@ -66,8 +63,7 @@ function FlagUsersButton({ action }: { action: string }) {
           onClick={handleOpenModal}
           variant="secondary"
           accessibilityLabel={text}
-          icon={icon}
-          unfilled={unfilled}
+          {...iconProps}
         />
       </OLTooltip>
       {showModal && (
