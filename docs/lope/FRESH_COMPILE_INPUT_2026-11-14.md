@@ -15,8 +15,10 @@ No second parser, scheduler or mutable legacy source cache is added.
 The private operation root has separate source/project and jobs directories.
 Inline/URL/history writes enforce 50 MiB per file, 100 MiB retained input and
 4,096 canonical entries while materializing. Actual fetch-utils handles bounded
-cancellation/retries and the existing URL/404 policy; downloaded bodies have a
-finite 300 MiB cumulative ceiling. Source URLs, bodies and original transport
+cancellation/retries and the existing URL/404 policy. Observed successful/partial
+2xx source payload has a finite 300 MiB cumulative ceiling; non-2xx error bodies
+have a separate 64 KiB per-response cap. Headers, framing and buffers are
+additional. Source URLs, bodies and original transport
 exceptions are absent from the sanitized failure objects. These are application
 budgets, not heap or filesystem quotas.
 
