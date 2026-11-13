@@ -75,6 +75,11 @@ function compile(req, res, next) {
             if (outputFiles == null) {
               outputFiles = []
             }
+            const buildCollision = Errors.buildIdConflictResponse(error)
+            if (buildCollision) {
+              timer.done()
+              return res.status(409).send(buildCollision)
+            }
             if (error instanceof Errors.AlreadyCompilingError) {
               code = 423 // Http 423 Locked
               status = 'compile-in-progress'

@@ -1,8 +1,11 @@
-/* eslint-disable no-proto
- */
 // TODO: This file was created by bulk-decaffeinate.
 // Fix any style issues and re-enable lint.
 import OError from '@overleaf/o-error'
+import {
+  BuildIdConflictError,
+  buildIdConflictResponse,
+} from './BuildIdConflictError.ts'
+export { BuildIdConflictError, buildIdConflictResponse }
 
 export function NotFoundError(message) {
   const error = new Error(message)
@@ -67,6 +70,8 @@ export class ConversionError extends OError {
 }
 
 export default {
+  BuildIdConflictError,
+  buildIdConflictResponse,
   QueueLimitReachedError,
   TimedOutError,
   NotFoundError,

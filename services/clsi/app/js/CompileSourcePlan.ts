@@ -70,10 +70,11 @@ const plans = new WeakMap<FullSourcePlan, PrivatePlan>()
 const projectId = zz.objectId().or(zz.submissionId())
 export function sourceScope(
   scope: WorkflowScope,
-  manager?: CompilerAdmission
+  manager?: CompilerAdmission,
+  settledJobs = false
 ): Readonly<WorkflowMetadata> {
   try {
-    assertActiveWorkflowScope(scope, manager)
+    assertActiveWorkflowScope(scope, manager, settledJobs)
   } catch {
     throw new SourceInputError('INVALID_SOURCE_REQUEST')
   }

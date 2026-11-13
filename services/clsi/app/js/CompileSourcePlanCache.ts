@@ -20,7 +20,7 @@ import {
   sourceScope,
   type FullSourcePlan,
 } from './CompileSourcePlan.ts'
-import { ownSourcePlanTransaction } from './FreshCompileInput.ts'
+import { ownSourceFilesystemTransaction } from './FreshCompileInput.ts'
 import {
   SourceInputError,
   SourceInputAggregateError,
@@ -380,7 +380,7 @@ export class CompileSourcePlanCache {
     }
     try {
       const raw = copyMaterializedPlanBytes(scope, plan)
-      release = ownSourcePlanTransaction(scope, cleanup)
+      release = ownSourceFilesystemTransaction(scope, cleanup)
       await this.#checkRoot()
       transaction = await this.#reserve(logical, raw.length)
       const tx = transaction

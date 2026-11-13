@@ -24,6 +24,17 @@
     "test/unit/js/SourceCacheQuota.native.ts",
     "test/unit/js/SourceMetricsParity.native.ts",
     "scripts/check-fresh-source-native.mjs",
-    "test/unit/js/WorkflowSourceClaim.test.ts"
+    "test/unit/js/WorkflowSourceClaim.test.ts",
+    "app/js/CompileOutputPublisher.ts",
+    "app/js/BuildIdConflictError.ts",
+    "test/unit/js/PublicationOwnership.test.ts",
+    "test/unit/js/CompileOutputPublisher.test.ts",
+    "test/unit/js/PublicationOwners.native.ts",
+    "test/unit/js/PublicationNative.test.ts",
+    "test/unit/js/PublicationProtocol.test.ts",
+    "app/js/OutputDirectoryRetention.ts",
+    "test/unit/js/PublicationRetention.test.ts",
+    "test/unit/js/PublicationBounds.test.ts",
+    "../web/app/src/Features/Compile/CompileResponsePolicy.ts"
   ]
 }

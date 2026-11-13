@@ -3,7 +3,7 @@ import type { Stats } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { validatePrivateCompileDirectory } from './CompilerAdmission.ts'
-import type { WorkflowScope } from './CompilerAdmission.ts'
+import type { CompilerAdmission, WorkflowScope } from './CompilerAdmission.ts'
 import { removeOwnedCompileJob } from './CompileInputSnapshot.ts'
 import {
   writeFullSourcePlan,
@@ -37,22 +37,39 @@ export interface MaterializedSource {
   readonly baseHistoryVersion?: number
 }
 interface OwnedSourceState {
-  planCleanup: (() => Promise<void>) | undefined
+  operationRoot: string | undefined
+  transactionCleanup: (() => Promise<void>) | undefined
 }
 const ownedSources = new WeakMap<WorkflowScope, OwnedSourceState>()
-/** One concrete persistent-plan transaction, joined by this factory's existing
+/** One concrete persistent filesystem transaction, joined by this factory's existing
  * registered cleanup callback. No unbounded cleanup registry. */
-export function ownSourcePlanTransaction(
+export function ownSourceFilesystemTransaction(
   scope: WorkflowScope,
   cleanup: () => Promise<void>
 ): () => void {
+  sourceScope(scope)
   const state = ownedSources.get(scope)
-  if (!state || state.planCleanup !== undefined)
+  if (
+    !state ||
+    state.operationRoot === undefined ||
+    state.transactionCleanup !== undefined
+  )
     throw new SourceInputError('INVALID_SOURCE_REQUEST')
-  state.planCleanup = cleanup
+  state.transactionCleanup = cleanup
   return () => {
-    if (state.planCleanup === cleanup) state.planCleanup = undefined
+    if (state.transactionCleanup === cleanup)
+      state.transactionCleanup = undefined
   }
+}
+/** Internal publication authority from the completed real source factory. */
+export function sourceOperationDirectory(
+  scope: WorkflowScope,
+  manager: CompilerAdmission
+): string {
+  sourceScope(scope, manager, true)
+  const root = ownedSources.get(scope)?.operationRoot
+  if (root === undefined) throw new SourceInputError('INVALID_SOURCE_REQUEST')
+  return root
 }
 function identity(stat: Stats) {
   return { dev: stat.dev, ino: stat.ino, uid: stat.uid }
@@ -81,14 +98,17 @@ export async function materializeFullSource(
   let owned: ReturnType<typeof identity> | undefined
   let allocationAttempted = false
   const ioDone = Promise.withResolvers<void>()
-  const state: OwnedSourceState = { planCleanup: undefined }
+  const state: OwnedSourceState = {
+    operationRoot: undefined,
+    transactionCleanup: undefined,
+  }
   const cleanup = async () => {
     // One existing flow callback joins its concrete allocator/writer and optional
     // cache transaction. It remains usable after active work loses its brand.
     await ioDone.promise
     const failures: unknown[] = []
     try {
-      await state.planCleanup?.()
+      await state.transactionCleanup?.()
     } catch (error) {
       failures.push(error)
     }
@@ -168,6 +188,7 @@ export async function materializeFullSource(
     )
       throw new SourceInputError('SOURCE_IO_FAILED', 'workspace-identity')
     finishSourcePlanMaterialization(scope, plan)
+    state.operationRoot = directory
     return Object.freeze({
       sourceRoot,
       sourceDirectory,

@@ -79,16 +79,17 @@ export interface WorkflowScope {
 }
 const activeWorkflowScopes = new WeakMap<
   WorkflowScope,
-  (manager?: CompilerAdmission) => void
+  (manager?: CompilerAdmission, settledJobs?: boolean) => void
 >()
 /** Brand/check only the existing real manager flow; no independent owner. */
 export function assertActiveWorkflowScope(
   scope: WorkflowScope,
-  manager?: CompilerAdmission
+  manager?: CompilerAdmission,
+  settledJobs = false
 ): void {
   const check = activeWorkflowScopes.get(scope)
   if (!check) throw new AdmissionError('CLOSED')
-  check(manager)
+  check(manager, settledJobs)
 }
 export interface WorkflowLease {
   readonly identity: string
@@ -786,11 +787,13 @@ export class CompilerAdmission {
       runStdout: (request: StdoutJobRequest) =>
         this.runOwnedJob(flow, { mode: 'stdout', request }),
     })
-    activeWorkflowScopes.set(scope, manager => {
+    activeWorkflowScopes.set(scope, (manager, settledJobs) => {
       if (manager !== undefined && manager !== this)
         throw new AdmissionError('INVALID_REQUEST')
       if (!flow.started || flow.workFinished || !this.active.has(flow.id))
         throw new AdmissionError('CLOSED')
+      if (settledJobs && (flow.inJob || flow.jobFailure !== undefined))
+        throw new AdmissionError('INVALID_REQUEST')
       this.reconciler.assertHeld()
     })
     let value: { result: T } | undefined
