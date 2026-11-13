@@ -105,6 +105,8 @@ repos:
           test/unit/src/infrastructure/NodemailerCompatibility.test.mjs
           test/unit/src/infrastructure/NodemailerApplication.test.mjs
           test/unit/src/infrastructure/Multer.test.mjs
+          test/unit/src/infrastructure/SanitizerQueryCompatibility.test.mjs
+          test/unit/src/Email/EmailMessageHelper.test.mjs
           --passWithNoTests=false
         language: system
         pass_filenames: false
