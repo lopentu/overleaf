@@ -30,7 +30,7 @@
 - [x] Ignore only generated PnP/cache/parser/test output; retain patches and `.pnp.register.mjs`.
 - [x] Reconciled immutable installation passed;35seconds initial fetch/link, no additional graph changes.
 - [x] Ran needed parser generation, public web/CLSI checks and focused regressions. Ruling: native/full image builds are promotion gates, not prerequisites for this source-only foundation; no build acceptance is claimed.
-- [ ] Commit the reviewed graph correction without weakening immutable installation.
+- [x] Commit7cd41f6 includes the reviewed graph correction; installed blocking hooks ran normally.
 
 ## Task2: Define and enforce the quality boundary
 
@@ -43,7 +43,7 @@
 - [x] Ruling: use pre-commit itself as the shared runner, avoiding a redundant custom TypeScript orchestrator. Its system hooks propagate command failures. Add the explicit Node 24.18.1 check and prove hook rejection before acceptance.
 - [x] Added17blocking hooks using pre-commit as shared runner: exact toolchain, immutable graph, actual parsers, public production and new-test types, lint/format, schema and nonempty focused regressions.
 - [x] Installed hooks; wrong Node and undefined-source fixtures rejected; complete17-hook local run passed.
-- [ ] Independently review the immutable diff and test evidence before publishing the quality branch.
+- [x] Independent review of7cd41f6 found no important blockers and reran31authorization/chat tests; source PR1 published, hosted CI run1passed.
 
 ## Task3: Record the accepted development baseline
 
@@ -51,8 +51,8 @@
 **Consumes:** Task1/Task2 results and immutable reviewed commit.
 **Produces:** accurate continuation record and parity/security acceptance backlog.
 
-- [ ] Record source pins, exact commands, coverage, unresolved failures and the next acceptance action.
+- [x] Recorded source pins, exact commands, scope/failure inventory, promotion limits and parity matrix in docs/lope/.
 - [ ] Update/re-fetch the existing Notion task; preserve stock production facts and note that CE+ is not deployed.
-- [ ] Push a reviewable PR, inspect final status/diff and report what passed and what remains incomplete.
+- [x] Pushed reviewable https://github.com/lopentu/overleaf/pull/1; code review and first hosted CI pass. Final protected merge/record readback remain closeout work.
 
 Feature implementations and production sandbox placement are outside this foundation plan; they require their own concrete designs and tests after the inherited baseline is known.
