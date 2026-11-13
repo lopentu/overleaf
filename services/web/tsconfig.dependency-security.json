@@ -21,6 +21,8 @@
     "test/unit/src/infrastructure/fixtures/body-parser-compatibility.cjs",
     "test/unit/src/infrastructure/NodemailerCompatibility.test.mjs",
     "test/unit/src/infrastructure/fixtures/nodemailer-compatibility.cjs",
-    "test/unit/src/infrastructure/NodemailerApplication.test.mjs"
+    "test/unit/src/infrastructure/NodemailerApplication.test.mjs",
+    "test/unit/src/infrastructure/SystemInformationLinux.test.mjs",
+    "test/unit/src/infrastructure/fixtures/systeminformation-linux.cjs"
   ]
 }
