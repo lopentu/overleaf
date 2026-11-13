@@ -39,10 +39,19 @@ Do not substitute that result for a successful production image build.
   this is not a claim of full JavaScript type coverage.
 - New frontend regression tests also have their own strict TypeScript gate,
   `services/web/tsconfig.lope-tests.json`.
+- Dependency security: the new `services/web/tsconfig.dependency-security.json`
+  gate checks only the dependency/credential regression files as strict checked
+  JavaScript. It uses the real direct `@types/multer` declaration and a narrow
+  model of the runtime's new `fieldArrayIndexLimit`, which that declaration
+  predates. This supplements all existing gates; ordinary upstream JavaScript
+  outside this focused scope is unchanged.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
   and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox
-  acceptance. Empty focused selections must fail.
+  acceptance. Dependency tests cover proxy trust, Mongoose prototype/filter
+  safety, multipart limits/request lockdown, compression abort cleanup and the
+  exact body-parser backport. SMTP/SES send-path tests use mocked transports and
+  captured logs to prevent credential dumping. Empty focused selections must fail.
 - Changed-source lint: explicit JS/TS configuration with zero warnings. Format
   uses existing single quotes, no semicolons, omitted single-arg arrow parens
   and ES5 trailing commas. No unrelated monorepo normalization is intended.

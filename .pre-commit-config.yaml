@@ -65,6 +65,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: dependency-security-types
+        name: Strict checked JavaScript for dependency security regressions
+        entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.dependency-security.json --noEmit --pretty false
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: eslint
         name: Lint changed JavaScript and TypeScript (zero warnings)
         entry: corepack yarn exec eslint --max-warnings 0
@@ -90,6 +96,9 @@ repos:
           test/unit/src/Chat/ChatApiHandler.test.mjs
           test/unit/src/LinkedFiles/LinkedFilesController.test.mjs
           test/unit/src/Subscription/CustomerIoPlanHelpers.test.mjs
+          test/unit/src/infrastructure/DependencySecurity.test.mjs
+          test/unit/src/infrastructure/EmailCredentials.test.mjs
+          test/unit/src/infrastructure/Multer.test.mjs
           --passWithNoTests=false
         language: system
         pass_filenames: false

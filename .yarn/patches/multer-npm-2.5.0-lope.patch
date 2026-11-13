@@ -1,0 +1,47 @@
+diff --git a/lib/make-middleware.js b/lib/make-middleware.js
+--- a/lib/make-middleware.js
++++ b/lib/make-middleware.js
+@@ -133,7 +133,9 @@
+     var fileHwm = options.fileHwm
+     var streamHandler = options.streamHandler || defaultStreamHandler
+ 
+-    req.body = Object.create(null)
++    // Keep a local reference: request-input lockdown allows writes but forbids reads.
++    var body = Object.create(null)
++    req.body = body
+ 
+     var busboy
+     var appender = null
+@@ -291,7 +293,7 @@
+       }
+ 
+       try {
+-        appendField(req.body, fieldname, value)
++        appendField(body, fieldname, value)
+       } catch {
+         return abortWithCode('INVALID_FIELD_NAME', fieldname)
+       }
+@@ -306,9 +308,10 @@
+ 
+       // Reverse the WHATWG escapes once, before anything can build an error
+       // about this file, so err.filename and file.originalname are the same
+-      // string. busboy reports filename as undefined for a part that carries
+-      // no file, and such a part never reaches an error that names a file.
+-      var originalname = filename && decodeFormDataName(filename)
++      // string.
++      // Preserve CE+ uploads whose multipart file part omits a filename.
++      if (!filename) filename = 'undefined'
++      var originalname = decodeFormDataName(filename)
+ 
+       function decrementPendingWrites () {
+         if (!pendingWritesIncremented) return
+@@ -337,9 +340,6 @@
+       // that check before the escapes are reversed.
+       var rawFieldname = fieldname
+       fieldname = decodeFormDataName(fieldname)
+-
+-      // don't attach to the files object, if there is no file
+-      if (!filename) return fileStream.resume()
+ 
+       // Work around bug in Busboy (https://github.com/mscdex/busboy/issues/6)
+       if (limits && Object.prototype.hasOwnProperty.call(limits, 'fieldNameSize')) {

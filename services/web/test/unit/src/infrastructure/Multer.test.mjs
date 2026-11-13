@@ -96,6 +96,12 @@ describe('Multer', function () {
       )
     })
 
+    it('bounds multipart array indices by default', function () {
+      Multer.multerUploadHandler()
+
+      expect(mockMulter.mock.calls[0][0].limits.fieldArrayIndexLimit).toBe(100)
+    })
+
     it('preserves provided fileSize from options', function () {
       const customLimit = 25 * MB
 
