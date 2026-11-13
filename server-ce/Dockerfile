@@ -20,6 +20,10 @@ ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable && corepack install -g yarn@4.18.0
 ENV COREPACK_ENABLE_NETWORK=0
 
+# Git dependencies may bootstrap with Yarn Classic concurrently. A relative
+# cache path isolates each checkout and stays excluded from package archives.
+ENV npm_config_cache_folder=node_modules/.cache/lope-yarn-v1
+
 # Install yarn dependencies
 # -------------------------
 RUN --mount=type=cache,target=/root/.cache \

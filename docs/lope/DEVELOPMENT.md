@@ -71,3 +71,14 @@ resulting base explicitly as `OVERLEAF_BASE_TAG` to `server-ce/Dockerfile`.
 Keep dependency and build logs, output image ID, installed versions and source
 revision as private evidence. A successful image build is still separate from
 application, compiler isolation, migration and restore acceptance.
+
+## Git dependency bootstrap caches
+
+The immutable-install hook and image recipe set `npm_config_cache_folder=node_modules/.cache/lope-yarn-v1`.
+Yarn 4 ignores this legacy compatibility setting and keeps the same repository-local
+cache even when invoked from nested workspaces. Git dependencies that bootstrap
+with Yarn Classic resolve that relative path inside their own temporary
+checkouts. Node modules are excluded from package archives, even when an
+inherited ignore file lacks its final newline. This prevents concurrent prepares from corrupting the shared legacy
+`~/.cache/yarn/v6` cache. The original failed post-merge run is retained; cache
+isolation does not waive immutable lockfile or checksum verification.
