@@ -20,4 +20,9 @@ assert.equal(typeof EphemeralDockerJob, 'function')
 const { withCompileInputSnapshot } =
   await import('../app/js/CompileInputSnapshot.ts')
 assert.equal(typeof withCompileInputSnapshot, 'function')
+const { CompilerAdmission } = await import('../app/js/CompilerAdmission.ts')
+const { createWorkflowJsonHandler } =
+  await import('../app/js/WorkflowAdmissionHttp.ts')
+assert.equal(typeof CompilerAdmission, 'function')
+assert.equal(typeof createWorkflowJsonHandler, 'function')
 console.log('Node24.18.1 strip-only native import PASS')

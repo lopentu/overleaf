@@ -43,6 +43,18 @@ describe('EphemeralDockerJob', () => {
     await fixture.close()
     await fs.rm(root, { recursive: true, force: true })
   })
+  it('uses the manager-owned UUID known before the first Docker create', async () => {
+    const identity = '11111111-2222-4333-8444-555555555555'
+    await runner.run(request, identity)
+    expect(fixture.volumeConfig?.Name).toBe(`lope-clsi-job-${identity}`)
+    expect(
+      fixture.containerConfig?.Labels?.['org.lope.overleaf.compiler-job']
+    ).toBe(identity)
+  })
+  it('rejects an invalid manager identity before any Docker API action', async () => {
+    await nodeAssert.rejects(runner.run(request, '../foreign'), /identity/i)
+    expect(fixture.events).toEqual([])
+  })
   it('transfers real archives, runs argv literally, pauses before collecting and removes both owned resources', async () => {
     const result = await runner.run(request)
     expect(result.exitCode).toBe(0)
