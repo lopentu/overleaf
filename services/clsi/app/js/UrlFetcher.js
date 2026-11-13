@@ -1,16 +1,22 @@
+// @ts-check
+import { resolveSourceDownloadUrls } from './SourceDownloadUrls.ts'
+import { pipeBoundedSourceUrlToFileWithRetry } from './BoundedSourceDownload.ts'
 import fs from 'node:fs'
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import { fetchStream, RequestFailedError } from '@overleaf/fetch-utils'
-import { URL } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import Metrics from '@overleaf/metrics'
 
+/** @param {string} url
+ * @param {string | undefined} fallbackURL
+ * @param {string} filePath
+ * @returns {Promise<void>} */
 async function pipeUrlToFileWithRetry(url, fallbackURL, filePath) {
   let remainingAttempts = 3
   let lastErr
   while (remainingAttempts-- > 0) {
-    const timer = new Metrics.Timer('url_fetcher', {
+    const timer = new Metrics.Timer('url_fetcher', 1, {
       path: lastErr ? ' retry' : 'fetch',
     })
     try {
@@ -29,23 +35,19 @@ async function pipeUrlToFileWithRetry(url, fallbackURL, filePath) {
   throw lastErr
 }
 
+/** @param {string} url
+ * @param {string | undefined} fallbackURL
+ * @param {string} filePath
+ * @returns {Promise<void>} */
 async function pipeUrlToFile(url, fallbackURL, filePath) {
-  const u = new URL(url)
-  if (
-    Settings.filestoreDomainOveride &&
-    u.host !== Settings.apis.clsiPerf.host
-  ) {
-    url = `${Settings.filestoreDomainOveride}${u.pathname}${u.search}`
-  }
-  if (fallbackURL) {
-    const u2 = new URL(fallbackURL)
-    if (
-      Settings.filestoreDomainOveride &&
-      u2.host !== Settings.apis.clsiPerf.host
-    ) {
-      fallbackURL = `${Settings.filestoreDomainOveride}${u2.pathname}${u2.search}`
-    }
-  }
+  const resolved = resolveSourceDownloadUrls(
+    url,
+    fallbackURL,
+    Settings.filestoreDomainOveride,
+    Settings.apis.clsiPerf.host
+  )
+  url = resolved.primary
+  fallbackURL = resolved.fallback
 
   let stream
   try {
@@ -78,20 +80,24 @@ async function pipeUrlToFile(url, fallbackURL, filePath) {
     await pipeline(stream, output)
     await fs.promises.rename(atomicWrite, filePath)
     if (source !== 'clsi-perf') {
-      Metrics.count('UrlFetcher.downloaded_bytes', output.bytesWritten, {
+      Metrics.count('UrlFetcher.downloaded_bytes', output.bytesWritten, 1, {
         path: source,
       })
     }
   } catch (err) {
     try {
       await fs.promises.unlink(atomicWrite)
-    } catch (e) {}
+    } catch (e) {
+      // Removal is best effort after the primary operation has already failed.
+    }
     throw err
   }
 }
 
 const BUCKET_REGEX = /\/bucket\/([^/]+)\/key\//
 
+/** @param {string} url
+ * @returns {string} */
 function inferSource(url) {
   if (url.includes(Settings.apis.clsiPerf.host)) {
     return 'clsi-perf'
@@ -107,5 +113,6 @@ function inferSource(url) {
 export default {
   promises: {
     pipeUrlToFileWithRetry,
+    pipeBoundedSourceUrlToFileWithRetry,
   },
 }

@@ -1,0 +1,29 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "checkJs": false,
+    "erasableSyntaxOnly": true
+  },
+  "include": [
+    "app/js/CompileSourcePlan.ts",
+    "app/js/FreshCompileInput.ts",
+    "app/js/SourceInputError.ts",
+    "app/js/CompileBuildId.ts",
+    "app/js/BoundedSourceDownload.ts",
+    "app/js/SourceDownloadUrls.ts",
+    "app/js/CompileSourcePlanCache.ts",
+    "test/unit/js/FreshCompileInput.test.ts",
+    "test/unit/js/FreshCompileDownloads.test.ts",
+    "test/unit/js/CompileSourcePlanCache.test.ts",
+    "test/unit/js/SourceInputFixture.ts",
+    "test/unit/js/FreshInputOwners.native.ts",
+    "test/unit/js/FreshInputNative.test.ts",
+    "test/unit/js/SourceHistoryCompatibility.native.ts",
+    "test/unit/js/SourceCacheQuota.native.ts",
+    "test/unit/js/SourceMetricsParity.native.ts",
+    "scripts/check-fresh-source-native.mjs",
+    "test/unit/js/WorkflowSourceClaim.test.ts"
+  ]
+}

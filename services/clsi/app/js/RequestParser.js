@@ -1,6 +1,6 @@
 import { promisify } from 'node:util'
 import settings from '@overleaf/settings'
-import OutputCacheManager from './OutputCacheManager.js'
+import { BUILD_REGEX } from './CompileBuildId.ts'
 
 const VALID_COMPILERS = ['pdflatex', 'latex', 'xelatex', 'lualatex']
 const MAX_TIMEOUT = 600
@@ -201,7 +201,7 @@ function parse(body, callback) {
     })
     response.buildId = _parseAttribute('buildId', compile.options.buildId, {
       type: 'string',
-      regex: OutputCacheManager.BUILD_REGEX,
+      regex: BUILD_REGEX,
     })
   } catch (error1) {
     const error = error1
@@ -266,7 +266,6 @@ function _parseAttribute(name, attribute, options) {
         throw new Error(`${name} attribute should be an array`)
       }
     } else if (options.type != null) {
-      // eslint-disable-next-line valid-typeof
       if (typeof attribute !== options.type) {
         throw new Error(`${name} attribute should be a ${options.type}`)
       }

@@ -66,12 +66,29 @@ export interface AcquireOptions {
 export interface WorkflowScope {
   readonly identity: string
   readonly signal: AbortSignal
+  /** Actual copied logical scope; immutable independently of caller metadata. */
+  readonly metadata: Readonly<WorkflowMetadata>
   /** Bind one canonical existing private root for this complete lease lifetime.
    * Every workflow job must stay strictly inside it. Cleanup joins owned I/O. */
   ownWorkspace(rootDirectory: string, cleanup: () => Promise<void>): void
+  /** One concrete callback may own allocation/cleanup before its root exists. */
+  claimWorkspaceCleanup(cleanup: () => Promise<void>): void
   runJob(request: JobRequest): Promise<JobResult>
   runArtifacts(request: JobRequest): Promise<CompileArtifactJobResult>
   runStdout(request: StdoutJobRequest): Promise<StdoutJobResult>
+}
+const activeWorkflowScopes = new WeakMap<
+  WorkflowScope,
+  (manager?: CompilerAdmission) => void
+>()
+/** Brand/check only the existing real manager flow; no independent owner. */
+export function assertActiveWorkflowScope(
+  scope: WorkflowScope,
+  manager?: CompilerAdmission
+): void {
+  const check = activeWorkflowScopes.get(scope)
+  if (!check) throw new AdmissionError('CLOSED')
+  check(manager)
 }
 export interface WorkflowLease {
   readonly identity: string
@@ -120,7 +137,7 @@ interface Flow {
 }
 interface Control {
   filter: WorkflowFilter
-  mode: 'stop' | 'reset'
+  mode: 'stop' | 'reset' | 'expire'
   clear: () => Promise<void>
   pending: Promise<void> | undefined
   failure: { error: unknown } | undefined
@@ -733,10 +750,26 @@ export class CompilerAdmission {
     const scope: WorkflowScope = Object.freeze({
       identity: flow.id,
       signal: flow.controller.signal,
+      metadata: flow.entry.meta,
+      claimWorkspaceCleanup: (cleanup: () => Promise<void>) => {
+        if (flow.workFinished || !this.active.has(flow.id))
+          throw new AdmissionError('CLOSED')
+        this.reconciler.assertHeld()
+        if (flow.controller.signal.aborted)
+          throw new AdmissionError('CANCELLED')
+        if (flow.cleanup !== undefined || typeof cleanup !== 'function')
+          throw new AdmissionError('INVALID_REQUEST')
+        flow.cleanup = cleanup
+      },
       ownWorkspace: (rootDirectory: string, cleanup: () => Promise<void>) => {
+        if (flow.workFinished || !this.active.has(flow.id))
+          throw new AdmissionError('CLOSED')
+        this.reconciler.assertHeld()
+        if (flow.controller.signal.aborted)
+          throw new AdmissionError('CANCELLED')
         if (
-          flow.workFinished ||
-          flow.cleanup !== undefined ||
+          flow.workspaceRoot !== undefined ||
+          (flow.cleanup !== undefined && flow.cleanup !== cleanup) ||
           typeof cleanup !== 'function'
         )
           throw new AdmissionError('INVALID_REQUEST')
@@ -753,6 +786,13 @@ export class CompilerAdmission {
       runStdout: (request: StdoutJobRequest) =>
         this.runOwnedJob(flow, { mode: 'stdout', request }),
     })
+    activeWorkflowScopes.set(scope, manager => {
+      if (manager !== undefined && manager !== this)
+        throw new AdmissionError('INVALID_REQUEST')
+      if (!flow.started || flow.workFinished || !this.active.has(flow.id))
+        throw new AdmissionError('CLOSED')
+      this.reconciler.assertHeld()
+    })
     let value: { result: T } | undefined
     let failure: { error: unknown } | undefined
     try {
@@ -763,6 +803,7 @@ export class CompilerAdmission {
       failure = { error }
     }
     flow.workFinished = true
+    activeWorkflowScopes.delete(scope)
     if (flow.jobPending) await flow.jobPending
     let cleanupFailure: { error: unknown } | undefined
     try {
@@ -889,6 +930,43 @@ export class CompilerAdmission {
       })
     return this.sweep
   }
+  /** Noncanceling maintenance fence on this same admission authority. The
+   * activity check and control registration are synchronous against acquire.
+   * Failed deletion retains its fence and original clear callback for retry. */
+  tryExpire(
+    filter: WorkflowFilter,
+    clear: () => Promise<void>
+  ): Promise<boolean> {
+    try {
+      this.reconciler.assertHeld()
+      if (this.closing) throw new AdmissionError('CLOSED')
+      if (!this.started) throw new AdmissionError('NOT_READY')
+      const copy = copyFilter(filter)
+      if (
+        Array.from(this.active.values()).some(flow =>
+          matches(copy, flow.entry.meta)
+        ) ||
+        this.queue.some(entry => matches(copy, entry.meta))
+      )
+        return Promise.resolve(false)
+      const existing = this.controls.find(
+        control =>
+          control.mode === 'expire' &&
+          JSON.stringify(control.filter) === JSON.stringify(copy)
+      )
+      if (
+        this.controls.some(
+          control =>
+            control !== existing && controlsOverlap(control.filter, copy)
+        ) ||
+        (existing === undefined && this.controls.length >= 2)
+      )
+        return Promise.resolve(false)
+      return this.control('expire', copy, clear).then(() => true)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
   cancelAndWait(filter: WorkflowFilter): Promise<void> {
     return this.control('stop', filter, async () => {})
   }
@@ -937,7 +1015,7 @@ export class CompilerAdmission {
         )
         if (failures.length)
           throw combined(failures, 'Control blocked by owned cleanup failure')
-        if (!this.closing) await this.reconcile()
+        if (mode !== 'expire' && !this.closing) await this.reconcile()
         await Promise.all(flows.map(f => f.closed.promise))
         await held.clear()
         this.controls.splice(this.controls.indexOf(held), 1)
@@ -1001,3 +1079,6 @@ export class CompilerAdmission {
     return this.shutdown
   }
 }
+
+// Shared concrete private-directory guard for worker-owned staging and source plans.
+export { checkWorkspaceRoot as validatePrivateCompileDirectory }

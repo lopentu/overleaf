@@ -700,3 +700,6 @@ async function extractArchive(
     throw error
   }
 }
+
+// One canonical archive/input namespace policy shared with fresh materialization.
+export { canonicalName as canonicalProjectArchivePath }

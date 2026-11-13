@@ -13,11 +13,14 @@
     "nodemon": "node --watch app.js",
     "lint": "eslint --cache --cache-location ../../.cache/eslint/ --max-warnings 0 .",
     "lint:fix": "eslint --cache --cache-location ../../.cache/eslint/ --fix .",
-    "types:check": "tsc --noEmit && yarn types:lock",
+    "types:check": "tsc --noEmit && yarn types:lock && yarn types:source-input && yarn types:source-forwarders",
     "types:archive": "tsc -p tsconfig.archive.json --noEmit",
     "native:job-import": "node scripts/check-ephemeral-job-native.mjs",
-    "test:compiler-boundary": "yarn native:job-import && vitest run --config vitest.config.unit.cjs test/unit/js/DockerRunner.test.js test/unit/js/BoundedProjectArchive.test.ts test/unit/js/BoundedProjectArchiveOwnership.test.ts test/unit/js/DockerExecOutput.test.ts test/unit/js/EphemeralDockerJob.test.ts test/unit/js/NativeRuntime.test.ts test/unit/js/LockManager.test.js test/unit/js/LockManagerOwnership.test.ts test/unit/js/ClsiListener.test.ts test/unit/js/CompileInputSnapshot.test.ts test/unit/js/InputProducerLifetime.test.ts test/unit/js/CompilerAdmission.test.ts test/unit/js/JobOwnership.test.ts test/unit/js/CompilerAdmissionIntegration.test.ts test/unit/js/WorkflowLease.test.ts test/unit/js/WorkflowHttp.test.ts test/unit/js/ArchiveComposition.test.ts test/unit/js/JobCollectionModes.test.ts test/unit/js/WorkflowCollectionModes.test.ts test/unit/js/ArchiveCompositionNative.test.ts --passWithNoTests=false",
-    "types:lock": "tsc -p tsconfig.lock-security.json --noEmit"
+    "test:compiler-boundary": "yarn native:job-import && yarn native:source-import && vitest run --config vitest.config.unit.cjs test/unit/js/DockerRunner.test.js test/unit/js/BoundedProjectArchive.test.ts test/unit/js/BoundedProjectArchiveOwnership.test.ts test/unit/js/DockerExecOutput.test.ts test/unit/js/EphemeralDockerJob.test.ts test/unit/js/NativeRuntime.test.ts test/unit/js/LockManager.test.js test/unit/js/LockManagerOwnership.test.ts test/unit/js/ClsiListener.test.ts test/unit/js/CompileInputSnapshot.test.ts test/unit/js/InputProducerLifetime.test.ts test/unit/js/CompilerAdmission.test.ts test/unit/js/JobOwnership.test.ts test/unit/js/CompilerAdmissionIntegration.test.ts test/unit/js/WorkflowLease.test.ts test/unit/js/WorkflowHttp.test.ts test/unit/js/ArchiveComposition.test.ts test/unit/js/JobCollectionModes.test.ts test/unit/js/WorkflowCollectionModes.test.ts test/unit/js/ArchiveCompositionNative.test.ts test/unit/js/FreshCompileInput.test.ts test/unit/js/FreshCompileDownloads.test.ts test/unit/js/CompileSourcePlanCache.test.ts test/unit/js/FreshInputNative.test.ts test/unit/js/RequestParser.test.js test/unit/js/HistoryResourceWriter.test.js test/unit/js/WorkflowSourceClaim.test.ts --passWithNoTests=false",
+    "types:lock": "tsc -p tsconfig.lock-security.json --noEmit",
+    "types:source-input": "tsc -p tsconfig.source-input.json --noEmit",
+    "types:source-forwarders": "tsc -p tsconfig.source-forwarders.json --noEmit",
+    "native:source-import": "node scripts/check-fresh-source-native.mjs"
   },
   "dependencies": {
     "@overleaf/fetch-utils": "workspace:*",

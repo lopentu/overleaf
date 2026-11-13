@@ -135,22 +135,15 @@ async function permitRemoval(directory: string): Promise<void> {
     if (stat.isDirectory() && !stat.isSymbolicLink()) await permitRemoval(child)
   }
 }
-async function cleanupOwnedJob(
-  request: CompileInputSnapshotRequest,
+export async function removeOwnedCompileJob(
+  stagingRoot: string,
   root: Identity,
   jobDirectory: string,
   owned: Identity | undefined,
   owner: number
 ): Promise<void> {
-  if (
-    !sameIdentity(
-      await protectedDirectory(request.stagingRoot, owner, true),
-      root
-    )
-  )
+  if (!sameIdentity(await protectedDirectory(stagingRoot, owner, true), root))
     throw policy('staging root identity changed; job retained')
-  if (owned === undefined)
-    throw policy('created job ownership could not be established; retained')
   let stat: Stats
   try {
     stat = await fs.lstat(jobDirectory)
@@ -159,6 +152,8 @@ async function cleanupOwnedJob(
       return
     throw error
   }
+  if (owned === undefined)
+    throw policy('created job ownership could not be established; retained')
   if (
     !stat.isDirectory() ||
     stat.isSymbolicLink() ||
@@ -263,7 +258,13 @@ export async function withCompileInputSnapshot<T>(
     workFailure = { error }
   } finally {
     try {
-      await cleanupOwnedJob(request, root, jobDirectory, owned, owner)
+      await removeOwnedCompileJob(
+        request.stagingRoot,
+        root,
+        jobDirectory,
+        owned,
+        owner
+      )
     } catch (error) {
       cleanupFailure = { error }
     }
