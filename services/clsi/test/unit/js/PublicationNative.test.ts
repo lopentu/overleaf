@@ -17,6 +17,9 @@ for (const mode of [
   'close-abort',
   'device-guard',
   'one-open-directory',
+  'read-revision',
+  'rename-revision',
+  'copy-revision',
 ]) {
   test(`${mode} actual publication ownership`, () => {
     const result = spawnSync(

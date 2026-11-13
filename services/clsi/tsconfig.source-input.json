@@ -35,6 +35,8 @@
     "app/js/OutputDirectoryRetention.ts",
     "test/unit/js/PublicationRetention.test.ts",
     "test/unit/js/PublicationBounds.test.ts",
-    "../web/app/src/Features/Compile/CompileResponsePolicy.ts"
+    "../web/app/src/Features/Compile/CompileResponsePolicy.ts",
+    "test/unit/js/PublicationArtifactFixture.ts",
+    "test/unit/js/PublicationAuthority.test.ts"
   ]
 }

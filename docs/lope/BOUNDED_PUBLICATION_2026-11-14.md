@@ -6,9 +6,15 @@ this change does not activate the compiler bridge or establish sandboxing,
 migration acceptance, reader access or hosted feature parity.
 
 Open `openCompileOutputPublisher(admission, configuration)` against an owned
-canonical output root. Only a completed fresh source operation belonging to
-that exact manager can publish; an active or failed job cannot. The factory's
-single optional filesystem transaction slot is reused by the plan cache and
+canonical output root. Publication requires completed source preparation and
+an exact completed `runArtifacts` result on that same manager's flow. One flow
+record retains the checked output path and existing job UUID as its revision;
+every accepted next job invalidates it. Publication captures that revision and
+checks path/revision before copying, before rename and before synchronous commit.
+No-job, generic/stdout, active/rejected and wrong-path results cannot authorize
+publication. A nonzero compiler exit may still supply completed diagnostics;
+this is not an exit-code-zero requirement. The factory's single optional
+filesystem transaction slot is reused by the plan cache and
 publisher sequentially. No second queue, registry or cleanup stack is added.
 
 The candidate is copied under the owned private operation before entering the
@@ -44,13 +50,24 @@ profiles explicitly refuse publication until their separate finite contracts
 are accepted. ZIP, SyncTeX, static-reader lifetime, actual commands, Express
 original-body capture and route selection remain follow-on work.
 
-The independent preparation review verified 354 frozen input hashes, all 13
-existing preimages and 11 absent new paths. Its 24-file patch SHA256 is
-`a8a393580048f80d9bed671b6f68a46f8348d1220e86c20989e381745f764ee9`.
-Independent replay passed all 504 cases in 33 files, all five genuine type
-configurations, and zero-warning lint/formatting. Eleven omitted guards each
-failed behaviorally, then exact restoration passed all 504 cases again.
-Fourteen new native publication modes exercise actual Node/filesystem behavior;
-these are not Docker, cross-device mount or different-reader-UID acceptance.
-The existing 19 hooks and required quality CI remain blocking and unchanged.
-Actual-fork hook and CI results belong to the final integration record.
+Initial publication tests did not prove artifact provenance: an idle source
+scope could publish its original input output.pdf. Independent actual-API
+reproductions exposed that P2, including wrong-source acceptance after a genuine
+`runArtifacts` call using a synthetic filesystem executor. The repaired flow
+record closes both cases without a second owner or registry. Real Node held-I/O
+controls also change the job revision while preserving the same directory/inode;
+copy and post-rename publication refuse or roll back the stale revision.
+
+The narrow repair has 12 exact source paths on the initial publication commit,
+10 existing and two new; patch SHA256
+`7beb4dbdfcf993f90d9e89d5f1d3fccc23bd7d3c0a268be72f78c0ee50d953fa`.
+Its frozen 303-input manifest is
+`0ee9fed91b67346cb79b1a6d130222b665997b9514e1dba642e45bc7ea13d8b7`.
+Composed replay passes 515 cases in 34 files and all five genuine type gates,
+with zero-warning lint/formatting. Sixteen omission controls fail behaviorally
+and restore exact bytes. Independent review reruns the original two API
+reproductions, eight authority cases and three same-inode revision controls.
+The 17 publication native modes are actual Node/filesystem tests, not Docker,
+cross-device mount, different-reader-UID or real compiler acceptance. The
+existing 19 hooks and required quality CI remain blocking and unchanged;
+actual integration results belong to the final PR record.

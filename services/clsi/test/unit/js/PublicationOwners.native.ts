@@ -3,7 +3,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { syncBuiltinESMExports } from 'node:module'
 import { setTimeout as delay } from 'node:timers/promises'
-import { withSourceFixture } from './SourceInputFixture.ts'
+import {
+  withPublicationFixture as withSourceFixture,
+  completePublicationArtifacts,
+} from './PublicationArtifactFixture.ts'
 import {
   parseFullSourcePlan,
   materializeFullSource,
@@ -26,6 +29,9 @@ assert.ok(
     'close-abort',
     'device-guard',
     'one-open-directory',
+    'read-revision',
+    'rename-revision',
+    'copy-revision',
   ].includes(mode ?? '')
 )
 const PROJECT = '1234567890abcdef12345678'
@@ -47,7 +53,8 @@ const original = {
   opendir: fs.opendir,
 }
 let blockRollback = true,
-  closes = 0
+  closes = 0,
+  sourceReadOpens = 0
 try {
   await withSourceFixture(async (root, manager) => {
     const outputRoot = path.join(root, 'published'),
@@ -64,6 +71,11 @@ try {
         { signal: abort.signal }
       )
     let operation: string | undefined,
+      activeScope:
+        | import('../../../app/js/CompilerAdmission.ts').WorkflowScope
+        | undefined,
+      sourceDirectory: string | undefined,
+      artifactsDirectory: string | undefined,
       closed = false
     void lease.closed.then(() => {
       closed = true
@@ -73,8 +85,15 @@ try {
       value: async (...args: Parameters<typeof fs.open>) => {
         const file = await original.open(...args),
           name = typeof args[0] === 'string' ? args[0] : ''
+        if (mode === 'copy-revision' && name.endsWith('/artifacts/output.pdf'))
+          sourceReadOpens++
         const selected =
-          (['read-abort', 'read-return', 'read-reset'].includes(mode ?? '') &&
+          ([
+            'read-abort',
+            'read-return',
+            'read-reset',
+            'read-revision',
+          ].includes(mode ?? '') &&
             name.endsWith('/artifacts/output.pdf')) ||
           (['write-abort', 'close-abort'].includes(mode ?? '') &&
             name.includes('/publication-') &&
@@ -92,7 +111,12 @@ try {
             },
           })
           if (
-            ['read-abort', 'read-return', 'read-reset'].includes(mode ?? '')
+            [
+              'read-abort',
+              'read-return',
+              'read-reset',
+              'read-revision',
+            ].includes(mode ?? '')
           ) {
             const read = file.read.bind(file)
             Object.defineProperty(file, 'read', {
@@ -146,7 +170,8 @@ try {
           if (
             mode === 'rename-abort' ||
             mode === 'rollback-retry' ||
-            mode === 'rename-return'
+            mode === 'rename-return' ||
+            mode === 'rename-revision'
           ) {
             entered.resolve()
             await held.promise
@@ -159,6 +184,16 @@ try {
       configurable: true,
       value: async (...args: Parameters<typeof fs.mkdir>) => {
         const result = await original.mkdir(...args)
+        if (
+          mode === 'copy-revision' &&
+          typeof args[0] === 'string' &&
+          args[0].includes('/publication-') &&
+          typeof args[1] === 'object' &&
+          args[1]?.recursive
+        ) {
+          entered.resolve()
+          await held.promise
+        }
         if (mode === 'parent-create-reject' && args[0] === finalParent)
           throw new Error('synthetic late mkdir acknowledgement failure')
         return result
@@ -229,7 +264,10 @@ try {
         stagingRoot: path.join(root, 'operations'),
       })
       operation = path.dirname(source.stagingRoot)
+      activeScope = scope
+      sourceDirectory = source.sourceDirectory
       const artifacts = path.join(source.stagingRoot, 'artifacts')
+      artifactsDirectory = artifacts
       await fs.mkdir(artifacts, { mode: 0o700 })
       await fs.writeFile(path.join(artifacts, 'output.pdf'), 'complete payload')
       if (mode === 'one-open-directory') {
@@ -239,6 +277,11 @@ try {
           'nested complete'
         )
       }
+      await completePublicationArtifacts(
+        scope,
+        source.sourceDirectory,
+        artifacts
+      )
       measuringDirectories = mode === 'one-open-directory'
       const publication = unit
         .publish(scope, {
@@ -271,6 +314,9 @@ try {
     try {
       if (
         [
+          'read-revision',
+          'rename-revision',
+          'copy-revision',
           'close-abort',
           'read-return',
           'rename-return',
@@ -289,11 +335,32 @@ try {
           true,
           'actual held I/O was not reached'
         )
-        if (mode === 'read-reset')
+        if (
+          mode === 'read-revision' ||
+          mode === 'rename-revision' ||
+          mode === 'copy-revision'
+        ) {
+          assert.ok(activeScope && sourceDirectory && artifactsDirectory)
+          const before = await fs.lstat(artifactsDirectory)
+          await completePublicationArtifacts(
+            activeScope,
+            sourceDirectory,
+            artifactsDirectory
+          )
+          const after = await fs.lstat(artifactsDirectory)
+          assert.equal(after.ino, before.ino)
+          assert.equal(after.dev, before.dev)
+        } else if (mode === 'read-reset')
           reset = manager.reset({ projectId: PROJECT }, async () => {
             resetDone = true
           })
-        else if (mode !== 'read-return' && mode !== 'rename-return')
+        else if (
+          mode !== 'read-return' &&
+          mode !== 'rename-return' &&
+          mode !== 'read-revision' &&
+          mode !== 'rename-revision' &&
+          mode !== 'copy-revision'
+        )
           abort.abort()
         await delay(30)
         assert.equal(
@@ -305,9 +372,13 @@ try {
         assert.equal(manager.status().active, 1)
         assert.equal(resetDone, false)
         if (
-          ['read-abort', 'read-return', 'read-reset', 'write-abort'].includes(
-            mode ?? ''
-          )
+          [
+            'read-abort',
+            'read-return',
+            'read-reset',
+            'read-revision',
+            'write-abort',
+          ].includes(mode ?? '')
         )
           assert.equal(closes, 0)
         held.resolve()
@@ -319,6 +390,12 @@ try {
         assert.ok(result && typeof result === 'object' && 'buildId' in result)
         abort.abort()
       } else assert.ok(result instanceof Error)
+      if (mode === 'copy-revision')
+        assert.equal(
+          sourceReadOpens,
+          0,
+          'copy opened an artifact after its terminal revision changed'
+        )
       if (reset) {
         await reset
         assert.equal(resetDone, true)
@@ -420,9 +497,13 @@ try {
         )
         assert.equal(manager.status().active, 0)
         if (
-          ['read-abort', 'read-return', 'read-reset', 'write-abort'].includes(
-            mode ?? ''
-          )
+          [
+            'read-abort',
+            'read-return',
+            'read-reset',
+            'read-revision',
+            'write-abort',
+          ].includes(mode ?? '')
         )
           assert.equal(closes, 1)
       }

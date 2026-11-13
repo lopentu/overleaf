@@ -11,7 +11,10 @@ import {
   parseFullSourcePlan,
   materializeFullSource,
 } from '../../../app/js/FreshCompileInput.ts'
-import { withSourceFixture } from './SourceInputFixture.ts'
+import {
+  withPublicationFixture as withSourceFixture,
+  completePublicationArtifacts,
+} from './PublicationArtifactFixture.ts'
 const PROJECT = '1234567890abcdef12345678'
 const USER = 'abcdef1234567890abcdef12'
 const profile = {
@@ -47,6 +50,7 @@ async function prepared(root: string, scope: WorkflowScope) {
     Buffer.from([37, 80, 68, 70, 0, 255])
   )
   await fs.writeFile(path.join(directory, 'chapter/文.log'), 'complete log')
+  await completePublicationArtifacts(scope, source.sourceDirectory, directory)
   return directory
 }
 

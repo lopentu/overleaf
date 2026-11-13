@@ -7,7 +7,10 @@ import {
   parseFullSourcePlan,
   materializeFullSource,
 } from '../../../app/js/FreshCompileInput.ts'
-import { withSourceFixture } from './SourceInputFixture.ts'
+import {
+  withPublicationFixture as withSourceFixture,
+  completePublicationArtifacts,
+} from './PublicationArtifactFixture.ts'
 const PROJECT = '1234567890abcdef12345678'
 const USER = 'abcdef1234567890abcdef12'
 const profile = {
@@ -50,6 +53,11 @@ for (const perUser of [false, true]) {
           )
           await fs.mkdir(outputDirectory, { mode: 0o700 })
           await fs.writeFile(path.join(outputDirectory, 'output.pdf'), buildId)
+          await completePublicationArtifacts(
+            scope,
+            source.sourceDirectory,
+            outputDirectory
+          )
           await unit.publish(scope, { outputDirectory, buildId })
         })
       }

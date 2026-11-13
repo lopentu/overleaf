@@ -8,7 +8,10 @@ import {
   parseFullSourcePlan,
   materializeFullSource,
 } from '../../../app/js/FreshCompileInput.ts'
-import { withSourceFixture } from './SourceInputFixture.ts'
+import {
+  withPublicationFixture as withSourceFixture,
+  completePublicationArtifacts,
+} from './PublicationArtifactFixture.ts'
 const PROJECT = '1234567890abcdef12345678'
 const profile = {
   optimiseInDocker: true,
@@ -104,6 +107,11 @@ for (const mode of [
             )
           }
         }
+        await completePublicationArtifacts(
+          scope,
+          source.sourceDirectory,
+          outputDirectory
+        )
         if (mode === 'filtered-response' || mode === 'snapshot') {
           let directoryReads = 0,
             idReads = 0
@@ -190,6 +198,11 @@ for (const succeed of [true, false]) {
           const outputDirectory = path.join(source.stagingRoot, 'artifacts')
           await fs.mkdir(outputDirectory, { mode: 0o700 })
           await fs.writeFile(path.join(outputDirectory, 'output.pdf'), 'new')
+          await completePublicationArtifacts(
+            scope,
+            source.sourceDirectory,
+            outputDirectory
+          )
           if (succeed)
             assert.equal(
               (await unit.publish(scope, { outputDirectory })).buildId,

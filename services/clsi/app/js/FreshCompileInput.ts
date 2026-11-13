@@ -2,7 +2,10 @@ import Errors from './Errors.js'
 import type { Stats } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
-import { validatePrivateCompileDirectory } from './CompilerAdmission.ts'
+import {
+  validatePrivateCompileDirectory,
+  completedArtifactRevision,
+} from './CompilerAdmission.ts'
 import type { CompilerAdmission, WorkflowScope } from './CompilerAdmission.ts'
 import { removeOwnedCompileJob } from './CompileInputSnapshot.ts'
 import {
@@ -61,7 +64,7 @@ export function ownSourceFilesystemTransaction(
       state.transactionCleanup = undefined
   }
 }
-/** Internal publication authority from the completed real source factory. */
+/** Completed source operation root; artifact provenance is checked separately. */
 export function sourceOperationDirectory(
   scope: WorkflowScope,
   manager: CompilerAdmission
@@ -70,6 +73,20 @@ export function sourceOperationDirectory(
   const root = ownedSources.get(scope)?.operationRoot
   if (root === undefined) throw new SourceInputError('INVALID_SOURCE_REQUEST')
   return root
+}
+/** Publication also needs a terminal artifact job, not merely source ownership. */
+export function sourceArtifactRevision(
+  scope: WorkflowScope,
+  manager: CompilerAdmission,
+  directory: string,
+  revision?: string
+): string {
+  sourceOperationDirectory(scope, manager)
+  try {
+    return completedArtifactRevision(scope, manager, directory, revision)
+  } catch {
+    throw new SourceInputError('INVALID_SOURCE_REQUEST')
+  }
 }
 function identity(stat: Stats) {
   return { dev: stat.dev, ino: stat.ino, uid: stat.uid }

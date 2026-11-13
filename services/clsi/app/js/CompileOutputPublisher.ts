@@ -14,6 +14,7 @@ import {
 } from './CompilerAdmission.ts'
 import {
   sourceOperationDirectory,
+  sourceArtifactRevision,
   ownSourceFilesystemTransaction,
 } from './FreshCompileInput.ts'
 import { SourceInputError } from './SourceInputError.ts'
@@ -202,6 +203,19 @@ export async function openCompileOutputPublisher(
           (typeof explicitId !== 'string' || !BUILD_REGEX.test(explicitId)))
       )
         throw new PublicationError('INVALID_PUBLICATION')
+      const artifactRevision = sourceArtifactRevision(
+        scope,
+        admission,
+        outputDirectory
+      )
+      function checkArtifact(): void {
+        sourceArtifactRevision(
+          scope,
+          admission,
+          outputDirectory,
+          artifactRevision
+        )
+      }
       const logical =
         scope.metadata.userId === undefined
           ? scope.metadata.projectId
@@ -330,7 +344,7 @@ export async function openCompileOutputPublisher(
           original.dev !== rootIdentity.dev
         )
           throw new PublicationError('INVALID_PUBLICATION')
-        sourceOperationDirectory(scope, admission)
+        checkArtifact()
         allocationAttempted = true
         await fs.mkdir(candidate.path, { mode: 0o700 })
         candidate.identity = await directoryIdentity(candidate.path, owner)
@@ -350,7 +364,7 @@ export async function openCompileOutputPublisher(
             )
             for await (const entry of handle) {
               const name = entry.name
-              sourceOperationDirectory(scope, admission)
+              checkArtifact()
               const child = relative ? `${relative}/${name}` : name
               canonicalProjectArchivePath(child, false)
               if (++entries > MAX_ENTRIES)
@@ -378,6 +392,7 @@ export async function openCompileOutputPublisher(
                 continue
               const to = path.join(candidate.path, child)
               await fs.mkdir(path.dirname(to), { recursive: true, mode: 0o700 })
+              checkArtifact()
               const input = await fs.open(
                 from,
                 constants.O_RDONLY | constants.O_NOFOLLOW
@@ -502,7 +517,7 @@ export async function openCompileOutputPublisher(
             break
           }
           if (buildId === undefined) throw new BuildIdConflictError()
-          sourceOperationDirectory(scope, admission)
+          checkArtifact()
           target = {
             path: path.join(generatedRoot, buildId),
             identity: candidate.identity,
@@ -514,7 +529,7 @@ export async function openCompileOutputPublisher(
             !same(await directoryIdentity(target.path, owner), target.identity)
           )
             throw new PublicationError('PUBLICATION_IO_FAILED')
-          sourceOperationDirectory(scope, admission)
+          checkArtifact()
           const chosenId = buildId
           const outputFiles = Object.freeze(
             descriptions.map(file =>
@@ -529,6 +544,7 @@ export async function openCompileOutputPublisher(
             )
           )
           const published = Object.freeze({ buildId, outputFiles })
+          checkArtifact()
           committed = true
           registerOutputDirectory(logicalRoot)
           // This is the existing non-queuing primitive under its existing queue.
