@@ -39,6 +39,12 @@
     "test/unit/js/OwnershipApiFixture.ts",
     "test/unit/js/CompilerAdmissionIntegration.test.ts",
     "test/unit/js/WorkflowLease.test.ts",
-    "test/unit/js/WorkflowHttp.test.ts"
+    "test/unit/js/WorkflowHttp.test.ts",
+    "app/js/CompileArchiveCollection.ts",
+    "test/unit/js/ArchiveComposition.test.ts",
+    "test/unit/js/JobCollectionModes.test.ts",
+    "test/unit/js/WorkflowCollectionModes.test.ts",
+    "test/unit/js/ArchiveComposition.native.ts",
+    "test/unit/js/ArchiveCompositionNative.test.ts"
   ]
 }

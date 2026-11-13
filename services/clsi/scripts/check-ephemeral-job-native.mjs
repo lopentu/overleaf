@@ -25,4 +25,10 @@ const { createWorkflowJsonHandler } =
   await import('../app/js/WorkflowAdmissionHttp.ts')
 assert.equal(typeof CompilerAdmission, 'function')
 assert.equal(typeof createWorkflowJsonHandler, 'function')
+assert.equal(typeof EphemeralDockerJob.prototype.runArtifacts, 'function')
+assert.equal(typeof EphemeralDockerJob.prototype.runStdout, 'function')
+const { createManifestInputArchiveBundle, extractCompileOutputArchive } =
+  await import('../app/js/BoundedProjectArchive.ts')
+assert.equal(typeof createManifestInputArchiveBundle, 'function')
+assert.equal(typeof extractCompileOutputArchive, 'function')
 console.log('Node24.18.1 strip-only native import PASS')
