@@ -21,6 +21,10 @@
     "test/unit/js/DockerApiFixture.ts",
     "test/unit/js/DockerExecOutput.test.ts",
     "test/unit/js/EphemeralDockerJob.test.ts",
-    "test/unit/js/NativeRuntime.test.ts"
+    "test/unit/js/NativeRuntime.test.ts",
+    "app/js/ClsiListener.ts",
+    "test/unit/js/ClsiListener.test.ts",
+    "test/unit/js/ClsiListener.native.ts",
+    "test/unit/js/ClsiListener.child.ts"
   ]
 }

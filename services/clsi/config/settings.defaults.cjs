@@ -44,6 +44,8 @@ module.exports = {
 
   internal: {
     clsi: {
+      // Unset retains TCP; an explicit empty or invalid path fails startup.
+      unixSocket: process.env.CLSI_UNIX_SOCKET,
       port: 3013,
       host: process.env.LISTEN_ADDRESS || '127.0.0.1',
     },

@@ -1,3 +1,5 @@
+// @ts-check
+
 import logger from '@overleaf/logger'
 import Errors from './Errors.js'
 import RequestParser from './RequestParser.js'
@@ -8,16 +10,18 @@ import Settings from '@overleaf/settings'
 // Here, we use the maximum compile timeout plus 2 minutes.
 const LOCK_TIMEOUT_MS = RequestParser.MAX_TIMEOUT * 1000 + 120000
 
+/** @type {Map<string, Lock>} */
 const LOCKS = new Map()
 
 /**
- * @param key
+ * @param {string} key
  * @return {Lock | undefined}
  */
 function getExistingLock(key) {
   return LOCKS.get(key)
 }
 
+/** @param {string} key */
 function acquire(key) {
   const currentLock = LOCKS.get(key)
   if (currentLock != null) {
@@ -51,6 +55,13 @@ function checkConcurrencyLimit() {
 }
 
 class Lock {
+  /** @type {Promise<void> | undefined} */
+  waitingForRelease
+
+  /** @type {(() => void) | undefined} */
+  onRelease
+
+  /** @param {string} key */
   constructor(key) {
     this.key = key
     this.expiresAt = Date.now() + LOCK_TIMEOUT_MS
@@ -60,6 +71,7 @@ class Lock {
     return Date.now() >= this.expiresAt
   }
 
+  /** @returns {Promise<void>} */
   waitForRelease() {
     if (this.waitingForRelease) return this.waitingForRelease
     this.waitingForRelease = new Promise(resolve => {
@@ -70,7 +82,8 @@ class Lock {
 
   release() {
     if (this.onRelease) this.onRelease()
-    const lockWasActive = LOCKS.delete(this.key)
+    // A timed-out owner may finish after a replacement acquired the same key.
+    const lockWasActive = LOCKS.get(this.key) === this && LOCKS.delete(this.key)
     if (!lockWasActive) {
       logger.error({ key: this.key }, 'Lock was released twice')
     }
