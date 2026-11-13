@@ -43,6 +43,39 @@ describe('EphemeralDockerJob', () => {
     await fixture.close()
     await fs.rm(root, { recursive: true, force: true })
   })
+  for (const mode of ['generic', 'artifacts', 'stdout'] as const) {
+    for (const timeoutMs of [300_001, 600_000]) {
+      it(`preserves the legacy compile deadline ${timeoutMs} for ${mode}`, async () => {
+        const { outputDirectory, ...execution } = { ...request, timeoutMs }
+        const result =
+          mode === 'generic'
+            ? await runner.run({ ...execution, outputDirectory })
+            : mode === 'artifacts'
+              ? await runner.runArtifacts({ ...execution, outputDirectory })
+              : await runner.runStdout(execution)
+        expect(result.exitCode).toBe(0)
+        expect(fixture.events).toContain('exec')
+        expect(fixture.ownedContainer || fixture.ownedVolume).toBe(false)
+        if (mode === 'stdout')
+          await nodeAssert.rejects(fs.stat(outputDirectory), { code: 'ENOENT' })
+      })
+    }
+    it(`rejects deadlines above the legacy maximum before Docker work for ${mode}`, async () => {
+      const { outputDirectory, ...execution } = {
+        ...request,
+        timeoutMs: 600_001,
+      }
+      await nodeAssert.rejects(
+        mode === 'generic'
+          ? runner.run({ ...execution, outputDirectory })
+          : mode === 'artifacts'
+            ? runner.runArtifacts({ ...execution, outputDirectory })
+            : runner.runStdout(execution),
+        /Invalid compile deadline/
+      )
+      expect(fixture.events).toEqual([])
+    })
+  }
   it('uses the manager-owned UUID known before the first Docker create', async () => {
     const identity = '11111111-2222-4333-8444-555555555555'
     await runner.run(request, identity)

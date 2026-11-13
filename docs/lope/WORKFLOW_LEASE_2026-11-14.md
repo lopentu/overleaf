@@ -42,6 +42,11 @@ needed for any final commit acceptance.
 Before runtime selection, finish full authoritative materialization, bounded
 source plans for GET wordcount, input/output budget composition, immutable build
 publication, joined history/log readers, command policy and native whole-service
-acceptance. The legacy 600-second ceiling is the later compatibility target;
-this standalone job unit still caps at 300 seconds until the reviewed adapter
-change lands. Public Overleaf.com parity is not established by this unit.
+acceptance. The shared job/admission policy now preserves the legacy
+600-second request maximum. All three collection modes accept 300,001 and
+600,000 milliseconds and reject 600,001 before Docker work; admission passes
+600,000 unchanged and rejects a longer deadline before queuing. The 30-second
+queue deadline, cancellation/join behavior and resource caps are unchanged.
+These are boundary/lifecycle regressions, not an observed ten-minute wall-clock
+run or hard deadline for a hung Docker API. Public Overleaf.com parity is not
+established by this unit.
