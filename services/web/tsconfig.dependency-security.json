@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "test/unit/src/infrastructure/DependencySecurity.test.mjs",
+    "test/unit/src/infrastructure/fixtures/dependency-security.cjs",
+    "test/unit/src/infrastructure/EmailCredentials.test.mjs"
+  ]
+}

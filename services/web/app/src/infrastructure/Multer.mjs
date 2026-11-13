@@ -36,7 +36,9 @@ function filenameWithCleanup(uploadDir) {
 }
 
 export function multerUploadHandler(options = {}) {
-  const mergedOptions = defaultsDeep({}, options, Settings.multerOptions)
+  const mergedOptions = defaultsDeep({}, options, Settings.multerOptions, {
+    limits: { fieldArrayIndexLimit: 100 },
+  })
   const { dest, ...multerConfig } = mergedOptions
   // replace dest parameter with custom storage that cleans up leaked files
   if (dest) {
