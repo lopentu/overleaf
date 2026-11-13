@@ -27,8 +27,8 @@ function sendDeferredEmail(emailType, opts, delay) {
     'deferred-emails',
     { data: { emailType, opts } },
     delay
-  ).catch(err => {
-    logger.warn({ err, emailType, opts }, 'failed to queue deferred email')
+  ).catch(() => {
+    logger.warn({ emailType }, 'failed to queue deferred email')
   })
 }
 
