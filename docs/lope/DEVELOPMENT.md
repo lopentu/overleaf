@@ -37,8 +37,8 @@ Do not substitute that result for a successful production image build.
   `tsconfig.archive.json` gate, including `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, checked JavaScript and `erasableSyntaxOnly`.
   The existing compiler regression hook first imports the real job module with
-  pinned Node 24.18.1, without type transformation, then runs all 166 selected
-  runner/archive/job/native tests. Native tests cover the actual repository paths
+  pinned Node 24.18.1, without type transformation, then runs all 515 selected
+  runner/archive/job/source/publication/native tests. Native tests cover the actual repository paths
   and child compiler PATH; Docker API fixtures do not establish native container
   acceptance. Dockerode uses its real pinned `@types/dockerode` dependency.
   Disposable job containers explicitly disable Docker logging, independently

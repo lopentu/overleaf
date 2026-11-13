@@ -13,7 +13,8 @@ export async function withSourceFixture(
     root: string,
     manager: CompilerAdmission,
     api: OwnershipApiFixture
-  ) => Promise<void>
+  ) => Promise<void>,
+  executor?: ConstructorParameters<typeof CompilerAdmission>[0]
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'fresh-source-'))
   const api = new OwnershipApiFixture()
@@ -22,7 +23,7 @@ export async function withSourceFixture(
     await fs.mkdir(path.join(root, 'operations'), { mode: 0o700 })
     await fs.mkdir(path.join(root, 'plans'), { mode: 0o700 })
     manager = new CompilerAdmission(
-      {
+      executor ?? {
         async run(_request: JobRequest) {
           throw new Error('this source unit must not execute commands')
         },

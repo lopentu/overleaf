@@ -79,16 +79,38 @@ export interface WorkflowScope {
 }
 const activeWorkflowScopes = new WeakMap<
   WorkflowScope,
-  (manager?: CompilerAdmission) => void
+  (
+    manager?: CompilerAdmission,
+    settledJobs?: boolean,
+    artifact?: { directory: string; revision?: string }
+  ) => string | undefined
 >()
 /** Brand/check only the existing real manager flow; no independent owner. */
 export function assertActiveWorkflowScope(
   scope: WorkflowScope,
-  manager?: CompilerAdmission
+  manager?: CompilerAdmission,
+  settledJobs = false
 ): void {
   const check = activeWorkflowScopes.get(scope)
   if (!check) throw new AdmissionError('CLOSED')
-  check(manager)
+  check(manager, settledJobs)
+}
+/** Read only the current terminal artifact job on this same existing flow.
+ * The existing owned job UUID is a revision, never a caller-created marker. */
+export function completedArtifactRevision(
+  scope: WorkflowScope,
+  manager: CompilerAdmission,
+  directory: string,
+  revision?: string
+): string {
+  const check = activeWorkflowScopes.get(scope)
+  if (!check) throw new AdmissionError('CLOSED')
+  const current = check(manager, true, {
+    directory,
+    ...(revision === undefined ? {} : { revision }),
+  })
+  if (current === undefined) throw new AdmissionError('INVALID_REQUEST')
+  return current
 }
 export interface WorkflowLease {
   readonly identity: string
@@ -129,6 +151,9 @@ interface Flow {
   jobPending: Promise<void> | undefined
   inJob: boolean
   jobFailure: { error: unknown } | undefined
+  completedArtifact:
+    | Readonly<{ directory: string; revision: string }>
+    | undefined
   failedJobs: Set<string>
   workspaceRoot: string | undefined
   cleanup: (() => Promise<void>) | undefined
@@ -595,6 +620,7 @@ export class CompilerAdmission {
       jobPending: undefined,
       inJob: false,
       jobFailure: undefined,
+      completedArtifact: undefined,
       failedJobs: new Set(),
       workspaceRoot: undefined,
       cleanup: undefined,
@@ -691,6 +717,7 @@ export class CompilerAdmission {
       if (this.conflicts(flow.entry.meta, directories, flow))
         throw new AdmissionError('PROJECT_BUSY')
       flow.inJob = true
+      flow.completedArtifact = undefined
       const id = randomUUID()
       this.activeIds.add(id)
       const signal =
@@ -708,7 +735,18 @@ export class CompilerAdmission {
         } else if (checked.mode === 'artifacts') {
           const run = this.executor.runArtifacts
           if (!run) throw new AdmissionError('INVALID_REQUEST')
-          pending = run.call(this.executor, { ...checked.request, signal }, id)
+          pending = run
+            .call(this.executor, { ...checked.request, signal }, id)
+            .then(value => {
+              if (value.outputDirectory !== checked.request.outputDirectory)
+                throw new AdmissionError('INVALID_REQUEST')
+              signal.throwIfAborted()
+              flow.completedArtifact = Object.freeze({
+                directory: checked.request.outputDirectory,
+                revision: id,
+              })
+              return value
+            })
         } else pending = this.executor.run({ ...checked.request, signal }, id)
       } catch (error) {
         pending = Promise.reject(error)
@@ -786,12 +824,26 @@ export class CompilerAdmission {
       runStdout: (request: StdoutJobRequest) =>
         this.runOwnedJob(flow, { mode: 'stdout', request }),
     })
-    activeWorkflowScopes.set(scope, manager => {
+    activeWorkflowScopes.set(scope, (manager, settledJobs, artifact) => {
       if (manager !== undefined && manager !== this)
         throw new AdmissionError('INVALID_REQUEST')
       if (!flow.started || flow.workFinished || !this.active.has(flow.id))
         throw new AdmissionError('CLOSED')
+      if (settledJobs && (flow.inJob || flow.jobFailure !== undefined))
+        throw new AdmissionError('INVALID_REQUEST')
       this.reconciler.assertHeld()
+      if (artifact !== undefined) {
+        const completed = flow.completedArtifact
+        if (
+          !completed ||
+          completed.directory !== artifact.directory ||
+          (artifact.revision !== undefined &&
+            artifact.revision !== completed.revision)
+        )
+          throw new AdmissionError('INVALID_REQUEST')
+        return completed.revision
+      }
+      return undefined
     })
     let value: { result: T } | undefined
     let failure: { error: unknown } | undefined

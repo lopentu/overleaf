@@ -1,4 +1,5 @@
 import Path from 'node:path'
+import { buildIdConflictResponse } from './CompileResponsePolicy.ts'
 import { callbackify } from 'node:util'
 import { callbackifyMultiResult } from '@overleaf/promise-utils'
 import {
@@ -678,10 +679,14 @@ async function _postToClsi(
       } else if (err.response.status === 409) {
         try {
           const body = JSON.parse(err.body || '{}')
+          const buildCollision = buildIdConflictResponse(body)
+          if (buildCollision) return { response: buildCollision }
           if (body.compile?.status === 'missing-updates') {
             return { response: body }
           }
-        } catch {}
+        } catch {
+          // Invalid response JSON keeps the existing fallback behavior.
+        }
         return { response: { compile: { status: 'conflict' } } }
       } else if (err.response.status === 423) {
         return { response: { compile: { status: 'compile-in-progress' } } }
@@ -1183,7 +1188,9 @@ function _finaliseRequest(projectId, options, project, docs, files) {
     flags = ['-file-line-error']
   }
   if (process.env.TEX_COMPILER_EXTRA_FLAGS) {
-    flags.push(...process.env.TEX_COMPILER_EXTRA_FLAGS.split(/\s+/).filter(Boolean))
+    flags.push(
+      ...process.env.TEX_COMPILER_EXTRA_FLAGS.split(/\s+/).filter(Boolean)
+    )
   }
   const hasPremiumCompiles = ['alpha', 'priority'].includes(
     options.compileGroup
@@ -1319,7 +1326,9 @@ async function wordCount(
       let retryFrom = -1
       try {
         ;({ baseHistoryVersion: retryFrom } = JSON.parse(err.body))
-      } catch {}
+      } catch {
+        // Invalid response JSON keeps the existing fallback behavior.
+      }
       return await wordCount(projectId, userId, file, limits, clsiserverid, {
         rootResourcePath,
         baseHistoryVersion: retryFrom,

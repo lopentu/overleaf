@@ -1,3 +1,7 @@
+import {
+  oldestBuildDirectories as OLDEST_BUILD_DIR,
+  registerOutputDirectory,
+} from './OutputDirectoryRetention.ts'
 import { BUILD_REGEX } from './CompileBuildId.ts'
 import { callbackify, promisify } from 'node:util'
 import async from 'async'
@@ -17,7 +21,6 @@ import {
 } from './Errors.js'
 let OutputCacheManager
 
-const OLDEST_BUILD_DIR = new Map()
 const PENDING_PROJECT_ACTIONS = new Map()
 
 function init() {
@@ -153,10 +156,7 @@ export default OutputCacheManager = {
       if (err) {
         return callback(err)
       }
-      if (!OLDEST_BUILD_DIR.has(outputDir)) {
-        // Register for cleanup
-        OLDEST_BUILD_DIR.set(outputDir, Date.now())
-      }
+      registerOutputDirectory(outputDir)
 
       OutputCacheManager.queueDirOperation(
         outputDir,
@@ -689,3 +689,6 @@ OutputCacheManager.promises = {
   queueDirOperation,
   generateBuildId: promisify(OutputCacheManager.generateBuildId),
 }
+
+// Concrete existing queue; the typed publisher shares this exact authority.
+export { queueDirOperation }

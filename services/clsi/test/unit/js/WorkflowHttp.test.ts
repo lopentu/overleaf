@@ -277,11 +277,12 @@ describe('prebody workflow HTTP ownership', () => {
     release.push(cleanup.resolve)
     let started = false
     await mount(async (_body, scope) => {
-      started = true
       scope.ownWorkspace(
         await fs.mkdtemp(path.join(root, 'workspace-')),
         () => cleanup.promise
       )
+      // This test stops already-owned cleanup, so readiness follows binding.
+      started = true
       return { statusCode: 200, body: {} }
     })
     const job = request('/job/p')
