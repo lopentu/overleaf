@@ -25,6 +25,10 @@
     "app/js/ClsiListener.ts",
     "test/unit/js/ClsiListener.test.ts",
     "test/unit/js/ClsiListener.native.ts",
-    "test/unit/js/ClsiListener.child.ts"
+    "test/unit/js/ClsiListener.child.ts",
+    "app/js/CompileInputSnapshot.ts",
+    "test/unit/js/CompileInputSnapshot.test.ts",
+    "test/unit/js/InputProducerLifetime.native.ts",
+    "test/unit/js/InputProducerLifetime.test.ts"
   ]
 }

@@ -4,23 +4,33 @@ CE+ is the development base, not a claim of complete Overleaf.com parity.
 Source presence, unit tests, native acceptance and production deployment are
 separate results. The current live service remains stock CE 6.3.2.
 
-| Workflow                                     | Candidate evidence                                                                             | Still required                                                                                                                            |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Source editing, collaboration and PDF output | Stock workflow plus private CE+v6 synthetic two-user edit/reload/PDF passed                    | Representative real projects, engines, fonts and packages; final isolated worker workflow                                                 |
-| Threaded comments and tracked changes        | Private CE+v6 comments/replies/resolve/reopen, role denial, accept/reject and reconnect passed | Repeat against the final resource-accepted sandboxed deployment and authorized real projects                                              |
-| Sandboxed compilation                        | CE+ runner with bounded CPU/PID/swap and temporary home defaults; 67 runner tests pass         | Native adversarial isolation, CPU/PID/scratch limits, cleanup and a reviewed compiler privilege boundary                                  |
-| Git and GitHub synchronization               | CE+ implementations present; public types and GitHub state regressions repaired                | Authenticated push/pull, conflicts, concurrency, credential revocation and failure recovery                                               |
-| Zotero/reference workflows                   | Collection/reference components present; concrete public type repairs                          | Authenticated library/collection round-trip, citation-key preservation and failure handling                                               |
-| Visual editing                               | Bibliography editing exists; full TeX visual-editor parity is unverified                       | Inventory missing TeX visual provider and implement/test an independent compatible workflow                                               |
-| Templates and administration                 | Public contracts and focused action/settings regressions repaired                              | Browser/API round-trips, permissions, publishing and upload compatibility                                                                 |
-| Hosted project migration                     | No hosted project accepted as a migration fixture yet                                          | Preserve source/assets/settings/references, authors, comments, tracked changes, history and access mapping; verify originals before/after |
-| Cloud/identity integrations                  | Source/account mechanisms require per-service configuration                                    | Provider registration and private credential custody; hosted account credentials are not automatically transferable                       |
-| Recovery and handoff                         | Stock service has accepted cold backup/isolated restore and fleet monitoring                   | Candidate image build, state migration, consistent backup and isolated functional restore before promotion                                |
+| Workflow                                     | Candidate evidence                                                                                         | Still required                                                                                                                            |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Source editing, collaboration and PDF output | Stock workflow plus private CE+ v7 synthetic two-user edit/reload/PDF passed                               | Representative real projects, engines, fonts and packages; final isolated worker workflow                                                 |
+| Threaded comments and tracked changes        | Private CE+ v7 comments/replies/resolve/reopen, role denial, accept/reject and reconnect passed            | Repeat against the final resource-accepted sandboxed deployment and authorized real projects                                              |
+| Sandboxed compilation                        | CE+ runner with bounded CPU/PID/swap and temporary home defaults; 67 runner tests pass                     | Native adversarial isolation, CPU/PID/scratch limits, cleanup and a reviewed compiler privilege boundary                                  |
+| Git and GitHub synchronization               | CE+ implementations present; public types and GitHub state regressions repaired                            | Authenticated push/pull, conflicts, concurrency, credential revocation and failure recovery                                               |
+| Zotero/reference workflows                   | Collection/reference components present; concrete public type repairs                                      | Authenticated library/collection round-trip, citation-key preservation and failure handling                                               |
+| Visual editing                               | Built-in TeX Visual Editor and bibliography editing exist; representative v7 visual behavior is under test | Accept existing math/table/figure/source/review workflows against hosted limits; implement only a verified gap                            |
+| Templates and administration                 | Public contracts and focused action/settings regressions repaired                                          | Browser/API round-trips, permissions, publishing and upload compatibility                                                                 |
+| Hosted project migration                     | No hosted project accepted as a migration fixture yet                                                      | Preserve source/assets/settings/references, authors, comments, tracked changes, history and access mapping; verify originals before/after |
+| Cloud/identity integrations                  | Source/account mechanisms require per-service configuration                                                | Provider registration and private credential custody; hosted account credentials are not automatically transferable                       |
+| Recovery and handoff                         | Stock service has accepted cold backup/isolated restore and fleet monitoring                               | Candidate image build, state migration, consistent backup and isolated functional restore before promotion                                |
 
 A hosted source ZIP contains source files, not proof of transferred review
 metadata or full history. Migration acceptance must use a named authorized
 source project and compare preserved records. See the official
 [download documentation](https://docs.overleaf.com/managing-projects-and-files/downloading-a-project).
+
+## Visual inventory correction
+
+The earlier missing-TeX-provider assessment was incorrect. Valid TeX files enable
+the built-in CodeMirror Visual Editor; the separate bibliography provider is
+additional. Math, table and figure components are already present. The default
+Code mode and an empty optional visual-extension provider list do not establish
+absence of TeX visual editing. Use the Code/Visual toggle and representative
+round-trip, persistence, actual MathJax/PDF and cross-user tests before claiming
+parity. Do not create a duplicate editor based on that earlier assumption.
 
 ## Reviewed limitations
 

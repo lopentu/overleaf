@@ -3,7 +3,7 @@ import { Readable } from 'node:stream'
 import { finished } from 'node:stream/promises'
 import type Docker from 'dockerode'
 import {
-  createInputArchive,
+  createInputArchiveBundle,
   extractOutputArchive,
 } from './BoundedProjectArchive.ts'
 import { collectExecOutput } from './DockerExecOutput.ts'
@@ -135,9 +135,11 @@ export class EphemeralDockerJob {
       signal.throwIfAborted()
       await container.start()
       signal.throwIfAborted()
-      const archive = createInputArchive(request.inputDirectory, { signal })
+      const { stream: archive, completion: producerDone } =
+        createInputArchiveBundle(request.inputDirectory, { signal })
       const archiveDone = finished(archive, { cleanup: true })
       void archiveDone.catch(() => {})
+      let transferFailure: { error: unknown } | undefined
       try {
         await container.putArchive(archive, {
           path: '/compile',
@@ -145,10 +147,26 @@ export class EphemeralDockerJob {
         })
         await archiveDone
         signal.throwIfAborted()
-      } finally {
-        archive.destroy()
-        await Promise.allSettled([archiveDone])
+      } catch (error) {
+        transferFailure = { error }
       }
+      archive.destroy()
+      // Source reads can outlive stream close. Keep admission/resource ownership
+      // until the producer and its file owners settle, even after cancellation.
+      const [, producer] = await Promise.allSettled([archiveDone, producerDone])
+      if (producer.status === 'rejected') {
+        if (
+          transferFailure !== undefined &&
+          transferFailure.error !== producer.reason
+        )
+          throw new AggregateError(
+            [transferFailure.error, producer.reason],
+            'Docker input upload and archive producer failed',
+            { cause: transferFailure.error }
+          )
+        throw producer.reason
+      }
+      if (transferFailure !== undefined) throw transferFailure.error
       const exec = await container.exec({
         Cmd: [...request.argv],
         User: '33:33',
