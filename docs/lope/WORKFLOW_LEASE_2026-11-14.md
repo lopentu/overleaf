@@ -1,5 +1,10 @@
 # Workflow lease and pre-body admission unit
 
+> Historical unit checkpoint: subsequent source composition is recorded in
+> [Compiler workflow integration](COMPILER_WORKFLOW_INTEGRATION_2026-11-15.md).
+> Its earlier pending-source statements are historical; isolated runtime startup
+> remains blocked until genuine kernel/rootless qualification.
+
 This unit is integrated source, not a selected CLSI backend or enabled route.
 Stock production and the legacy compiler path remain unchanged. The full
 materializer, artifact/publication bridge, rootless runtime, private transport,

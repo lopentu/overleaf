@@ -1,3 +1,4 @@
+import './CompilerWorkflowStartup.mjs'
 import { promisify } from 'node:util'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'

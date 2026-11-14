@@ -1,3 +1,4 @@
+import { MAX_COMPILE_TIMEOUT_MS } from './JobRequest.ts'
 import { z, zz } from '@overleaf/validation-tools'
 import { Change, Snapshot, BlobStoreBase } from 'overleaf-editor-core'
 import rawSchemas from 'overleaf-editor-core/lib/schemas.js'
@@ -61,6 +62,7 @@ interface PrivatePlan {
   readonly scope: Readonly<WorkflowMetadata>
   readonly raw: Buffer
   readonly source: ParsedSource
+  readonly commandOptions: unknown
   readonly snapshot: Snapshot | undefined
   readonly paths: readonly string[]
   readonly baseHistoryVersion: number | undefined
@@ -136,11 +138,12 @@ export async function parseFullSourcePlan(
     throw new SourceInputError('INPUT_LIMIT')
   const raw = Buffer.from(decodedBytes)
   let source: ParsedSource
+  let parsed: unknown
   try {
     const body: unknown = JSON.parse(
       raw.toString('utf8').replace(/^\uFEFF/, '')
     )
-    const parsed: unknown = await new Promise<unknown>((resolve, reject) => {
+    parsed = await new Promise<unknown>((resolve, reject) => {
       RequestParser.parse(body, (error: unknown, result: unknown) => {
         if (error != null)
           reject(new SourceInputError('INVALID_SOURCE_REQUEST'))
@@ -215,6 +218,7 @@ export async function parseFullSourcePlan(
     scope: meta,
     raw,
     source,
+    commandOptions: parsed,
     snapshot,
     paths: Object.freeze(paths),
     baseHistoryVersion,
@@ -333,4 +337,58 @@ export async function writeFullSourcePlan(
       ? {}
       : { baseHistoryVersion: data.baseHistoryVersion }),
   })
+}
+
+const compileOptionsView = z.object({
+  compiler: z.enum(['pdflatex', 'latex', 'xelatex', 'lualatex']),
+  draft: z.boolean(),
+  stopOnFirstError: z.boolean(),
+  flags: z.array(z.string()).max(256),
+  timeout: z.number().int().positive().max(MAX_COMPILE_TIMEOUT_MS),
+  imageName: z.string().optional(),
+  buildId: z.string().optional(),
+  check: z.string().optional(),
+  enableCheckpoint: z.boolean(),
+  png2pdf: z.boolean(),
+  compileFromClsiCache: z.boolean(),
+  populateClsiCache: z.boolean(),
+  enablePdfCaching: z.boolean(),
+})
+export function materializedCompileOptions(
+  scope: WorkflowScope,
+  plan: FullSourcePlan
+) {
+  const data = privatePlan(scope, plan)
+  if (!data.materialized) throw new SourceInputError('INVALID_SOURCE_REQUEST')
+  try {
+    const options = compileOptionsView.parse(data.commandOptions)
+    if (
+      options.png2pdf ||
+      options.compileFromClsiCache ||
+      options.populateClsiCache ||
+      options.enablePdfCaching
+    )
+      throw new SourceInputError(
+        'INVALID_SOURCE_REQUEST',
+        'unsupported-profile'
+      )
+    return Object.freeze({
+      ...options,
+      flags: Object.freeze([...options.flags]),
+      mainFile: data.source.rootResourcePath,
+      timeoutMs: options.timeout,
+    })
+  } catch (error) {
+    if (error instanceof SourceInputError) throw error
+    throw new SourceInputError('INVALID_SOURCE_REQUEST', 'compile-options')
+  }
+}
+
+export function materializedHistoryVersion(
+  scope: WorkflowScope,
+  plan: FullSourcePlan
+): number | undefined {
+  const data = privatePlan(scope, plan)
+  if (!data.materialized) throw new SourceInputError('INVALID_SOURCE_REQUEST')
+  return data.baseHistoryVersion
 }

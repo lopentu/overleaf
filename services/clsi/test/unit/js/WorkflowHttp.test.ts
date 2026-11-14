@@ -5,10 +5,12 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import type { Server } from 'node:http'
+import { gzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CompilerAdmission } from '../../../app/js/CompilerAdmission.ts'
 import {
   createWorkflowJsonHandler,
+  createWorkflowReadHandler,
   createWorkflowStopHandler,
   createWorkflowResetHandler,
 } from '../../../app/js/WorkflowAdmissionHttp.ts'
@@ -65,12 +67,14 @@ describe('prebody workflow HTTP ownership', () => {
   async function mount(
     work: (
       request: unknown,
-      scope: import('../../../app/js/CompilerAdmission.ts').WorkflowScope
+      scope: import('../../../app/js/CompilerAdmission.ts').WorkflowScope,
+      decodedBytes: Buffer
     ) => Promise<
       import('../../../app/js/WorkflowAdmissionHttp.ts').WorkflowHttpResult
     >,
     queueTimeoutMs = 30000,
-    bodyLimitBytes = 7 * 1024 * 1024
+    bodyLimitBytes = 7 * 1024 * 1024,
+    read = false
   ) {
     expect(createWorkflowJsonHandler).toBeTypeOf('function')
     const app = express()
@@ -85,10 +89,19 @@ describe('prebody workflow HTTP ownership', () => {
       createWorkflowJsonHandler(
         manager,
         req => ({ projectId: req.params.projectId ?? '', kind: 'compile' }),
-        (req, scope) => work(req.body, scope),
+        (req, scope, decodedBytes) => work(req.body, scope, decodedBytes),
         { queueTimeoutMs, bodyLimitBytes }
       )
     )
+    if (read)
+      app.get(
+        '/job/:projectId',
+        createWorkflowReadHandler(
+          manager,
+          req => ({ projectId: req.params.projectId ?? '', kind: 'wordcount' }),
+          (req, scope) => work(req.body, scope, Buffer.alloc(0))
+        )
+      )
     app.post(
       '/stop/:projectId',
       createWorkflowStopHandler(manager, req => ({
@@ -111,15 +124,19 @@ describe('prebody workflow HTTP ownership', () => {
     assert.ok(address && typeof address !== 'string')
     port = address.port
   }
-  function request(route: string) {
+  function request(
+    route: string,
+    headers: Record<string, string> = {},
+    method = 'POST'
+  ) {
     const ended = Promise.withResolvers<{ status: number; body: string }>()
     const req = http.request(
       {
         host: '127.0.0.1',
         port,
         path: route,
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        method,
+        headers: { 'content-type': 'application/json', ...headers },
         agent: false,
       },
       res => {
@@ -300,6 +317,65 @@ describe('prebody workflow HTTP ownership', () => {
         manager.status().active === 0 && manager.status().controlFences === 0
     )
     await job.response
+  })
+  it('admits GET wordcount as metadata-only work on the same bounded queue without requiring a JSON body', async () => {
+    assert.equal(
+      typeof createWorkflowReadHandler,
+      'function',
+      'metadata-only workflow adapter absent'
+    )
+    await mount(
+      async (_body, scope) => {
+        assert.equal(scope.metadata.kind, 'wordcount')
+        return { statusCode: 200, body: { texcount: { textWords: 3 } } }
+      },
+      30000,
+      7 * 1024 * 1024,
+      true
+    )
+    const read = request('/job/read', {}, 'GET')
+    read.req.end()
+    const result = await read.response
+    assert.equal(result.status, 200)
+    assert.deepEqual(JSON.parse(result.body), { texcount: { textWords: 3 } })
+    assert.equal(manager.status().active, 0)
+  })
+  it('passes exact original decoded JSON bytes to admitted work without reserializing the parsed object', async () => {
+    const original = Buffer.from(' { "value" : "原始\\u6587" }\n')
+    await mount(async (body, _scope, decodedBytes) => {
+      assert.ok(
+        Buffer.isBuffer(decodedBytes),
+        'original decoded JSON capture is absent'
+      )
+      assert.deepEqual(decodedBytes, original)
+      assert.notDeepEqual(decodedBytes, Buffer.from(JSON.stringify(body)))
+      return { statusCode: 200, body: { captured: true } }
+    })
+    const plain = request('/job/plain'),
+      compressed = request('/job/compressed', { 'content-encoding': 'gzip' })
+    plain.req.end(original)
+    compressed.req.end(gzipSync(original))
+    assert.equal((await plain.response).status, 200)
+    assert.equal((await compressed.response).status, 200)
+  })
+  it('rejects a compressed decoded body over the admitted byte limit before source work', async () => {
+    let work = 0
+    await mount(
+      async () => {
+        work++
+        return { statusCode: 200, body: {} }
+      },
+      30000,
+      32
+    )
+    const compressed = request('/job/compressed', {
+      'content-encoding': 'gzip',
+    })
+    compressed.req.end(
+      gzipSync(Buffer.from(JSON.stringify({ value: 'x'.repeat(100) })))
+    )
+    assert.equal((await compressed.response).status, 413)
+    assert.equal(work, 0)
   })
   it('enforces JSON byte limit only in admitted work and never calls user work on oversize or invalid JSON', async () => {
     let calls = 0

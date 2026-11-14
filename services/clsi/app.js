@@ -1,5 +1,6 @@
 // Metrics must be initialized before importing anything else
 import '@overleaf/metrics/initialize.js'
+import './app/js/CompilerWorkflowStartup.mjs'
 
 import CompileController from './app/js/CompileController.js'
 import Settings from '@overleaf/settings'

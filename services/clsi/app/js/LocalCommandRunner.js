@@ -1,7 +1,4 @@
-/* eslint-disable
-    no-return-assign,
-    no-unused-vars,
-*/
+import './CompilerWorkflowStartup.mjs'
 // TODO: This file was created by bulk-decaffeinate.
 // Fix any style issues and re-enable lint.
 /*

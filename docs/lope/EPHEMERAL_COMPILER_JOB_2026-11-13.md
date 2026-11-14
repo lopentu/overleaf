@@ -1,5 +1,10 @@
 # Ephemeral compiler job unit — November 13, 2026
 
+> Historical unit checkpoint: subsequent source composition is recorded in
+> [Compiler workflow integration](COMPILER_WORKFLOW_INTEGRATION_2026-11-15.md).
+> Its earlier pending-source statements are historical; isolated runtime startup
+> remains blocked until genuine kernel/rootless qualification.
+
 This increment integrates the reviewed private V3 job unit into CLSI. It does
 not select a new CommandRunner or activate a worker. Production remains the
 separately managed stock service.

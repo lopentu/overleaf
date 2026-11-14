@@ -9,7 +9,12 @@ import {
 import type { CompilerAdmission, WorkflowScope } from './CompilerAdmission.ts'
 import { removeOwnedCompileJob } from './CompileInputSnapshot.ts'
 import {
+  PreparedCompilerInput,
+  PreparationFileOwner,
+} from './PreparedCompilerInput.ts'
+import {
   writeFullSourcePlan,
+  materializedCompileOptions,
   finishSourcePlanMaterialization,
   sourceScope,
   type FullSourcePlan,
@@ -42,6 +47,9 @@ export interface MaterializedSource {
 interface OwnedSourceState {
   operationRoot: string | undefined
   transactionCleanup: (() => Promise<void>) | undefined
+  source: MaterializedSource | undefined
+  plan: FullSourcePlan | undefined
+  preparationStarted: boolean
 }
 const ownedSources = new WeakMap<WorkflowScope, OwnedSourceState>()
 /** One concrete persistent filesystem transaction, joined by this factory's existing
@@ -115,9 +123,13 @@ export async function materializeFullSource(
   let owned: ReturnType<typeof identity> | undefined
   let allocationAttempted = false
   const ioDone = Promise.withResolvers<void>()
+  const budget = new SourceInputBudget()
   const state: OwnedSourceState = {
     operationRoot: undefined,
     transactionCleanup: undefined,
+    source: undefined,
+    plan: undefined,
+    preparationStarted: false,
   }
   const cleanup = async () => {
     // One existing flow callback joins its concrete allocator/writer and optional
@@ -145,7 +157,6 @@ export async function materializeFullSource(
   }
   scope.claimWorkspaceCleanup(cleanup)
   ownedSources.set(scope, state)
-  const budget = new SourceInputBudget()
   try {
     checkSourceSignal(scope.signal)
     allocationAttempted = true
@@ -206,12 +217,15 @@ export async function materializeFullSource(
       throw new SourceInputError('SOURCE_IO_FAILED', 'workspace-identity')
     finishSourcePlanMaterialization(scope, plan)
     state.operationRoot = directory
-    return Object.freeze({
+    const materialized = Object.freeze({
       sourceRoot,
       sourceDirectory,
       stagingRoot,
       ...result,
     })
+    state.source = materialized
+    state.plan = plan
+    return materialized
   } catch (error) {
     if (
       error instanceof SourceInputError ||
@@ -224,5 +238,56 @@ export async function materializeFullSource(
     )
   } finally {
     ioDone.resolve()
+  }
+}
+
+/** The existing source owner joins this concrete preparation/snapshot transaction;
+ * its complete original plan remains the only input at the actual bridge. */
+export async function withPreparedCompileInput<T>(
+  scope: WorkflowScope,
+  manager: CompilerAdmission,
+  plan: FullSourcePlan,
+  use: (prepared: PreparedCompilerInput) => Promise<T>
+): Promise<T> {
+  sourceScope(scope, manager, true)
+  const state = ownedSources.get(scope),
+    options = materializedCompileOptions(scope, plan)
+  if (
+    !state?.source ||
+    state.plan !== plan ||
+    state.preparationStarted ||
+    scope.metadata.kind !== 'compile'
+  )
+    throw new SourceInputError('INVALID_SOURCE_REQUEST', 'compiler-preparation')
+  state.preparationStarted = true
+  const done = Promise.withResolvers<void>(),
+    files = new PreparationFileOwner()
+  const release = ownSourceFilesystemTransaction(scope, async () => {
+    await done.promise
+    await files.close()
+  })
+  try {
+    return await PreparedCompilerInput.withInput(
+      scope,
+      manager,
+      state.source,
+      plan.kind,
+      options,
+      files,
+      use
+    )
+  } catch (error) {
+    if (
+      error instanceof SourceInputError ||
+      error instanceof SourceInputAggregateError
+    )
+      throw error
+    throw new SourceInputError(
+      scope.signal.aborted ? 'SOURCE_CANCELLED' : 'SOURCE_IO_FAILED',
+      'compiler-preparation'
+    )
+  } finally {
+    done.resolve()
+    if (!files.hasOpenFile) release()
   }
 }

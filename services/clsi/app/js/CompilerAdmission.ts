@@ -352,6 +352,9 @@ function snapshotCommon(
     ...(request.compilerProfile === undefined
       ? {}
       : { compilerProfile: request.compilerProfile }),
+    ...(request.preparedInput === undefined
+      ? {}
+      : { preparedInput: request.preparedInput }),
     inputDirectory: path.resolve(request.inputDirectory),
     ...(request.signal === undefined ? {} : { signal: request.signal }),
   }
