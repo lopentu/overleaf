@@ -2,7 +2,10 @@
 
 CE+ is the development base, not a claim of complete Overleaf.com parity.
 Source presence, unit tests, native acceptance and production deployment are
-separate results. The current live service remains stock CE 6.3.2.
+separate results. The accepted live base is CE+ f5cd4cdd/image5dcf4da7, managed
+by the separate server-utils runtime contract. Current compiler increment
+0104ea71 remains discovery/unselected; see [operations](OPERATIONS.md).
+Kernel/console, rootless/untrusted compilation and full parity remain pending.
 
 | Workflow                                     | Candidate evidence                                                                                         | Still required                                                                                                                            |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -15,7 +18,7 @@ separate results. The current live service remains stock CE 6.3.2.
 | Templates and administration                 | Public contracts and focused action/settings regressions repaired                                          | Browser/API round-trips, permissions, publishing and upload compatibility                                                                 |
 | Hosted project migration                     | No hosted project accepted as a migration fixture yet                                                      | Preserve source/assets/settings/references, authors, comments, tracked changes, history and access mapping; verify originals before/after |
 | Cloud/identity integrations                  | Source/account mechanisms require per-service configuration                                                | Provider registration and private credential custody; hosted account credentials are not automatically transferable                       |
-| Recovery and handoff                         | Stock service has accepted cold backup/isolated restore and fleet monitoring                               | Candidate image build, state migration, consistent backup and isolated functional restore before promotion                                |
+| Recovery and handoff                         | Accepted f5 image/build, migration, pre/post cold backups, isolated full app restore and fleet monitoring  | 0104 deployment/recovery; kernel/console, rootless/untrusted compilation, full parity and offsite/downstream recovery                     |
 
 A hosted source ZIP contains source files, not proof of transferred review
 metadata or full history. Migration acceptance must use a named authorized
@@ -61,7 +64,9 @@ actual one-CPU/256-PID/1-GiB/no-swap cgroup values, fork-limit rejection and
 a deliberate memory overrun terminated with OOM/exit 137. Probe containers
 were removed by exact ID after verification. This is rootful controller
 evidence, not rootless-worker, timeout/cleanup or per-project disk-quota
-acceptance. The running lab application remains stock CE.
+acceptance. At that November 13 checkpoint the running lab application was
+stock CE; the later accepted f5 base deployment is recorded in
+[operations](OPERATIONS.md).
 
 ## Private image and promotion checkpoint
 
