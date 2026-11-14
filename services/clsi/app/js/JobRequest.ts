@@ -1,3 +1,12 @@
+import {
+  GENERIC_JOB_ENVIRONMENT,
+  requireCompilerProfileIdentifier,
+  validateSelectedEnvironment,
+  protectedProfileEnvironment,
+  resolveCompilerProfile,
+  validateAdmittedEnvironment,
+  type TrustedCompilerProfile,
+} from './CompileEnvironment.ts'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
@@ -12,6 +21,7 @@ export interface JobPolicy {
   trustedStagingRoot: string
   allowedImages: readonly string[]
   allowedExecutables: readonly string[]
+  compilerProfiles?: readonly TrustedCompilerProfile[]
 }
 export interface ExecutionRequest {
   image: string
@@ -20,6 +30,7 @@ export interface ExecutionRequest {
   inputDirectory: string
   timeoutMs: number
   environment?: Readonly<Record<string, string>>
+  compilerProfile?: string
   signal?: AbortSignal
 }
 export interface JobRequest extends ExecutionRequest {
@@ -42,11 +53,6 @@ export interface JobResult extends StdoutJobResult {
   outputDirectory: string
 }
 const PINNED_IMAGE = /^(?:sha256:|[a-zA-Z0-9./:_-]+@sha256:)[a-f0-9]{64}$/
-const ENVIRONMENT_KEYS = new Set([
-  'SOURCE_DATE_EPOCH',
-  'FORCE_SOURCE_DATE',
-  'TZ',
-])
 function requireSafeString(value: string): void {
   if (value.length === 0) throw new Error('Invalid job string')
   for (const character of value) {
@@ -104,10 +110,19 @@ async function validateCommonRequest(
   requireSafeString(request.cwd)
   if (request.cwd.includes('\\'))
     throw new Error('Invalid compile working directory')
-  for (const [key, value] of Object.entries(request.environment ?? {})) {
-    if (!ENVIRONMENT_KEYS.has(key) || Buffer.byteLength(value) > 1024)
-      throw new Error('Unapproved compile environment')
-    requireSafeString(value)
+  const profile = resolveCompilerProfile(
+    policy.compilerProfiles,
+    request.compilerProfile,
+    request.image,
+    request.argv
+  )
+  validateAdmittedEnvironment(request.environment ?? {}, profile !== undefined)
+  if (profile !== undefined) {
+    if (request.timeoutMs !== 60_000)
+      throw new Error('Invalid wordcount operation deadline')
+    if (request.cwd !== '/compile')
+      throw new Error('Invalid wordcount operation directory')
+    validateSelectedEnvironment(request.environment ?? {}, profile)
   }
   const root = path.resolve(policy.trustedStagingRoot)
   const input = path.resolve(request.inputDirectory)
@@ -169,12 +184,74 @@ export async function validateRequest(
   }
   throw new Error('Output directory already exists')
 }
-export function compileEnvironment(request: ExecutionRequest): string[] {
+/** Capture every caller field/getter and nested array/value before any await. */
+export function snapshotExecutionRequest(
+  request: ExecutionRequest
+): ExecutionRequest {
+  const {
+    image,
+    argv,
+    cwd,
+    inputDirectory,
+    timeoutMs,
+    environment,
+    compilerProfile,
+    signal,
+  } = request
+  if (
+    typeof image !== 'string' ||
+    !Array.isArray(argv) ||
+    typeof cwd !== 'string' ||
+    typeof inputDirectory !== 'string'
+  )
+    throw new Error('Invalid job metadata')
+  const copiedArgv = [...argv]
+  if (copiedArgv.length > 256) throw new Error('Arguments exceed limit')
+  let argumentBytes = 0
+  for (const argument of copiedArgv) {
+    if (typeof argument !== 'string') throw new Error('Invalid job string')
+    argumentBytes += Buffer.byteLength(argument)
+    if (argumentBytes > 64 * 1024) throw new Error('Arguments exceed limit')
+    requireSafeString(argument)
+  }
+  if (compilerProfile !== undefined && typeof compilerProfile !== 'string')
+    throw new Error('Invalid compiler profile')
+  if (compilerProfile !== undefined)
+    requireCompilerProfileIdentifier(compilerProfile)
+  const copiedEnvironment = validateAdmittedEnvironment(
+    environment ?? {},
+    compilerProfile !== undefined
+  )
+  return Object.freeze({
+    image,
+    argv: Object.freeze(copiedArgv),
+    cwd,
+    inputDirectory,
+    timeoutMs,
+    environment: copiedEnvironment,
+    ...(compilerProfile === undefined ? {} : { compilerProfile }),
+    ...(signal === undefined ? {} : { signal }),
+  })
+}
+export function compileEnvironment(
+  request: ExecutionRequest,
+  policy?: JobPolicy
+): string[] {
+  const profile = resolveCompilerProfile(
+    policy?.compilerProfiles,
+    request.compilerProfile,
+    request.image,
+    request.argv
+  )
+  const approved = validateAdmittedEnvironment(
+    request.environment ?? {},
+    profile !== undefined
+  )
+  if (profile !== undefined) validateSelectedEnvironment(approved, profile)
   return Object.entries({
-    HOME: '/home/tex',
-    PATH: '/usr/local/bin:/usr/bin:/bin',
-    TEXMFVAR: '/tmp/texmf-var',
-    TEXMFCONFIG: '/tmp/texmf-config',
-    ...request.environment,
+    ...(profile === undefined
+      ? GENERIC_JOB_ENVIRONMENT
+      : protectedProfileEnvironment(profile)),
+    ...approved,
   }).map(([key, value]) => `${key}=${value}`)
 }

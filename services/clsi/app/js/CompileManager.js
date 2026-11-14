@@ -1,3 +1,4 @@
+import { deriveCompileEnvironment } from './LatexCommand.ts'
 import fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import Path from 'node:path'
@@ -170,30 +171,14 @@ async function doCompile(request, stats, timings) {
     'written files to disk'
   )
 
-  // set up environment variables for chktex
-  let env = {
-    OVERLEAF_PROJECT_ID: request.project_id,
-  }
-  if (Settings.texliveOpenoutAny && Settings.texliveOpenoutAny !== '') {
-    // override default texlive openout_any environment variable
-    env.openout_any = Settings.texliveOpenoutAny
-  }
-  if (Settings.texliveMaxPrintLine && Settings.texliveMaxPrintLine !== '') {
-    // override default texlive max_print_line environment variable
-    env.max_print_line = Settings.texliveMaxPrintLine
-  }
-  // only run chktex on LaTeX files (not knitr .Rtex files or any others)
-  const isLaTeXFile = request.rootResourcePath?.match(/\.tex$/i)
-  if (request.check != null && isLaTeXFile) {
-    env.CHKTEX_OPTIONS = '-nall -e9 -e10 -w15 -w16'
-    env.CHKTEX_ULIMIT_OPTIONS = '-t 5 -v 64000'
-    if (request.check === 'error') {
-      env.CHKTEX_EXIT_ON_ERROR = 1
-    }
-    if (request.check === 'validate') {
-      env.CHKTEX_VALIDATE = 1
-    }
-  }
+  // Shared pure construction preserves generated-over-configured precedence.
+  let env = deriveCompileEnvironment({
+    projectId: request.project_id,
+    mainFile: request.rootResourcePath,
+    check: request.check,
+    openoutAny: Settings.texliveOpenoutAny,
+    maxPrintLine: Settings.texliveMaxPrintLine,
+  })
 
   // the requested compile options may need a variant of the requested image,
   // which brings its own environment
@@ -601,7 +586,6 @@ async function _runSynctex(projectId, userId, command, opts) {
   const compileGroup = runInOutputDir ? 'synctex-output' : 'synctex'
   const defaultImageName =
     Settings.clsi && Settings.clsi.docker && Settings.clsi.docker.image
-  // eslint-disable-next-line @typescript-eslint/return-await
   return await OutputCacheManager.promises.queueDirOperation(
     outputDir,
     /**

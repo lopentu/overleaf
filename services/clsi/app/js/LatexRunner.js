@@ -1,4 +1,5 @@
 import Path from 'node:path'
+import { buildLatexCommand } from './LatexCommand.ts'
 import { promisify } from 'node:util'
 import Settings from '@overleaf/settings'
 import logger from '@overleaf/logger'
@@ -15,13 +16,6 @@ const TIME_V_METRICS = [
   ['cpu-time', /User time.*: (\d+.\d+)/m],
   ['sys-time', /System time.*: (\d+.\d+)/m],
 ]
-
-const COMPILER_FLAGS = {
-  latex: '-pdfdvi',
-  lualatex: '-lualatex',
-  pdflatex: '-pdf',
-  xelatex: '-xelatex',
-}
 
 function runLatex(projectId, options, callback) {
   const {
@@ -162,55 +156,11 @@ function killLatex(projectId, callback) {
 }
 
 function _buildLatexCommand(mainFile, opts = {}) {
-  const command = []
-
-  if (Settings.clsi?.strace) {
-    command.push('strace', '-o', 'strace', '-ff')
-  }
-
-  if (Settings.clsi?.latexmkCommandPrefix) {
-    command.push(...Settings.clsi.latexmkCommandPrefix)
-  }
-
-  // Basic command and flags
-  command.push(
-    'latexmk',
-    '-cd',
-    '-jobname=output',
-    '-auxdir=$COMPILE_DIR',
-    '-outdir=$COMPILE_DIR',
-    '-synctex=1',
-    '-interaction=batchmode',
-    '-time'
-  )
-
-  // Stop on first error option
-  if (opts.stopOnFirstError) {
-    command.push('-halt-on-error')
-  } else {
-    // Run all passes despite errors
-    command.push('-f')
-  }
-
-  // Extra flags
-  if (opts.flags) {
-    command.push(...opts.flags)
-  }
-
-  // TeX Engine selection
-  const compilerFlag = COMPILER_FLAGS[opts.compiler]
-  if (compilerFlag) {
-    command.push(compilerFlag)
-  } else {
-    throw new Error(`unknown compiler: ${opts.compiler}`)
-  }
-
-  // We want to run latexmk on the tex file which we will automatically
-  // generate from the Rtex/Rmd/md file.
-  mainFile = mainFile.replace(/\.(Rtex|md|Rmd|Rnw)$/, '.tex')
-  command.push(Path.join('$COMPILE_DIR', mainFile))
-
-  return command
+  const settings = Settings.clsi
+  return buildLatexCommand(mainFile, opts, {
+    strace: settings?.strace,
+    latexmkCommandPrefix: settings?.latexmkCommandPrefix,
+  })
 }
 
 export default {

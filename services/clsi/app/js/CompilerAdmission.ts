@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { MAX_COMPILE_TIMEOUT_MS } from './JobRequest.ts'
+import {
+  MAX_COMPILE_TIMEOUT_MS,
+  snapshotExecutionRequest,
+} from './JobRequest.ts'
 import type {
   JobRequest,
   JobResult,
@@ -307,6 +310,11 @@ function snapshotCommon(
   request: ExecutionRequest,
   wait: number
 ): ExecutionRequest {
+  try {
+    request = snapshotExecutionRequest(request)
+  } catch {
+    throw new AdmissionError('INVALID_REQUEST')
+  }
   if (
     !Number.isSafeInteger(wait) ||
     wait <= 0 ||
@@ -331,12 +339,8 @@ function snapshotCommon(
     throw new AdmissionError('INVALID_REQUEST')
   const environment = Object.entries(request.environment ?? {})
   if (
-    environment.length > 3 ||
-    environment.some(
-      ([key, value]) =>
-        !['SOURCE_DATE_EPOCH', 'FORCE_SOURCE_DATE', 'TZ'].includes(key) ||
-        Buffer.byteLength(value) > 1024
-    )
+    request.environment?.OVERLEAF_PROJECT_ID !== undefined &&
+    request.environment.OVERLEAF_PROJECT_ID !== project
   )
     throw new AdmissionError('INVALID_REQUEST')
   return {
@@ -345,6 +349,9 @@ function snapshotCommon(
     cwd: request.cwd,
     timeoutMs: request.timeoutMs,
     environment: Object.fromEntries(environment),
+    ...(request.compilerProfile === undefined
+      ? {}
+      : { compilerProfile: request.compilerProfile }),
     inputDirectory: path.resolve(request.inputDirectory),
     ...(request.signal === undefined ? {} : { signal: request.signal }),
   }
@@ -355,15 +362,16 @@ function snapshot(
   request: JobRequest,
   wait: number
 ): JobRequest {
+  const outputDirectory = request.outputDirectory
   if (
-    typeof request.outputDirectory !== 'string' ||
-    request.outputDirectory.length > 4096 ||
-    !path.isAbsolute(request.outputDirectory)
+    typeof outputDirectory !== 'string' ||
+    outputDirectory.length > 4096 ||
+    !path.isAbsolute(outputDirectory)
   )
     throw new AdmissionError('INVALID_REQUEST')
   return {
     ...snapshotCommon(project, request, wait),
-    outputDirectory: path.resolve(request.outputDirectory),
+    outputDirectory: path.resolve(outputDirectory),
   }
 }
 function snapshotStdout(

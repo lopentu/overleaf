@@ -1,3 +1,4 @@
+import { snapshotCompilerProfiles } from './CompileEnvironment.ts'
 import { randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { finished } from 'node:stream/promises'
@@ -12,6 +13,7 @@ import { collectExecOutput } from './DockerExecOutput.ts'
 import { checkJobOwnership, jobLabels, jobName } from './JobOwnership.ts'
 import {
   compileEnvironment,
+  snapshotExecutionRequest,
   validateRequest,
   validateStdoutRequest,
   type StdoutJobRequest,
@@ -55,7 +57,18 @@ export class EphemeralDockerJob {
 
   constructor(docker: Docker, policy: JobPolicy) {
     this.docker = docker
-    this.policy = policy
+    const {
+      trustedStagingRoot,
+      allowedImages,
+      allowedExecutables,
+      compilerProfiles,
+    } = policy
+    this.policy = Object.freeze({
+      trustedStagingRoot,
+      allowedImages: Object.freeze([...allowedImages]),
+      allowedExecutables: Object.freeze([...allowedExecutables]),
+      compilerProfiles: snapshotCompilerProfiles(compilerProfiles),
+    })
   }
   async run(
     request: JobRequest,
@@ -85,7 +98,26 @@ export class EphemeralDockerJob {
     input: GenericMode | ArtifactMode | StdoutMode,
     identity: string
   ): Promise<JobResult | CompileArtifactJobResult | StdoutJobResult> {
+    if (input.mode === 'stdout') {
+      if ('outputDirectory' in input.request)
+        throw new Error('stdout request must not have outputDirectory')
+      input = {
+        mode: 'stdout',
+        request: snapshotExecutionRequest(input.request),
+      }
+    } else {
+      const outputDirectory = input.request.outputDirectory
+      const checked = Object.freeze({
+        ...snapshotExecutionRequest(input.request),
+        outputDirectory,
+      })
+      input =
+        input.mode === 'artifacts'
+          ? { mode: 'artifacts', request: checked }
+          : { mode: 'generic', request: checked }
+    }
     const request = input.request
+    const environment = Object.freeze(compileEnvironment(request, this.policy))
     const name = jobName(identity)
     if (input.mode === 'stdout')
       await validateStdoutRequest(input.request, this.policy)
@@ -138,7 +170,7 @@ export class EphemeralDockerJob {
         // Image ENTRYPOINT is intentionally overridden; no job-provided shell.
         Entrypoint: ['/bin/sleep'],
         Cmd: ['infinity'],
-        Env: compileEnvironment(request),
+        Env: [...environment],
         NetworkDisabled: true,
         Tty: false,
         OpenStdin: false,
@@ -213,7 +245,7 @@ export class EphemeralDockerJob {
         Cmd: [...request.argv],
         User: '33:33',
         WorkingDir: request.cwd,
-        Env: compileEnvironment(request),
+        Env: [...environment],
         AttachStdout: true,
         AttachStderr: true,
         AttachStdin: false,

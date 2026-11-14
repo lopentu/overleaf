@@ -37,8 +37,11 @@ Do not substitute that result for a successful production image build.
   `tsconfig.archive.json` gate, including `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, checked JavaScript and `erasableSyntaxOnly`.
   The existing compiler regression hook first imports the real job module with
-  pinned Node 24.18.1, without type transformation, then runs all 515 selected
-  runner/archive/job/source/publication/native tests. Native tests cover the actual repository paths
+  pinned Node 24.18.1, without type transformation, then runs all 575 selected
+  runner/archive/job/source/publication/command/native tests, including all ten
+  original LatexRunner cases. Shared command/environment modules use the strict
+  archive scope; the legacy-graph regression uses the existing source-input scope
+  with ordinary legacy JavaScript still unchecked. Native tests cover the actual repository paths
   and child compiler PATH; Docker API fixtures do not establish native container
   acceptance. Dockerode uses its real pinned `@types/dockerode` dependency.
   Disposable job containers explicitly disable Docker logging, independently
