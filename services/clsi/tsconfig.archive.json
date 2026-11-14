@@ -45,6 +45,12 @@
     "test/unit/js/JobCollectionModes.test.ts",
     "test/unit/js/WorkflowCollectionModes.test.ts",
     "test/unit/js/ArchiveComposition.native.ts",
-    "test/unit/js/ArchiveCompositionNative.test.ts"
+    "test/unit/js/ArchiveCompositionNative.test.ts",
+    "app/js/LatexCommand.ts",
+    "app/js/CompileEnvironment.ts",
+    "app/js/CompilerCommandPlan.ts",
+    "test/unit/js/LatexCommand.test.ts",
+    "test/unit/js/CompilerCommandPolicy.test.ts",
+    "test/unit/js/JobEnvironmentSnapshot.test.ts"
   ]
 }

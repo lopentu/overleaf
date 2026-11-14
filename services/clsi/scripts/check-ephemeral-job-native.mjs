@@ -31,4 +31,52 @@ const { createManifestInputArchiveBundle, extractCompileOutputArchive } =
   await import('../app/js/BoundedProjectArchive.ts')
 assert.equal(typeof createManifestInputArchiveBundle, 'function')
 assert.equal(typeof extractCompileOutputArchive, 'function')
+
+// Pure command/environment extraction must also import under native strip-only
+// semantics. This does not import a runner or execute a compiler/image command.
+const { buildLatexCommand, deriveCompileEnvironment } =
+  await import('../app/js/LatexCommand.ts')
+const { configuredCompilerEnvironment } =
+  await import('../app/js/CompileEnvironment.ts')
+const { createCompilerCommandPlanner } =
+  await import('../app/js/CompilerCommandPlan.ts')
+assert.equal(typeof createCompilerCommandPlanner, 'function')
+assert.deepEqual(
+  buildLatexCommand(
+    '文 $COMPILE_DIR.tex',
+    { compiler: 'pdflatex' },
+    {},
+    { directory: '/compile', executable: '/synthetic/latexmk' }
+  ),
+  [
+    '/synthetic/latexmk',
+    '-cd',
+    '-jobname=output',
+    '-auxdir=/compile',
+    '-outdir=/compile',
+    '-synctex=1',
+    '-interaction=batchmode',
+    '-time',
+    '-f',
+    '-pdf',
+    '/compile/文 $COMPILE_DIR.tex',
+  ]
+)
+assert.deepEqual(
+  configuredCompilerEnvironment({
+    HOME: '/tmp',
+    TEXMFVAR: '/tmp/texmf-var',
+    TEXMFCONFIG: '/tmp/texmf-config',
+    CLSI: 1,
+  }),
+  {}
+)
+assert.equal(
+  deriveCompileEnvironment({
+    projectId: 'synthetic',
+    mainFile: 'main.tex',
+    check: 'validate',
+  }).CHKTEX_VALIDATE,
+  1
+)
 console.log('Node24.18.1 strip-only native import PASS')
