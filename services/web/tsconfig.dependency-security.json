@@ -13,6 +13,8 @@
   },
   "include": [
     "test/unit/src/infrastructure/DependencySecurity.test.mjs",
+    "test/unit/src/infrastructure/SendClientDisconnect.test.mjs",
+    "test/unit/src/infrastructure/fixtures/send-client-disconnect.cjs",
     "test/unit/src/infrastructure/fixtures/dependency-security.cjs",
     "test/unit/src/infrastructure/EmailCredentials.test.mjs",
     "test/unit/src/infrastructure/DependencyParsers.test.mjs",
