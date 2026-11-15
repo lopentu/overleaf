@@ -1,3 +1,4 @@
+import { parseWordcountOutput } from './WordcountOutput.ts'
 import { deriveCompileEnvironment } from './LatexCommand.ts'
 import fsPromises from 'node:fs/promises'
 import os from 'node:os'
@@ -766,56 +767,7 @@ async function wordcount(projectId, userId, filename, image, request) {
   }
 }
 
-function _parseWordcountFromOutput(output) {
-  const results = {
-    encode: '',
-    textWords: 0,
-    headWords: 0,
-    outside: 0,
-    headers: 0,
-    elements: 0,
-    mathInline: 0,
-    mathDisplay: 0,
-    errors: 0,
-    messages: '',
-  }
-  for (const line of output.split('\n')) {
-    const [data, info] = line.split(':')
-    if (data.indexOf('Encoding') > -1) {
-      results.encode = info.trim()
-    }
-    if (data.indexOf('in text') > -1) {
-      results.textWords = parseInt(info, 10)
-    }
-    if (data.indexOf('in head') > -1) {
-      results.headWords = parseInt(info, 10)
-    }
-    if (data.indexOf('outside') > -1) {
-      results.outside = parseInt(info, 10)
-    }
-    if (data.indexOf('of head') > -1) {
-      results.headers = parseInt(info, 10)
-    }
-    if (data.indexOf('Number of floats/tables/figures') > -1) {
-      results.elements = parseInt(info, 10)
-    }
-    if (data.indexOf('Number of math inlines') > -1) {
-      results.mathInline = parseInt(info, 10)
-    }
-    if (data.indexOf('Number of math displayed') > -1) {
-      results.mathDisplay = parseInt(info, 10)
-    }
-    if (data === '(errors') {
-      // errors reported as (errors:123)
-      results.errors = parseInt(info, 10)
-    }
-    if (line.indexOf('!!! ') > -1) {
-      // errors logged as !!! message !!!
-      results.messages += line + '\n'
-    }
-  }
-  return results
-}
+const _parseWordcountFromOutput = parseWordcountOutput
 
 function _getAllowedImages() {
   return Settings.clsi?.docker?.allowedImages

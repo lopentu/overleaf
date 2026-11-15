@@ -1,3 +1,8 @@
+import { PreparedSyncTexInput } from './PreparedSyncTexInput.ts'
+import {
+  requirePreparedCompilerInput,
+  PreparedCompilerInput,
+} from './PreparedCompilerInput.ts'
 import {
   GENERIC_JOB_ENVIRONMENT,
   requireCompilerProfileIdentifier,
@@ -31,6 +36,7 @@ export interface ExecutionRequest {
   timeoutMs: number
   environment?: Readonly<Record<string, string>>
   compilerProfile?: string
+  preparedInput?: unknown
   signal?: AbortSignal
 }
 export interface JobRequest extends ExecutionRequest {
@@ -114,12 +120,29 @@ async function validateCommonRequest(
     policy.compilerProfiles,
     request.compilerProfile,
     request.image,
-    request.argv
+    request.argv,
+    request.preparedInput,
+    request.inputDirectory,
+    request.environment?.OVERLEAF_PROJECT_ID
   )
   validateAdmittedEnvironment(request.environment ?? {}, profile !== undefined)
   if (profile !== undefined) {
-    if (request.timeoutMs !== 60_000)
-      throw new Error('Invalid wordcount operation deadline')
+    const projectId = request.environment?.OVERLEAF_PROJECT_ID ?? ''
+    let deadline = 60000
+    if (request.preparedInput instanceof PreparedCompilerInput)
+      deadline = requirePreparedCompilerInput(
+        request.preparedInput,
+        request.inputDirectory,
+        projectId
+      ).timeoutMs
+    else if (request.preparedInput !== undefined)
+      PreparedSyncTexInput.require(
+        request.preparedInput,
+        request.inputDirectory,
+        projectId
+      )
+    if (request.timeoutMs !== deadline)
+      throw new Error('Invalid compiler operation deadline')
     if (request.cwd !== '/compile')
       throw new Error('Invalid wordcount operation directory')
     validateSelectedEnvironment(request.environment ?? {}, profile)
@@ -196,6 +219,7 @@ export function snapshotExecutionRequest(
     timeoutMs,
     environment,
     compilerProfile,
+    preparedInput,
     signal,
   } = request
   if (
@@ -230,6 +254,7 @@ export function snapshotExecutionRequest(
     timeoutMs,
     environment: copiedEnvironment,
     ...(compilerProfile === undefined ? {} : { compilerProfile }),
+    ...(preparedInput === undefined ? {} : { preparedInput }),
     ...(signal === undefined ? {} : { signal }),
   })
 }
@@ -241,7 +266,10 @@ export function compileEnvironment(
     policy?.compilerProfiles,
     request.compilerProfile,
     request.image,
-    request.argv
+    request.argv,
+    request.preparedInput,
+    request.inputDirectory,
+    request.environment?.OVERLEAF_PROJECT_ID
   )
   const approved = validateAdmittedEnvironment(
     request.environment ?? {},

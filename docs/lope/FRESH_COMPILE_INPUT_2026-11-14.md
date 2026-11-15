@@ -1,5 +1,10 @@
 # Fresh authoritative compile input — November 14
 
+> Historical unit checkpoint: subsequent source composition is recorded in
+> [Compiler workflow integration](COMPILER_WORKFLOW_INTEGRATION_2026-11-15.md).
+> Its earlier pending-source statements are historical; isolated runtime startup
+> remains blocked until genuine kernel/rootless qualification.
+
 This source unit prepares complete input inside a genuine active workflow lease.
 It remains unmounted and unselected. It does not activate a worker, change
 production, complete publication/commands or establish hosted feature parity.

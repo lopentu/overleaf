@@ -18,12 +18,14 @@ export interface WorkflowHttpResult {
 interface Options {
   queueTimeoutMs?: number
   bodyLimitBytes?: number
+  failureResponse?: (error: unknown) => WorkflowHttpResult
 }
 
 function sendFailure(
   request: WorkflowHttpRequest,
   response: WorkflowResponse,
-  error: unknown
+  error: unknown,
+  format?: (error: unknown) => WorkflowHttpResult
 ): void {
   if (response.destroyed || response.writableEnded) return
   let status = 500,
@@ -49,31 +51,42 @@ function sendFailure(
   response.once('finish', () => {
     if (!request.complete) request.destroy()
   })
-  response.status(status).json({ error: code })
+  const formatted = format?.(error)
+  response
+    .status(formatted?.statusCode ?? status)
+    .json(formatted?.body ?? { error: code })
 }
 /** Internal unmounted JSON workflow boundary. The waiting caller owns a paused
  * HTTP stream, not parsed project contents. Queue entries contain metadata only.
  * The work promise and its registered workspace cleanup precede the response.
  */
-export function createWorkflowJsonHandler(
+function workflowHandler(
   admission: CompilerAdmission,
   metadata: (request: WorkflowHttpRequest) => WorkflowMetadata,
   work: (
     request: WorkflowHttpRequest,
-    scope: WorkflowScope
+    scope: WorkflowScope,
+    decodedBytes: Buffer | undefined
   ) => Promise<WorkflowHttpResult>,
-  options: Options = {}
+  options: Options,
+  parseBody: boolean
 ): RequestHandler<Params, unknown, unknown> {
   const bodyLimitBytes = options.bodyLimitBytes ?? 7 * 1024 * 1024
+  const { queueTimeoutMs, failureResponse } = options
   if (
     !Number.isSafeInteger(bodyLimitBytes) ||
     bodyLimitBytes < 1 ||
     bodyLimitBytes > 7 * 1024 * 1024
   )
     throw new AdmissionError('INVALID_REQUEST')
-  const parse = express.json({ limit: bodyLimitBytes, strict: true })
   return (request, response) => {
     request.pause()
+    if (!parseBody) {
+      response.setHeader('connection', 'close')
+      response.once('finish', () => {
+        if (!request.complete) request.destroy()
+      })
+    }
     const controller = new AbortController()
     const cancel = () => controller.abort(new AdmissionError('CANCELLED'))
     const disconnected = () => {
@@ -88,9 +101,7 @@ export function createWorkflowJsonHandler(
       try {
         const lease = await admission.acquire(metadata(request), {
           signal: controller.signal,
-          ...(options.queueTimeoutMs === undefined
-            ? {}
-            : { queueTimeoutMs: options.queueTimeoutMs }),
+          ...(queueTimeoutMs === undefined ? {} : { queueTimeoutMs }),
         })
         const abortInput = () => {
           if (!request.complete) request.destroy()
@@ -101,23 +112,33 @@ export function createWorkflowJsonHandler(
           lease.signal.removeEventListener('abort', abortInput)
         const result = await lease.run(async scope => {
           scope.signal.throwIfAborted()
-          if (!request.is('application/json'))
-            throw Object.assign(new Error('JSON body required'), {
-              status: 415,
+          let decodedBytes: Buffer | undefined
+          if (parseBody) {
+            if (!request.is('application/json'))
+              throw Object.assign(new Error('JSON body required'), {
+                status: 415,
+              })
+            const parse = express.json({
+              limit: bodyLimitBytes,
+              strict: true,
+              verify(_request, _response, bytes) {
+                decodedBytes = Buffer.from(bytes)
+              },
             })
-          await new Promise<void>((resolve, reject) => {
-            parse(request, response, (error: unknown) =>
-              error === undefined ? resolve() : reject(error)
-            )
-            request.resume()
-          })
-          scope.signal.throwIfAborted()
-          return await work(request, scope)
+            await new Promise<void>((resolve, reject) => {
+              parse(request, response, (error: unknown) =>
+                error === undefined ? resolve() : reject(error)
+              )
+              request.resume()
+            })
+            scope.signal.throwIfAborted()
+          }
+          return await work(request, scope, decodedBytes)
         })
         if (!response.destroyed && !response.writableEnded)
           response.status(result.statusCode).json(result.body)
       } catch (error) {
-        sendFailure(request, response, error)
+        sendFailure(request, response, error, failureResponse)
       } finally {
         removeActiveAbort?.()
         request.removeListener('aborted', cancel)
@@ -131,6 +152,45 @@ export function createWorkflowJsonHandler(
     })()
   }
 }
+/** Original decoded bytes are captured only after metadata admission. */
+export function createWorkflowJsonHandler(
+  admission: CompilerAdmission,
+  metadata: (request: WorkflowHttpRequest) => WorkflowMetadata,
+  work: (
+    request: WorkflowHttpRequest,
+    scope: WorkflowScope,
+    decodedBytes: Buffer
+  ) => Promise<WorkflowHttpResult>,
+  options: Options = {}
+): RequestHandler<Params, unknown, unknown> {
+  return workflowHandler(
+    admission,
+    metadata,
+    (request, scope, decodedBytes) => {
+      if (decodedBytes === undefined)
+        throw Object.assign(new Error('Original JSON body required'), {
+          status: 400,
+        })
+      return work(request, scope, decodedBytes)
+    },
+    options,
+    true
+  )
+}
+
+/** Metadata-only read admission shares the existing queue and disconnect owner. */
+export function createWorkflowReadHandler(
+  admission: CompilerAdmission,
+  metadata: (request: WorkflowHttpRequest) => WorkflowMetadata,
+  work: (
+    request: WorkflowHttpRequest,
+    scope: WorkflowScope
+  ) => Promise<WorkflowHttpResult>,
+  options: Options = {}
+): RequestHandler<Params, unknown, unknown> {
+  return workflowHandler(admission, metadata, work, options, false)
+}
+
 function controlHandler(
   action: (filter: WorkflowFilter) => Promise<void>,
   scope: (request: WorkflowHttpRequest) => WorkflowFilter
@@ -166,4 +226,13 @@ export function createWorkflowResetHandler(
     filter => admission.reset(filter, () => clear(filter)),
     scope
   )
+}
+
+/** Use an already owned reset action, such as cache.resetAndClear; never wrap it
+ * inside a second same-scope manager.reset. */
+export function createWorkflowControlHandler(
+  action: (filter: WorkflowFilter) => Promise<void>,
+  scope: (request: WorkflowHttpRequest) => WorkflowFilter
+): RequestHandler<Params, unknown, unknown> {
+  return controlHandler(action, scope)
 }

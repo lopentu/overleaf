@@ -6342,6 +6342,7 @@ __metadata:
     "@overleaf/settings": "workspace:*"
     "@overleaf/stream-utils": "workspace:*"
     "@overleaf/validation-tools": "workspace:*"
+    "@types/archiver": "npm:5.3.4"
     "@types/dockerode": "npm:3.3.47"
     "@types/express": "npm:4.17.23"
     "@types/node": "npm:^24.5.2"
@@ -9547,6 +9548,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/archiver@npm:5.3.4":
+  version: 5.3.4
+  resolution: "@types/archiver@npm:5.3.4"
+  dependencies:
+    "@types/readdir-glob": "npm:*"
+  checksum: 10c0/6ce95560b8fa0a4d5e624388ecc2fdf85cdf6ea97282e2483ed6d317920bd00a2b62b37380312527a75abf3270a5f27ce47c34f6a3a01b161a5b6a3ef4846673
+  languageName: node
+  linkType: hard
+
 "@types/aria-query@npm:^5.0.1":
   version: 5.0.4
   resolution: "@types/aria-query@npm:5.0.4"
@@ -10311,6 +10321,15 @@ __metadata:
   peerDependencies:
     "@types/react": "*"
   checksum: 10c0/f1b1e257dd7f02e1b50b2622c05a3fdcdb67045fdbbeab1f6ed7ef91e06f19d8899a3d7bd828c34bd2b243b7b7dd4c35376b947a683f5c0d56ea8a16b482f73d
+  languageName: node
+  linkType: hard
+
+"@types/readdir-glob@npm:*":
+  version: 1.1.5
+  resolution: "@types/readdir-glob@npm:1.1.5"
+  dependencies:
+    "@types/node": "npm:*"
+  checksum: 10c0/46849136a3b5246105bca0303aab80552a9ff67e024e77ef1845a806a24c1a621dfcba0e4ee5a00ebad17f51edb80928f2dd6dc510a1d9897f3bc22ed64e5cbd
   languageName: node
   linkType: hard
 

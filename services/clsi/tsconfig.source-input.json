@@ -38,6 +38,15 @@
     "../web/app/src/Features/Compile/CompileResponsePolicy.ts",
     "test/unit/js/PublicationArtifactFixture.ts",
     "test/unit/js/PublicationAuthority.test.ts",
-    "test/unit/js/LegacyCommandEnvironment.test.ts"
+    "test/unit/js/LegacyCommandEnvironment.test.ts",
+    "test/unit/js/CompilerWorkflowPreparation.test.ts",
+    "app/js/CompilerWorkflow.ts",
+    "app/js/CompilerWorkflowStartup.mjs",
+    "test/unit/js/CompilerWorkflowStartup.test.ts",
+    "app/js/CompilerWorkflowHttp.ts",
+    "app/js/PublishedOutputReader.ts",
+    "test/unit/js/PublishedOutputReader.test.ts",
+    "test/unit/js/CompilerWorkflowHttp.test.ts",
+    "test/unit/js/CompilerWorkflowIntegration.test.ts"
   ]
 }

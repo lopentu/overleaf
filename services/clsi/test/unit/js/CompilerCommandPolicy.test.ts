@@ -520,3 +520,35 @@ test('omitting a profile selector cannot downgrade a configured compiler image t
     await fs.rm(root, { recursive: true, force: true })
   }
 })
+
+test('selected workflow preserves actual legacy submission identifiers without accepting path syntax', async () => {
+  await withSourceFixture(async (_root, manager) => {
+    const planner = createCompilerCommandPlanner(manager, {
+      profiles: [profile],
+      defaultImage: IMAGE,
+    })
+    const lease = await manager.acquire({
+      projectId: 'submission_42-example',
+      kind: 'wordcount',
+    })
+    await lease.run(async scope => {
+      const command = planner.wordcount(scope, { mainFile: 'main.tex' })
+      assert.equal(command.projectId, 'submission_42-example')
+      const { compileEnvironment } =
+        await import('../../../app/js/JobRequest.ts')
+      const environment = compileEnvironment(
+        { ...command, inputDirectory: '/not-used' },
+        {
+          trustedStagingRoot: '/not-used',
+          allowedImages: [IMAGE],
+          allowedExecutables: [profile.tools.texcount],
+          compilerProfiles: [profile],
+        }
+      )
+      assert.ok(
+        environment.includes('OVERLEAF_PROJECT_ID=submission_42-example')
+      )
+    })
+    await lease.closed
+  })
+})

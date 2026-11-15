@@ -6,6 +6,9 @@ const isSpotInstance = process.env.PREEMPTIBLE === 'TRUE'
 const CLSI_SERVER_ID = os.hostname().replace('-ctr', '')
 
 module.exports = {
+  // An isolated request never falls back to the trusted legacy backend.
+  compilerWorkflowMode:
+    process.env.CLSI_COMPILER_WORKFLOW_MODE ?? 'legacy-trusted',
   compileSizeLimit: process.env.COMPILE_SIZE_LIMIT || '7mb',
 
   processLifespanLimitMs:

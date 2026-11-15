@@ -2,6 +2,12 @@
  * Profiles are trusted configuration facts, never supplied request authority.
  * This module contains no configured image or assertion of native eligibility. */
 import path from 'node:path'
+import {
+  buildSyncTexCommand,
+  PreparedSyncTexInput,
+} from './PreparedSyncTexInput.ts'
+import { buildLatexCommand } from './LatexCommand.ts'
+import { requirePreparedCompilerInput } from './PreparedCompilerInput.ts'
 export const GENERIC_ENVIRONMENT_KEYS: readonly string[] = Object.freeze([
   'SOURCE_DATE_EPOCH',
   'FORCE_SOURCE_DATE',
@@ -32,6 +38,12 @@ export const PROTECTED_ENVIRONMENT_KEYS: readonly string[] = Object.freeze([
   'CLSI',
 ])
 const PIN = /^(?:sha256:|[a-zA-Z0-9./:_-]+@sha256:)[a-f0-9]{64}$/
+/** Actual validation-tools submissionId alphabet plus the admission128-byte bound. */
+export function isCompilerProjectId(value: string): boolean {
+  return (
+    value.length > 0 && value.length <= 128 && /^[a-zA-Z0-9_-]+$/.test(value)
+  )
+}
 export function safeCommandString(
   value: unknown,
   maximum = 4096
@@ -159,7 +171,10 @@ export function selectedCompilerProfile(
   profiles: readonly TrustedCompilerProfile[] | undefined,
   id: string,
   image: string,
-  argv: readonly string[]
+  argv: readonly string[],
+  preparedInput?: unknown,
+  inputDirectory?: string,
+  projectId?: string
 ): TrustedCompilerProfile {
   const profile = profiles?.find(profile => profile.id === id)
   if (!profile || profile.image !== image)
@@ -176,13 +191,50 @@ export function selectedCompilerProfile(
     !filename.includes('\\') &&
     path.posix.normalize(filename) === filename &&
     !filename.endsWith('/')
+  if (argv[0] === profile.tools.synctex) {
+    const query = PreparedSyncTexInput.require(
+      preparedInput,
+      inputDirectory ?? '',
+      projectId ?? ''
+    )
+    const expected = buildSyncTexCommand(profile.tools.synctex, query)
+    if (
+      profile.variant !== 'standard' ||
+      argv.length !== expected.length ||
+      argv.some((value, index) => value !== expected[index])
+    )
+      throw new Error('SyncTeX command does not match exact build')
+    return profile
+  }
   const latex =
     argv[prefix.length] === profile.tools.latexmk &&
     prefix.every((arg, i) => argv[i] === arg) &&
     argv.includes('-auxdir=/compile') &&
     argv.includes('-outdir=/compile')
-  if (latex)
-    throw new Error('Bounded compiler content preparation is not implemented')
+  if (latex) {
+    if (preparedInput === undefined)
+      throw new Error('Missing bounded compiler content preparation')
+    const options = requirePreparedCompilerInput(
+      preparedInput,
+      inputDirectory ?? '',
+      projectId ?? ''
+    )
+    const expected = buildLatexCommand(
+      options.mainFile,
+      options,
+      { latexmkCommandPrefix: prefix },
+      { directory: '/compile', executable: profile.tools.latexmk }
+    )
+    if (
+      argv.length !== expected.length ||
+      argv.some((value, index) => value !== expected[index]) ||
+      options.enableCheckpoint !== (profile.variant === 'checkpoint')
+    )
+      throw new Error('Compiler command does not match prepared source')
+    return profile
+  }
+  if (preparedInput !== undefined)
+    throw new Error('Unexpected compiler preparation')
   if (!wordcount) throw new Error('Compiler tools do not match trusted profile')
   return profile
 }
@@ -192,7 +244,10 @@ export function resolveCompilerProfile(
   profiles: readonly TrustedCompilerProfile[] | undefined,
   id: string | undefined,
   image: string,
-  argv: readonly string[]
+  argv: readonly string[],
+  preparedInput?: unknown,
+  inputDirectory?: string,
+  projectId?: string
 ): TrustedCompilerProfile | undefined {
   if (id === undefined) {
     const knownCompilerImage =
@@ -202,7 +257,15 @@ export function resolveCompilerProfile(
     if (knownCompilerImage) throw new Error('Missing selected compiler profile')
     return undefined
   }
-  return selectedCompilerProfile(profiles, id, image, argv)
+  return selectedCompilerProfile(
+    profiles,
+    id,
+    image,
+    argv,
+    preparedInput,
+    inputDirectory,
+    projectId
+  )
 }
 /** Validate the concrete legacy defaults without coercing arbitrary values. */
 export function configuredCompilerEnvironment(
@@ -243,7 +306,7 @@ export function validateSelectedEnvironment(
   environment: Readonly<Record<string, string>>,
   profile: TrustedCompilerProfile
 ): void {
-  if (!/^[a-f0-9]{24}$/.test(environment.OVERLEAF_PROJECT_ID ?? ''))
+  if (!isCompilerProjectId(environment.OVERLEAF_PROJECT_ID ?? ''))
     throw new Error('Missing compiler project context')
   const exact: Readonly<Record<string, string>> = {
     CHKTEX_OPTIONS: '-nall -e9 -e10 -w15 -w16',

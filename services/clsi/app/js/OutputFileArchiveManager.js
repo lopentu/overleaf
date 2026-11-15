@@ -1,3 +1,4 @@
+import { isOutputZipFile } from './OutputArchiveFiles.ts'
 import archiver from 'archiver'
 import OutputCacheManager from './OutputCacheManager.js'
 import OutputFileFinder from './OutputFileFinder.js'
@@ -5,10 +6,6 @@ import Settings from '@overleaf/settings'
 import { open } from 'node:fs/promises'
 import { NotFoundError } from './Errors.js'
 import logger from '@overleaf/logger'
-
-// NOTE: Updating this list requires a corresponding change in
-// * services/web/frontend/js/features/pdf-preview/util/file-list.ts
-const ignoreFiles = ['output.fls', 'output.fdb_latexmk']
 
 function getContentDir(projectId, userId) {
   let subDir
@@ -92,14 +89,7 @@ export default {
         `${contentDir}${OutputCacheManager.path(build, '.')}`
       )
 
-      return outputFiles.filter(
-        // Ignore the pdf, clsi-cache tar-ball, history snapshot blob and also ignore the files ignored by the frontend.
-        ({ path }) =>
-          path !== 'output.pdf' &&
-          path !== 'output.tar.gz' &&
-          path !== 'history-resync.json.gz' &&
-          !ignoreFiles.includes(path)
-      )
+      return outputFiles.filter(({ path }) => isOutputZipFile(path))
     } catch (error) {
       if (
         error.code === 'ENOENT' ||

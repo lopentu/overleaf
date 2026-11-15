@@ -1,5 +1,10 @@
 # Bounded compile output publication — November 14
 
+> Historical unit checkpoint: subsequent source composition is recorded in
+> [Compiler workflow integration](COMPILER_WORKFLOW_INTEGRATION_2026-11-15.md).
+> Its earlier pending-source statements are historical; isolated runtime startup
+> remains blocked until genuine kernel/rootless qualification.
+
 This source unit publishes complete output under the existing immutable build
 namespace. It remains unselected. Production still uses the stock compiler;
 this change does not activate the compiler bridge or establish sandboxing,

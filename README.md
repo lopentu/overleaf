@@ -1,9 +1,10 @@
-> **LOPE development fork:** based on Overleaf CE+. The current production
-> service remains on its separately managed stock image. See
+> **LOPE development fork:** the CE+ base f5cd4cdd/image5dcf4da7 was accepted
+> for the separately managed lab service on November 15. The current 0104ea71
+> compiler increment remains unselected. See
 > [development and blocking checks](docs/lope/DEVELOPMENT.md),
 > [workflow acceptance matrix](docs/lope/FEATURE_MATRIX.md), and
 > [candidate operations](docs/lope/OPERATIONS.md). Fork creation is not
-> production, migration or sandbox acceptance.
+> acceptance of later increments, isolated compilation or full hosted parity.
 
 <h1 align="center">
   <br>

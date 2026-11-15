@@ -1,5 +1,10 @@
 # Unselected compiler command and environment seam
 
+> Historical unit checkpoint: subsequent source composition is recorded in
+> [Compiler workflow integration](COMPILER_WORKFLOW_INTEGRATION_2026-11-15.md).
+> Its earlier pending-source statements are historical; isolated runtime startup
+> remains blocked until genuine kernel/rootless qualification.
+
 This source unit preserves the legacy runner and supplies pure command/environment helpers plus an unselected wordcount planner. It configures no image profiles and performs no compiler, image, Docker, provider or source-data action at import. Neither a returned plan nor a supplied profile object grants execution authority.
 
 `LatexCommand.ts` is the actual legacy latexmk builder extracted into strict erasable TypeScript. `LatexRunner` delegates with the same default `$COMPILE_DIR`, engine/flag order, prefixes, strace, halt/force and historical knit-extension naming conversion. `CompileManager` shares its generated project/chktex environment constructor while preserving its existing image-variant selection and fallback. Candidate contexts change only constructed directory/tool slots, preserving literal filename/flag text; they do not globally replace tokens.
