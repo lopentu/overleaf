@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.backend.ce.json",
+  "compilerOptions": { "checkJs": false },
+  "include": [
+    "modules/github-sync/app/src/TokenManager.mjs",
+    "modules/github-sync/test/unit/GitHubAuth.test.mjs"
+  ]
+}

@@ -55,6 +55,13 @@ Do not substitute that result for a successful production image build.
   model of the runtime's new `fieldArrayIndexLimit`, which that declaration
   predates. This supplements all existing gates; ordinary upstream JavaScript
   outside this focused scope is unchanged.
+- GitHub authentication: `services/web/tsconfig.github-auth.json` strictly checks
+  the token manager and new auth regression file through `@ts-check`. Their
+  imported legacy modules retain the existing backend type coverage; the full
+  legacy controller is not claimed as strict checked JavaScript. Matching blocking
+  hooks run these types and provider/credential regressions locally and in CI.
+  Tests use synthetic tokens with mocked provider HTTP, storage and encryption;
+  no GitHub account, repository or real credentials are used.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
   and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox
