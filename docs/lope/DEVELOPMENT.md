@@ -55,6 +55,12 @@ Do not substitute that result for a successful production image build.
   model of the runtime's new `fieldArrayIndexLimit`, which that declaration
   predates. This supplements all existing gates; ordinary upstream JavaScript
   outside this focused scope is unchanged.
+  The static-file cancellation regression uses real local HTTP sockets and the
+  actual patched `send` dependency in isolated children. It checks cancellation
+  before and after pipeline setup, descriptor cleanup, complete normal transfers,
+  and propagation of file-read and unexpected pipeline errors. The patch closes
+  a newly created file stream when its response has already been destroyed; it
+  does not enable a global exception handler.
 - GitHub authentication: `services/web/tsconfig.github-auth.json` strictly checks
   the token manager and new auth regression file through `@ts-check`. Their
   imported legacy modules retain the existing backend type coverage; the full
