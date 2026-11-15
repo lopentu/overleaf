@@ -71,6 +71,21 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: github-auth-types
+        name: Strict checked GitHub token manager and auth regression types
+        entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.github-auth.json --noEmit --pretty false
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: github-auth-regressions
+        name: Mocked GitHub token revocation and OAuth error regressions
+        entry: >-
+          corepack yarn workspace @overleaf/web exec vitest run
+          --config vitest.config.js modules/github-sync/test/unit
+          --passWithNoTests=false
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: eslint
         name: Lint changed JavaScript and TypeScript (zero warnings)
         entry: corepack yarn exec eslint --max-warnings 0

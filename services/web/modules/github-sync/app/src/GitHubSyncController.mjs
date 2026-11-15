@@ -8,7 +8,7 @@ import GitHubSyncHandler from './GitHubSyncHandler.mjs'
 import TokenManager from './TokenManager.mjs'
 import api from './GitHubApiClient.mjs'
 import { doGitMerge } from './GitMerge.mjs'
-import { InvalidTokenError, GitNotLinkedError, AlreadyExistsError } from './GitSyncErrors.mjs'
+import { InvalidTokenError, AlreadyExistsError } from './GitSyncErrors.mjs'
 
 async function getConnectionStatus(req, res) {
   const userId = SessionManager.getLoggedInUserId(req.session)
@@ -18,9 +18,9 @@ async function getConnectionStatus(req, res) {
     res.json(isConnected)
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
-    logger.error({ info }, "failed to check user connection")
+    logger.error({ info }, 'failed to check user connection')
     return res.status(errStatus).json({ message: err.message })
   }
 }
@@ -34,9 +34,9 @@ async function getProjectState(req, res) {
     return res.json(pss)
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
-    logger.error({ info }, "failed get project sync state")
+    logger.error({ info }, 'failed get project sync state')
     return res.status(errStatus).json({ message: err.message })
   }
 }
@@ -52,13 +52,12 @@ async function listUserRepos(req, res) {
   try {
     const repos = await GitHubSyncHandler.listUserRepos(userId)
     res.json({ repos })
-
   } catch (err) {
     if (err instanceof InvalidTokenError) {
       return res.json(null)
     }
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ userId, info }, 'Failed to get repositories list')
     return res.status(errStatus).json({ message: err.message })
@@ -69,12 +68,14 @@ async function getMergeOverview(req, res) {
   const { project_id: projectId } = req.params
   const userId = SessionManager.getLoggedInUserId(req.session)
   try {
-    const commitsAndStatus = await GitHubSyncHandler.getMergeOverview(userId, projectId)
+    const commitsAndStatus = await GitHubSyncHandler.getMergeOverview(
+      userId,
+      projectId
+    )
     res.json(commitsAndStatus)
-
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ info, projectId }, 'Error listing commits since last sync')
     return res.status(errStatus).json({ message: err.message })
@@ -87,10 +88,18 @@ async function importRepo(req, res) {
   const { name, fullName, defaultBranchName } = req.body
 
   try {
-    const projectId = await GitHubSyncHandler.importRepo(userId, name, fullName, defaultBranchName)
+    const projectId = await GitHubSyncHandler.importRepo(
+      userId,
+      name,
+      fullName,
+      defaultBranchName
+    )
     res.json({ projectId })
   } catch (error) {
-    logger.error({ error, userId }, 'Failed to import git repository from server')
+    logger.error(
+      { error, userId },
+      'Failed to import git repository from server'
+    )
     res.status(error.status || 500).json({ message: error.message })
   }
 }
@@ -118,13 +127,20 @@ async function oauth2Callback(req, res) {
   try {
     token = await api.exchangeCodeForToken(code)
     if (!token) {
-      HttpErrorHandler.badRequest(req, res, 'Failed to obtain access token from Git server')
+      HttpErrorHandler.badRequest(
+        req,
+        res,
+        'Failed to obtain access token from Git server'
+      )
       return
     }
   } catch (error) {
-    const info = OError.getFullInfo(err)
-    logger.error(OError.getFullStack(err))
-    logger.error({ info, userId }, 'Failed to obtain access token from Git server')
+    const info = OError.getFullInfo(error)
+    logger.error(OError.getFullStack(error))
+    logger.error(
+      { info, userId },
+      'Failed to obtain access token from Git server'
+    )
     HttpErrorHandler.badRequest(req, res, error.message || 'Bad request')
     return
   }
@@ -133,7 +149,7 @@ async function oauth2Callback(req, res) {
     await TokenManager.saveUserToken(userId, token)
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ info, userId }, 'Error saving user token')
     HttpErrorHandler.handleErrorByStatusCode(req, res, err, errStatus)
@@ -141,8 +157,9 @@ async function oauth2Callback(req, res) {
   }
 
   // Save success message in session to display on redirect
-  req.session.projectSyncSuccessMessage =
-    req.i18n.translate('github_successfully_linked_description')
+  req.session.projectSyncSuccessMessage = req.i18n.translate(
+    'github_successfully_linked_description'
+  )
   res.redirect('/user/settings?oauth-complete=github#project-sync')
 }
 
@@ -153,9 +170,9 @@ async function unlink(req, res) {
     await TokenManager.removeUserToken(userId)
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
-    logger.error({ info, projectId }, 'Error removing user credentials')
+    logger.error({ info, userId }, 'Error removing user credentials')
     return res.status(errStatus).json({ message: err.message })
   }
   res.sendStatus(200)
@@ -174,15 +191,15 @@ async function exportProject(req, res) {
 
   try {
     await GitHubSyncHandler.exportProject(userId, projectId, req.body)
-
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ info, projectId }, 'Error exporting project')
     let key = 'github_validation_check'
     if (err instanceof AlreadyExistsError) key = 'github_validation_name_exists'
-    else if (errStatus === 401 || errStatus === 403) key = 'github_validation_check_auth'
+    else if (errStatus === 401 || errStatus === 403)
+      key = 'github_validation_check_auth'
     return res.status(errStatus).json({ key, message: err.message })
   }
   res.sendStatus(200)
@@ -192,15 +209,20 @@ async function gitMerge(req, res) {
   const { project_id: projectId } = req.params
   try {
     const userId = SessionManager.getLoggedInUserId(req.session)
-    const commitMessage =  req.body?.message || 'Updates from Overleaf'
+    const commitMessage = req.body?.message || 'Updates from Overleaf'
     const claimConflictIsResolved = req.body.claimConflictIsResolved
 
-    const mergeResult = await doGitMerge(userId, projectId, commitMessage, claimConflictIsResolved)
+    const mergeResult = await doGitMerge(
+      userId,
+      projectId,
+      commitMessage,
+      claimConflictIsResolved
+    )
 
     res.json(mergeResult)
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ info, projectId }, 'Error syncing project to GitHub')
     return res.status(errStatus).json({ message: err.message })
@@ -216,7 +238,7 @@ async function unlinkRepo(req, res) {
     if (ownerEmail) return res.status(403).json({ ownerEmail })
   } catch (err) {
     const info = OError.getFullInfo(err)
-    const errStatus  = info?.status || 500
+    const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ info, projectId }, 'Error unlinking repo from project')
     return res.status(errStatus).json({ message: err.message })

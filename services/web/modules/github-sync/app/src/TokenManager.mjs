@@ -1,20 +1,27 @@
+// @ts-check
 import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
 import Mongo from '../../../../app/src/Features/Helpers/Mongo.mjs'
 import { GitHubSyncUserCredentials } from '../models/githubSyncUserCredentials.mjs'
 import { AccessTokenEncryptor } from './AccessTokenEncryptorHelper.mjs'
 import { InvalidTokenError } from './GitSyncErrors.mjs'
+import GitHubApiClient from './GitHubApiClient.mjs'
 
 const { normalizeQuery } = Mongo
 
+/** @param {string} accessToken */
 async function encryptAccessToken(accessToken) {
   try {
     return await AccessTokenEncryptor.encryptJson(accessToken)
   } catch (err) {
-    throw OError.tag('failed to encrypt token', err)
+    throw OError.tag(err, 'failed to encrypt token')
   }
 }
 
+/**
+ * @param {string} tokenEncrypted
+ * @returns {Promise<string>}
+ */
 async function decryptAccessToken(tokenEncrypted) {
   try {
     return await AccessTokenEncryptor.decryptToJson(tokenEncrypted)
@@ -24,12 +31,20 @@ async function decryptAccessToken(tokenEncrypted) {
 }
 
 // ------------------------- exports -------------------------- //
+/** @param {string | import('mongodb-legacy').ObjectId} userId */
 async function getUserToken(userId) {
-  const credentials = await GitHubSyncUserCredentials.findOne(normalizeQuery({ userId }))
-  if (!credentials) throw new InvalidTokenError('no user token', { userId, status: 400 })
+  const credentials = await GitHubSyncUserCredentials.findOne(
+    normalizeQuery({ userId })
+  )
+  if (!credentials)
+    throw new InvalidTokenError('no user token', { userId, status: 400 })
   return await decryptAccessToken(credentials.github)
 }
 
+/**
+ * @param {string | import('mongodb-legacy').ObjectId} userId
+ * @param {string} accessToken
+ */
 async function saveUserToken(userId, accessToken) {
   const tokenEncrypted = await encryptAccessToken(accessToken)
   await GitHubSyncUserCredentials.findOneAndUpdate(
@@ -40,10 +55,11 @@ async function saveUserToken(userId, accessToken) {
 }
 
 // Try to revoke user's token, then remove it
+/** @param {string | import('mongodb-legacy').ObjectId} userId */
 async function removeUserToken(userId) {
   let token
   try {
-    const token = await getUserToken(userId)
+    token = await getUserToken(userId)
   } catch (err) {
     logger.warn({ err, userId }, 'failed to get user token')
   }
@@ -60,5 +76,5 @@ async function removeUserToken(userId) {
 export default {
   saveUserToken,
   getUserToken,
-  removeUserToken
+  removeUserToken,
 }
