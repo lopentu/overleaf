@@ -2,10 +2,12 @@ package uk.ac.ic.wlgitbridge.git.handler;
 
 import com.google.api.client.auth.oauth2.Credential;
 import jakarta.servlet.http.HttpServletRequest;
+import java.io.IOException;
 import java.util.Optional;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.transport.ReceivePack;
 import org.eclipse.jgit.transport.resolver.ReceivePackFactory;
+import org.eclipse.jgit.transport.resolver.ServiceNotEnabledException;
 import uk.ac.ic.wlgitbridge.bridge.Bridge;
 import uk.ac.ic.wlgitbridge.bridge.repo.RepoStore;
 import uk.ac.ic.wlgitbridge.git.handler.hook.WriteLatexPutHook;
@@ -52,17 +54,21 @@ public class WLReceivePackFactory implements ReceivePackFactory<HttpServletReque
    * @return a correctly hooked {@link ReceivePack}
    */
   @Override
-  public ReceivePack create(HttpServletRequest httpServletRequest, Repository repository) {
+  public ReceivePack create(HttpServletRequest httpServletRequest, Repository repository)
+      throws ServiceNotEnabledException {
     Log.debug("[{}] Creating receive-pack", repository.getWorkTree().getName());
     Optional<Credential> oauth2 =
         Optional.ofNullable(
             (Credential) httpServletRequest.getAttribute(Oauth2Filter.ATTRIBUTE_KEY));
-    ReceivePack receivePack = new ReceivePack(repository);
     String hostname = Util.getPostbackURL();
     if (hostname == null) {
       hostname = httpServletRequest.getLocalName();
     }
-    receivePack.setPreReceiveHook(new WriteLatexPutHook(repoStore, bridge, hostname, oauth2));
-    return receivePack;
+    try {
+      return new ProjectLockedReceivePack(
+          repository, bridge, new WriteLatexPutHook(repoStore, bridge, hostname, oauth2));
+    } catch (IOException error) {
+      throw new ServiceNotEnabledException("Git repository unavailable", error);
+    }
   }
 }

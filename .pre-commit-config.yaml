@@ -86,6 +86,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: git-bridge-quality
+        name: Git bridge Java formatting, compilation and tests
+        entry: tools/lope/check-git-bridge.sh
+        language: system
+        pass_filenames: false
+        files: '^(services/git-bridge/(src/|pom\.xml$)|tools/lope/check-git-bridge\.sh$|\.pre-commit-config\.yaml$|\.github/workflows/lope-quality\.yml$)'
       - id: eslint
         name: Lint changed JavaScript and TypeScript (zero warnings)
         entry: corepack yarn exec eslint --max-warnings 0
