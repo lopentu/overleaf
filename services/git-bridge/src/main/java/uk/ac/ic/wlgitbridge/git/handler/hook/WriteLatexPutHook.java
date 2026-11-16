@@ -56,6 +56,44 @@ public class WriteLatexPutHook implements PreReceiveHook {
 
   @Override
   public void onPreReceive(ReceivePack receivePack, Collection<ReceiveCommand> receiveCommands) {
+    onPreReceive(receivePack, receiveCommands, () -> {});
+  }
+
+  /** Release receive-scoped state after rejection and before potentially blocking client output. */
+  public void onPreReceive(
+      ReceivePack receivePack,
+      Collection<ReceiveCommand> receiveCommands,
+      Runnable beforeRejectionOutput) {
+    // Validate the complete batch before the first snapshot side effect.
+    for (ReceiveCommand command : receiveCommands) {
+      try {
+        checkBranch(command, receivePack.getRepository());
+        checkForcedPush(command);
+      } catch (WrongBranchException | ForcedPushException error) {
+        Log.warn("User push rejected on pre receive: {}", error.getMessage());
+        handleSnapshotPostException(
+            receivePack, receiveCommands, command, error, beforeRejectionOutput);
+        return;
+      } catch (IOException error) {
+        rejectCommands(
+            receiveCommands,
+            command,
+            Result.REJECTED_OTHER_REASON,
+            error.getMessage(),
+            beforeRejectionOutput);
+        receivePack.sendError(error.getMessage());
+        return;
+      } catch (Throwable error) {
+        Log.error("Unable to validate receive commands", error);
+        handleSnapshotPostException(
+            receivePack,
+            receiveCommands,
+            command,
+            new InternalErrorException(),
+            beforeRejectionOutput);
+        return;
+      }
+    }
     Log.debug(
         "-> Handling {} commands in {}",
         receiveCommands.size(),
@@ -65,24 +103,52 @@ public class WriteLatexPutHook implements PreReceiveHook {
         handleReceiveCommand(oauth2, receivePack.getRepository(), receiveCommand);
       } catch (IOException e) {
         Log.error("IOException on pre receive", e);
+        rejectCommands(
+            receiveCommands,
+            receiveCommand,
+            Result.REJECTED_OTHER_REASON,
+            e.getMessage(),
+            beforeRejectionOutput);
         receivePack.sendError(e.getMessage());
-        receiveCommand.setResult(Result.REJECTED_OTHER_REASON, e.getMessage());
+        return;
       } catch (OutOfDateException e) {
         Log.error("OutOfDateException on pre receive", e);
-        receiveCommand.setResult(Result.REJECTED_NONFASTFORWARD);
+        rejectCommands(
+            receiveCommands,
+            receiveCommand,
+            Result.REJECTED_NONFASTFORWARD,
+            null,
+            beforeRejectionOutput);
+        return;
       } catch (WrongBranchException | ForcedPushException e) {
         Log.warn("User push rejected on pre receive: {}", e.getMessage());
-        handleSnapshotPostException(receivePack, receiveCommand, e);
+        handleSnapshotPostException(
+            receivePack, receiveCommands, receiveCommand, e, beforeRejectionOutput);
+        return;
       } catch (GitUserException e) {
         Log.error("GitUserException on pre receive", e);
-        handleSnapshotPostException(receivePack, receiveCommand, e);
+        handleSnapshotPostException(
+            receivePack, receiveCommands, receiveCommand, e, beforeRejectionOutput);
+        return;
       } catch (CannotAcquireLockException e) {
         Log.info("CannotAcquireLockException on pre receive");
+        rejectCommands(
+            receiveCommands,
+            receiveCommand,
+            Result.REJECTED_OTHER_REASON,
+            e.getMessage(),
+            beforeRejectionOutput);
         receivePack.sendError(e.getMessage());
-        receiveCommand.setResult(Result.REJECTED_OTHER_REASON, e.getMessage());
+        return;
       } catch (Throwable t) {
         Log.error("Throwable on pre receive", t);
-        handleSnapshotPostException(receivePack, receiveCommand, new InternalErrorException());
+        handleSnapshotPostException(
+            receivePack,
+            receiveCommands,
+            receiveCommand,
+            new InternalErrorException(),
+            beforeRejectionOutput);
+        return;
       }
     }
     Log.debug(
@@ -91,9 +157,26 @@ public class WriteLatexPutHook implements PreReceiveHook {
         receivePack.getRepository().getDirectory().getAbsolutePath());
   }
 
+  private void rejectCommands(
+      Collection<ReceiveCommand> commands,
+      ReceiveCommand command,
+      Result result,
+      String message,
+      Runnable beforeRejectionOutput) {
+    command.setResult(result, message);
+    ReceiveCommand.abort(commands);
+    beforeRejectionOutput.run();
+  }
+
   private void handleSnapshotPostException(
-      ReceivePack receivePack, ReceiveCommand receiveCommand, GitUserException e) {
+      ReceivePack receivePack,
+      Collection<ReceiveCommand> commands,
+      ReceiveCommand receiveCommand,
+      GitUserException e,
+      Runnable beforeRejectionOutput) {
     String message = e.getMessage();
+    rejectCommands(
+        commands, receiveCommand, Result.REJECTED_OTHER_REASON, message, beforeRejectionOutput);
     receivePack.sendError(message);
     StringBuilder msg = new StringBuilder();
     for (Iterator<String> it = e.getDescriptionLines().iterator(); it.hasNext(); ) {
@@ -106,7 +189,6 @@ public class WriteLatexPutHook implements PreReceiveHook {
     }
     receivePack.sendMessage("");
     receivePack.sendMessage(msg.toString());
-    receiveCommand.setResult(Result.REJECTED_OTHER_REASON, message);
   }
 
   private void handleReceiveCommand(

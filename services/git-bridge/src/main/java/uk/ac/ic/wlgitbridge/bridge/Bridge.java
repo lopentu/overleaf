@@ -42,6 +42,7 @@ import uk.ac.ic.wlgitbridge.snapshot.push.PostbackManager;
 import uk.ac.ic.wlgitbridge.snapshot.push.PushResult;
 import uk.ac.ic.wlgitbridge.snapshot.push.exception.*;
 import uk.ac.ic.wlgitbridge.util.Log;
+import uk.ac.ic.wlgitbridge.util.Project;
 
 /*
  * This is the heart of the Git Bridge. You plug in all the parts (project
@@ -429,6 +430,12 @@ public class Bridge {
     }
 
     gcJob.queueForGc(projectName);
+  }
+
+  /** Keep receive-pack tree capture and ref execution under the existing reentrant project lock. */
+  public LockGuard lockForReceivePack(String projectName) throws CannotAcquireLockException {
+    Project.checkValidProjectName(projectName);
+    return lock.lockGuard(projectName);
   }
 
   /*

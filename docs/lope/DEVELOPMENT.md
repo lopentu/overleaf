@@ -13,6 +13,15 @@ python3 -m venv .lope-tools
 .lope-tools/bin/pre-commit run
 ```
 
+Git bridge changes also require a full JDK 21, with `JAVA_HOME` pointing to the
+JDK directory, and Apache Maven 3.9.16 on `PATH`. Install Maven from the
+[official Apache distribution](https://maven.apache.org/download.cgi) and verify
+its published SHA-512 checksum before extracting it. A Java runtime without
+`javac` is insufficient. Run `tools/lope/check-git-bridge.sh` directly to check
+Java formatting, compile production and test sources, and run the Maven tests.
+The blocking hook covers git-bridge sources, its POM and quality-gate inputs;
+CI provides Temurin JDK 21 and checksum-verified Maven 3.9.16 for the same hook.
+
 Commits run installed blocking hooks. Do not bypass them. CI runs the same
 hookset against the PR/push diff: lint and formatting cover changed files,
 while dependencies, parser generation, public types, service schema and focused
