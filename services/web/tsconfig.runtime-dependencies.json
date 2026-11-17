@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "../../server-ce/runtime-dependencies.cjs",
+    "../../server-ce/runtime-dependencies.test.cjs",
+    "../../server-ce/runtime-audit.cjs",
+    "../../server-ce/runtime-audit.test.cjs"
+  ]
+}

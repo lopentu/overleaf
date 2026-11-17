@@ -41,6 +41,12 @@ RUN --mount=type=cache,target=/root/.cache \
     --mount=type=tmpfs,target=/tmp \
     node genScript compile | bash
 
+# Re-resolve unused compiler injection after native and frontend builds.
+# This image-only step preserves the normal developer lock and build graph.
+RUN --network=none \
+    --mount=type=bind,source=server-ce/runtime-dependencies.cjs,target=/run/overleaf-runtime-dependencies.cjs,readonly \
+    OVERLEAF_FINAL_RUNTIME_BUILD=1 corepack yarn node /run/overleaf-runtime-dependencies.cjs --final-image-build
+
 # Enable Yarn PnP resolution for all Node.js processes
 # -----------------------------------------------------
 ENV NODE_OPTIONS="--require /overleaf/.pnp.cjs --import /overleaf/.pnp.register.mjs"

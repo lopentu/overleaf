@@ -122,6 +122,18 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: runtime-dependencies-types
+        name: Strict checked image-only dependency projection and regressions
+        entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.runtime-dependencies.json --noEmit --pretty false
+        language: system
+        pass_filenames: false
+        files: '^(server-ce/(Dockerfile$|runtime-(?:dependencies|audit)(?:\.test)?\.cjs$)|services/web/tsconfig\.runtime-dependencies\.json$|\.pre-commit-config\.yaml$|\.github/workflows/lope-quality\.yml$)'
+      - id: runtime-dependencies-regressions
+        name: Image-only dependency graph, payload and physical closure guards
+        entry: node --test server-ce/runtime-dependencies.test.cjs server-ce/runtime-audit.test.cjs
+        language: system
+        pass_filenames: false
+        files: '^(server-ce/(Dockerfile$|runtime-(?:dependencies|audit)(?:\.test)?\.cjs$)|services/web/tsconfig\.runtime-dependencies\.json$|\.pre-commit-config\.yaml$|\.github/workflows/lope-quality\.yml$)'
       - id: runtime-cleanup-types
         name: Strict checked final-image cleanup guards and regressions
         entry: corepack yarn workspace @overleaf/web exec tsc -p tsconfig.runtime-cleanup.json --noEmit --pretty false
