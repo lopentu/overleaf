@@ -1,4 +1,5 @@
 // @ts-check
+import { withProviderHttpsAgent } from '../../../../app/src/Features/Integrations/ProviderHttpsAgent.mjs'
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import OError from '@overleaf/o-error'
@@ -61,19 +62,22 @@ async function getRequestToken() {
   const url = `${ZOTERO_OAUTH_URL}/request`
 
   try {
-    const body = await fetchString(url, {
-      method: 'POST',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: {
-        Authorization: buildAuthorizationHeader({
-          url,
-          method: 'POST',
-          data: {
-            oauth_callback: Settings.zotero.callbackURL,
-          },
-        }),
-      },
-    })
+    const body = await fetchString(
+      url,
+      withProviderHttpsAgent('zotero', url, {
+        method: 'POST',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        headers: {
+          Authorization: buildAuthorizationHeader({
+            url,
+            method: 'POST',
+            data: {
+              oauth_callback: Settings.zotero.callbackURL,
+            },
+          }),
+        },
+      })
+    )
 
     return parseOAuthResponse(body, ['oauth_token', 'oauth_token_secret'])
   } catch (err) {
@@ -96,25 +100,28 @@ async function exchangeRequestTokenForAccessToken(
   const url = `${ZOTERO_OAUTH_URL}/access`
 
   try {
-    const body = await fetchString(url, {
-      method: 'POST',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: {
-        Authorization: buildAuthorizationHeader(
-          {
-            url,
-            method: 'POST',
-            data: {
-              oauth_verifier: oauthVerifier,
+    const body = await fetchString(
+      url,
+      withProviderHttpsAgent('zotero', url, {
+        method: 'POST',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        headers: {
+          Authorization: buildAuthorizationHeader(
+            {
+              url,
+              method: 'POST',
+              data: {
+                oauth_verifier: oauthVerifier,
+              },
             },
-          },
-          {
-            key: oauthToken,
-            secret: oauthTokenSecret,
-          }
-        ),
-      },
-    })
+            {
+              key: oauthToken,
+              secret: oauthTokenSecret,
+            }
+          ),
+        },
+      })
+    )
 
     const data = parseOAuthResponse(body, ['oauth_token', 'userID'])
     if (!/^\d+$/.test(data.userID)) {

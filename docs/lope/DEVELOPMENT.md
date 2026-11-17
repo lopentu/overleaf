@@ -86,6 +86,23 @@ Do not substitute that result for a successful production image build.
   bodies. No provider account or real credentials are used. Transport failures
   retain only fixed operation, allowlisted error class and bounded HTTP status;
   raw provider URLs, headers, bodies and cause chains do not cross that boundary.
+- Provider HTTPS transport: `services/web/tsconfig.provider-https.json` strictly
+  checks the web-local helper and real loopback CONNECT/TLS regressions. The
+  optional nonsecret `OVERLEAF_PROVIDER_HTTPS_PROXY` setting accepts only an
+  HTTP(S) origin without userinfo, path, query or fragment. Unset preserves the
+  identical existing options/transport. When configured, only the GitHub/Zotero
+  fetch callsites use it; internal/global agents stay unchanged. Both the initial
+  URL and every redirect require HTTPS443 and exact provider hostnames (GitHub:
+  `github.com`, `api.github.com`, `codeload.github.com`; Zotero: `www.zotero.org`,
+  `api.zotero.org`). Each request has its own standard proxy agent bound to its
+  existing AbortSignal, including the pending CONNECT socket; redirects share
+  the request deadline. Missing cancellation refuses, with no direct fallback.
+  The matching blocking type/test hooks use generated ephemeral TLS fixtures,
+  actual client requests, stalled CONNECT/body cancellation, redirect/host/TLS
+  refusal and a trap against external DNS. Production TLS verification is never
+  disabled. A separately managed private allowlisted proxy and real provider
+  qualification are still required; this source change deploys no proxy, network,
+  service or credentials.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
   and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox

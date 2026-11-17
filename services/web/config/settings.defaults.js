@@ -304,6 +304,9 @@ module.exports = {
   // that are sent out, generated links, etc.
   siteUrl: (siteUrl = process.env.PUBLIC_URL || 'http://127.0.0.1:3000'),
 
+  // Optional provider-only CONNECT transport; internal fetch agents are unchanged.
+  providerHttpsProxy: process.env.OVERLEAF_PROVIDER_HTTPS_PROXY,
+
   isCodeSpace: process.env.IS_CODE_SPACE === 'true',
   isDevEnv: process.env.NODE_ENV === 'development',
   isCI: process.env.NODE_ENV === 'test',
@@ -1118,7 +1121,7 @@ module.exports = {
       Path.resolve(
         __dirname,
         '../modules/git-bridge/frontend/js/widget/components/git-integration-widget.tsx'
-      )
+      ),
     ],
     managedGroupSubscriptionEnrollmentNotification: [],
     managedGroupEnrollmentInvite: [],
@@ -1250,16 +1253,21 @@ module.exports = {
   enablePandocConversions: process.env.ENABLE_PANDOC_CONVERSIONS === 'true',
 
   oauthProviders: {
-    ...(process.env.EXTERNAL_AUTH && process.env.EXTERNAL_AUTH.includes('oidc') && {
-      [process.env.OVERLEAF_OIDC_PROVIDER_ID || 'oidc']: {
-        name: process.env.OVERLEAF_OIDC_PROVIDER_NAME || 'OIDC Provider',
-        descriptionKey: process.env.OVERLEAF_OIDC_PROVIDER_DESCRIPTION,
-        descriptionOptions: { link: process.env.OVERLEAF_OIDC_PROVIDER_INFO_LINK },
-        hideWhenNotLinked: process.env.OVERLEAF_OIDC_PROVIDER_HIDE_NOT_LINKED ?
-          process.env.OVERLEAF_OIDC_PROVIDER_HIDE_NOT_LINKED.toLowerCase() === 'true' : undefined,
-        linkPath: '/oidc/login',
-      },
-    }),
+    ...(process.env.EXTERNAL_AUTH &&
+      process.env.EXTERNAL_AUTH.includes('oidc') && {
+        [process.env.OVERLEAF_OIDC_PROVIDER_ID || 'oidc']: {
+          name: process.env.OVERLEAF_OIDC_PROVIDER_NAME || 'OIDC Provider',
+          descriptionKey: process.env.OVERLEAF_OIDC_PROVIDER_DESCRIPTION,
+          descriptionOptions: {
+            link: process.env.OVERLEAF_OIDC_PROVIDER_INFO_LINK,
+          },
+          hideWhenNotLinked: process.env.OVERLEAF_OIDC_PROVIDER_HIDE_NOT_LINKED
+            ? process.env.OVERLEAF_OIDC_PROVIDER_HIDE_NOT_LINKED.toLowerCase() ===
+              'true'
+            : undefined,
+          linkPath: '/oidc/login',
+        },
+      }),
   },
 
   splitTestOverrides: {
@@ -1267,20 +1275,23 @@ module.exports = {
     'overleaf-code': 'enabled',
     'editor-tabs': 'enabled',
     'writefull-toolbar-migration': 'enabled',
-    ...(process.env.ENABLE_PANDOC_CONVERSIONS === 'true' ? {
-      'import-docx': 'enabled',
-      'import-markdown': 'enabled',
-      'export-docx': 'enabled',
-      'export-html': 'enabled',
-      'export-markdown': 'enabled',
-    } : {}),
-    ...(process.env.OVERLEAF_HISTORY_RESTORE?.toLowerCase() === 'true' ? {
-      'history-ranges-support': 'enabled',
-      'revert-file': 'enabled',
-      'revert-project': 'enabled',
-    } : {}),
+    ...(process.env.ENABLE_PANDOC_CONVERSIONS === 'true'
+      ? {
+          'import-docx': 'enabled',
+          'import-markdown': 'enabled',
+          'export-docx': 'enabled',
+          'export-html': 'enabled',
+          'export-markdown': 'enabled',
+        }
+      : {}),
+    ...(process.env.OVERLEAF_HISTORY_RESTORE?.toLowerCase() === 'true'
+      ? {
+          'history-ranges-support': 'enabled',
+          'revert-file': 'enabled',
+          'revert-project': 'enabled',
+        }
+      : {}),
   },
-
 }
 
 module.exports.mergeWith = function (overrides) {
