@@ -20,9 +20,12 @@ fixtures and remain separate diagnostics; never call those commands passing
 without running them. Existing CLSI tsc does not typecheck ordinary unannotated
 JavaScript; runner regressions do not establish a typed or secure implementation.
 
-Current production is the separately managed CE+ base f5cd4cdd/image5dcf4da7,
-accepted on November 15. The current 0104ea71 compiler increment remains
-discovery/unselected; this development checkout is not the runtime. See
+Current production is the separately managed CE+ source cb7f6803/image19957473,
+accepted on November 17, 2026. Candidate image4cee833f from source516dbdf0 has
+been built and scanned with no reported HIGH or CRITICAL findings; 168 lower
+severity findings remain. It has not been promoted. The earlier 0104ea71
+compiler increment remains discovery/unselected; this checkout is not the
+runtime and does not establish hosted feature parity. See
 [operations](docs/lope/OPERATIONS.md) for the public service and canonical runtime
 contract. Before further promotion, use the lope-service-lifecycle and
 lope-sysadmin workflows and validate the source declaration against the
