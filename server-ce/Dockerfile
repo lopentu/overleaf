@@ -140,6 +140,12 @@ ENV LOG_LEVEL="info"
 ENV GIT_BRIDGE_HOST=git-bridge
 ENV GIT_BRIDGE_PORT=8000
 ENV GIT_BRIDGE_REPOSTORE_MAX_FILE_SIZE=52428800
+# Remove reviewed build-only headers/C++ development tools and global npm only
+# after compilation. The guarded helper is a temporary read-only context mount.
+RUN --network=none \
+    --mount=type=bind,source=server-ce/runtime-cleanup.cjs,target=/run/overleaf-runtime-cleanup.cjs,readonly \
+    OVERLEAF_FINAL_RUNTIME_BUILD=1 /usr/bin/node /run/overleaf-runtime-cleanup.cjs --final-image-build
+
 EXPOSE 80
 
 ENTRYPOINT ["/sbin/my_init"]
