@@ -77,6 +77,15 @@ Do not substitute that result for a successful production image build.
   hooks run these types and provider/credential regressions locally and in CI.
   Tests use synthetic tokens with mocked provider HTTP, storage and encryption;
   no GitHub account, repository or real credentials are used.
+- Zotero authentication: `services/web/tsconfig.zotero-auth.json` strictly checks
+  the closed failure-metadata helper, OAuth module and focused regressions via
+  `@ts-check`. The legacy API/controller graph retains existing backend coverage;
+  this is not a claim of strict checking for every Zotero module. Matching local
+  and CI hooks exercise synthetic credential/error isolation, unchanged HTTP
+  status mappings and actual bounded cancellation of stalled loopback response
+  bodies. No provider account or real credentials are used. Transport failures
+  retain only fixed operation, allowlisted error class and bounded HTTP status;
+  raw provider URLs, headers, bodies and cause chains do not cross that boundary.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
   and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox

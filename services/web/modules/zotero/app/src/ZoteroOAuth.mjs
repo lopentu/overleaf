@@ -1,20 +1,22 @@
+// @ts-check
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
 import OError from '@overleaf/o-error'
 import { fetchString } from '@overleaf/fetch-utils'
 import OAuth from 'oauth-1.0a'
 import crypto from 'crypto'
+import { getRequestErrorInfo } from './ZoteroRequestError.mjs'
 
 const ZOTERO_OAUTH_URL = 'https://www.zotero.org/oauth'
+const REQUEST_TIMEOUT_MS = 60 * 1000
 
+/** @param {string} baseString @param {string} key */
 function hashFunctionSha1(baseString, key) {
-  return crypto.createHmac('sha1', key)
-    .update(baseString)
-    .digest('base64')
+  return crypto.createHmac('sha1', key).update(baseString).digest('base64')
 }
 
 function createOAuthClient() {
-  return OAuth({
+  return new OAuth({
     consumer: {
       key: Settings.zotero.clientKey,
       secret: Settings.zotero.clientSecret,
@@ -24,6 +26,10 @@ function createOAuthClient() {
   })
 }
 
+/**
+ * @param {import('oauth-1.0a').RequestOptions} requestData
+ * @param {import('oauth-1.0a').Token} [tokenData]
+ */
 function buildAuthorizationHeader(requestData, tokenData) {
   const oauth = createOAuthClient()
   const authData = oauth.authorize(requestData, tokenData)
@@ -31,6 +37,7 @@ function buildAuthorizationHeader(requestData, tokenData) {
   return oauth.toHeader(authData).Authorization
 }
 
+/** @param {string} body @param {string[]} requiredFields */
 function parseOAuthResponse(body, requiredFields) {
   const data = Object.fromEntries(new URLSearchParams(body).entries())
   if (requiredFields.some(field => !data[field]?.trim())) {
@@ -39,6 +46,7 @@ function parseOAuthResponse(body, requiredFields) {
   return data
 }
 
+/** @param {string} oauthToken */
 function getAuthorizationUrl(oauthToken) {
   const params = new URLSearchParams({
     oauth_token: oauthToken,
@@ -55,6 +63,7 @@ async function getRequestToken() {
   try {
     const body = await fetchString(url, {
       method: 'POST',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
         Authorization: buildAuthorizationHeader({
           url,
@@ -68,20 +77,28 @@ async function getRequestToken() {
 
     return parseOAuthResponse(body, ['oauth_token', 'oauth_token_secret'])
   } catch (err) {
-    throw OError.tag(err, 'error obtaining Zotero request token')
+    const info = getRequestErrorInfo(err, 'getRequestToken')
+    logger.error(info, 'error obtaining Zotero request token')
+    throw new OError('error obtaining Zotero request token', info)
   }
 }
 
+/**
+ * @param {string} oauthToken
+ * @param {string} oauthTokenSecret
+ * @param {string} oauthVerifier
+ */
 async function exchangeRequestTokenForAccessToken(
   oauthToken,
   oauthTokenSecret,
-  oauthVerifier,
+  oauthVerifier
 ) {
   const url = `${ZOTERO_OAUTH_URL}/access`
 
   try {
     const body = await fetchString(url, {
       method: 'POST',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
         Authorization: buildAuthorizationHeader(
           {
@@ -109,12 +126,9 @@ async function exchangeRequestTokenForAccessToken(
       zoteroUserId: data.userID,
     }
   } catch (err) {
-    logger.error(
-      { err, oauthToken },
-      'error obtaining Zotero access token'
-    )
-
-    throw OError.tag(err, 'error obtaining Zotero access token')
+    const info = getRequestErrorInfo(err, 'exchangeRequestTokenForAccessToken')
+    logger.error(info, 'error obtaining Zotero access token')
+    throw new OError('error obtaining Zotero access token', info)
   }
 }
 

@@ -4,20 +4,20 @@ import {
   fetchNothing,
   fetchJson,
   fetchStringWithResponse,
-  RequestFailedError,
 } from '@overleaf/fetch-utils'
 import { User } from '../../../../app/src/models/User.mjs'
 import {
-   NotFoundError,
-   TooManyRequestsError,
-   ServiceNotConfiguredError,
-   ForbiddenError,
+  NotFoundError,
+  TooManyRequestsError,
+  ServiceNotConfiguredError,
+  ForbiddenError,
 } from '../../../../app/src/Features/Errors/Errors.js'
 import TokenManager from './TokenManager.mjs'
+import { getRequestErrorInfo } from './ZoteroRequestError.mjs'
 
 const ZOTERO_API_URL = 'https://api.zotero.org'
 const REQUEST_TIMEOUT_MS = 60 * 1000
-// TODO: implement conditional requests 
+// TODO: implement conditional requests
 
 /**
  * Build a header for Zotero API request.
@@ -64,18 +64,22 @@ async function getGroupsForUser(userId) {
 
   try {
     for (let start = 0; ; start += limit) {
-      const page = await fetchJson(`${ZOTERO_API_URL}/users/${zoteroUserId}/groups?limit=${limit}&start=${start}`, {
-        headers: buildHeaders(apiKey),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      })
-      groups.push(...page.map(g => ({
-        id: String(g.id),
-        name: g.data?.name || `Group ${g.id}`,
-      })))
+      const page = await fetchJson(
+        `${ZOTERO_API_URL}/users/${zoteroUserId}/groups?limit=${limit}&start=${start}`,
+        {
+          headers: buildHeaders(apiKey),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        }
+      )
+      groups.push(
+        ...page.map(g => ({
+          id: String(g.id),
+          name: g.data?.name || `Group ${g.id}`,
+        }))
+      )
       if (page.length < limit) break
     }
     return groups
-
   } catch (err) {
     normalizeApiError(err, 'getGroupsForUser')
   }
@@ -113,13 +117,16 @@ async function getCollectionsForLibrary(userId, groupId) {
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         }
       )
-      if (!Array.isArray(page)) throw new OError('Invalid Zotero collections response', { status: 500 })
+      if (!Array.isArray(page))
+        throw new OError('Invalid Zotero collections response', { status: 500 })
 
-      collections.push(...page.map(collection => ({
-        key: collection.key,
-        name: collection.data.name,
-        parentCollection: collection.data.parentCollection || null,
-      })))
+      collections.push(
+        ...page.map(collection => ({
+          key: collection.key,
+          name: collection.data.name,
+          parentCollection: collection.data.parentCollection || null,
+        }))
+      )
       if (page.length < limit) break
     }
   } catch (err) {
@@ -137,7 +144,7 @@ async function getLibraryBibtex(userId, groupId, format, collectionKey) {
   if (!credentials) {
     throw new ServiceNotConfiguredError({
       message: 'RefProvider credentials missing',
-      info: { userId, status: 400 }
+      info: { userId, status: 400 },
     })
   }
 
@@ -145,10 +152,17 @@ async function getLibraryBibtex(userId, groupId, format, collectionKey) {
   // "publications" is a local selector value, not a Zotero collection key.
   const isPublications = collectionKey === 'publications'
   if (isPublications && groupId) {
-    throw new OError('My Publications is only available in personal libraries', { status: 400 })
+    throw new OError(
+      'My Publications is only available in personal libraries',
+      { status: 400 }
+    )
   }
-  if (collectionKey != null && !isPublications &&
-      (typeof collectionKey !== 'string' || !/^[A-Za-z0-9]{8}$/.test(collectionKey))) {
+  if (
+    collectionKey != null &&
+    !isPublications &&
+    (typeof collectionKey !== 'string' ||
+      !/^[A-Za-z0-9]{8}$/.test(collectionKey))
+  ) {
     throw new OError('Invalid Zotero collection key', { status: 400 })
   }
 
@@ -159,7 +173,11 @@ async function getLibraryBibtex(userId, groupId, format, collectionKey) {
     basePath = `${libraryPath}/collections/${collectionKey}/items`
   }
 
-  return _fetchBibtex(credentials.apiKey, basePath, format === 'biblatex' ? 'biblatex' : 'bibtex')
+  return _fetchBibtex(
+    credentials.apiKey,
+    basePath,
+    format === 'biblatex' ? 'biblatex' : 'bibtex'
+  )
 }
 
 /**
@@ -175,19 +193,30 @@ async function _fetchBibtex(apiKey, basePath, format) {
     const headers = buildHeaders(apiKey)
     while (true) {
       const url = `${ZOTERO_API_URL}${basePath}?format=${format}&limit=${limit}&start=${start}&includeTrashed=0`
-      const { body: bibtexFetched, response } = await fetchStringWithResponse(url, {
-        headers,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      })
-      const bibtex = bibtexFetched.replace(/^@misc\{noauthor_notitle_nodate(?:-\d+)?,\r?\n\}\r?\n*/gm, '')
+      const { body: bibtexFetched, response } = await fetchStringWithResponse(
+        url,
+        {
+          headers,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        }
+      )
+      const bibtex = bibtexFetched.replace(
+        /^@misc\{noauthor_notitle_nodate(?:-\d+)?,\r?\n\}\r?\n*/gm,
+        ''
+      )
 
       if (bibtex.trim()) allBibtex += bibtex
 
       const totalResultsHeader = response.headers.get('Total-Results')
       const totalResults = Number(totalResultsHeader)
-      if (totalResultsHeader === null || !/^\d+$/.test(totalResultsHeader) ||
-          !Number.isSafeInteger(totalResults)) {
-        throw new OError('Missing or invalid Zotero Total-Results header', { status: 500 })
+      if (
+        totalResultsHeader === null ||
+        !/^\d+$/.test(totalResultsHeader) ||
+        !Number.isSafeInteger(totalResults)
+      ) {
+        throw new OError('Missing or invalid Zotero Total-Results header', {
+          status: 500,
+        })
       }
       start += limit
       if (start >= totalResults) {
@@ -221,45 +250,55 @@ async function unlinkAccount(userId) {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   } catch (err) {
-     logger.error({ err }, 'failed to delete key from Zotero account')
+    logger.error(
+      getRequestErrorInfo(err, 'unlinkAccount'),
+      'failed to delete key from Zotero account'
+    )
   }
 }
 
 function normalizeApiError(err, operation) {
-  logger.error({ operation }, 'Zotero API request failed')
+  const info = getRequestErrorInfo(err, operation)
+  logger.error(info, 'Zotero API request failed')
 
-  if (err.name === 'AbortError') {
-    throw new OError('RefProvider request timed out', { operation, status: 504 }).withCause(err)
+  if (info.errorClass === 'AbortError' || info.errorClass === 'TimeoutError') {
+    throw new OError('RefProvider request timed out', {
+      operation,
+      status: 504,
+    })
   }
 
-  if (!(err instanceof RequestFailedError)) {
-    throw new OError('Something wrong with RefProvider request', { operation, status: 500 }).withCause(err)
+  if (info.errorClass !== 'RequestFailedError') {
+    throw new OError('Something wrong with RefProvider request', {
+      operation,
+      status: 500,
+    })
   }
 
-  const status = err.response?.status || 500
+  const status = info.status
 
   if (status === 403) {
     throw new ForbiddenError({
-       message: 'Access denied',
-       info: { operation, status }
-    }).withCause(err)
+      message: 'Access denied',
+      info: { operation, status },
+    })
   }
 
   if (status === 404) {
     throw new NotFoundError({
-       message: 'Not found',
-       info: { operation, status }
-    }).withCause(err)
+      message: 'Not found',
+      info: { operation, status },
+    })
   }
 
   if (status === 429) {
     throw new TooManyRequestsError({
       message: 'Rate limit exceeded',
-      info: { operation, status }
-    }).withCause(err)
+      info: { operation, status },
+    })
   }
 
-  throw new OError('RefProvider request error', { operation, status }).withCause(err)
+  throw new OError('RefProvider request error', { operation, status })
 }
 
 export default {
