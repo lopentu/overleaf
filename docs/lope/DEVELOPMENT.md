@@ -184,3 +184,36 @@ working upload visibility. Pause the container before output collection and
 remove its exact container/volume. Rootless mounts, aggregate memory accounting,
 queue/restart cleanup, authenticated transport and production integration still
 require separate acceptance. Canonical fleet evidence lives in server-utils.
+
+## Final-image build-tool cleanup
+
+The final `server-ce/Dockerfile` step uses a temporary read-only context mount
+and `--network=none` to prune the reviewed ten development packages and the
+NodeSource global npm tree/shims after compilation. The helper refuses an
+unexpected removal/version, install/configure action, Essential package,
+unsafe npm owner/path/symlink, or a change to any remaining installed package
+version. Root UID, the canonical project, explicit build intent and the actual
+read-only helper mount are required; it is not a host administration command.
+The helper is not copied into the resulting image. The public receipt at
+`/usr/share/overleaf/runtime-cleanup.json` records intentional npm file pruning;
+it does not claim complete file integrity for the still-installed nodejs package.
+
+Node, Corepack/Yarn, `/opt/corepack`, TeX2026/latexmk, Python, Perl, GCC/make,
+Git and runtime shared libraries remain in scope for preservation. Custom C/C++
+compilation, node-gyp installation and runtime npm hotfixes are unsupported in
+this final image; use the source/build workflow. The blocking cleanup type and
+offline refusal hooks run locally and through the existing CI hook runner:
+
+```sh
+corepack yarn workspace @overleaf/web exec tsc -p tsconfig.runtime-cleanup.json --noEmit --pretty false
+node --test server-ce/runtime-cleanup.test.cjs
+```
+
+These source checks do not establish image security or functional acceptance.
+The actual built image still needs independent package/file provenance, a fresh
+full scan, Node/native-addon ABI, offline runtime Yarn, TeX/PDF and complete
+application restore/rollback qualification. Selected path fingerprints are not
+an exhaustive TeX/Corepack tree proof. Removing files in the merged runtime does
+not erase old immutable layer bytes. No scanner report is waived or relabelled,
+and this cleanup makes no host-kernel, console-recovery or untrusted-compile
+acceptance claim.
