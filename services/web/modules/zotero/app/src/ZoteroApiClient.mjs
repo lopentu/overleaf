@@ -1,3 +1,4 @@
+import { withProviderHttpsAgent } from '../../../../app/src/Features/Integrations/ProviderHttpsAgent.mjs'
 import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
 import {
@@ -41,10 +42,14 @@ async function getConnectionStatus(userId) {
 
   const { apiKey } = credentials
   try {
-    await fetchJson(`${ZOTERO_API_URL}/keys/${apiKey}`, {
-      headers: buildHeaders(apiKey),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    const url = `${ZOTERO_API_URL}/keys/${apiKey}`
+    await fetchJson(
+      url,
+      withProviderHttpsAgent('zotero', url, {
+        headers: buildHeaders(apiKey),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    )
     return true
   } catch (err) {
     normalizeApiError(err, 'getConnectionStatus')
@@ -64,12 +69,13 @@ async function getGroupsForUser(userId) {
 
   try {
     for (let start = 0; ; start += limit) {
+      const url = `${ZOTERO_API_URL}/users/${zoteroUserId}/groups?limit=${limit}&start=${start}`
       const page = await fetchJson(
-        `${ZOTERO_API_URL}/users/${zoteroUserId}/groups?limit=${limit}&start=${start}`,
-        {
+        url,
+        withProviderHttpsAgent('zotero', url, {
           headers: buildHeaders(apiKey),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        }
+        })
       )
       groups.push(
         ...page.map(g => ({
@@ -110,12 +116,13 @@ async function getCollectionsForLibrary(userId, groupId) {
 
   try {
     for (let start = 0; ; start += limit) {
+      const url = `${ZOTERO_API_URL}${libraryPath}/collections?limit=${limit}&start=${start}`
       const page = await fetchJson(
-        `${ZOTERO_API_URL}${libraryPath}/collections?limit=${limit}&start=${start}`,
-        {
+        url,
+        withProviderHttpsAgent('zotero', url, {
           headers: buildHeaders(credentials.apiKey),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        }
+        })
       )
       if (!Array.isArray(page))
         throw new OError('Invalid Zotero collections response', { status: 500 })
@@ -195,10 +202,10 @@ async function _fetchBibtex(apiKey, basePath, format) {
       const url = `${ZOTERO_API_URL}${basePath}?format=${format}&limit=${limit}&start=${start}&includeTrashed=0`
       const { body: bibtexFetched, response } = await fetchStringWithResponse(
         url,
-        {
+        withProviderHttpsAgent('zotero', url, {
           headers,
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        }
+        })
       )
       const bibtex = bibtexFetched.replace(
         /^@misc\{noauthor_notitle_nodate(?:-\d+)?,\r?\n\}\r?\n*/gm,
@@ -244,11 +251,15 @@ async function unlinkAccount(userId) {
 
   try {
     const { apiKey } = credentials
-    await fetchNothing(`${ZOTERO_API_URL}/keys/${apiKey}`, {
-      method: 'DELETE',
-      headers: buildHeaders(apiKey),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    const url = `${ZOTERO_API_URL}/keys/${apiKey}`
+    await fetchNothing(
+      url,
+      withProviderHttpsAgent('zotero', url, {
+        method: 'DELETE',
+        headers: buildHeaders(apiKey),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    )
   } catch (err) {
     logger.error(
       getRequestErrorInfo(err, 'unlinkAccount'),
