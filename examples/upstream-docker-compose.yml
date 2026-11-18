@@ -1,3 +1,4 @@
+# Historical upstream example. Use the root compose.yaml to deploy this fork.
 services:
   sharelatex:
     restart: always
@@ -33,13 +34,13 @@ services:
       # IMPORTANT: Required for invite token generation
       # OVERLEAF_INVITE_TOKEN_SECRET: generate with `openssl rand -base64 32`
 
-      ENABLED_LINKED_FILE_TYPES: "project_file,project_output_file,zotero"
+      ENABLED_LINKED_FILE_TYPES: 'project_file,project_output_file,zotero'
 
       # Enables Thumbnail generation using ImageMagick
-      ENABLE_CONVERSIONS: "true"
+      ENABLE_CONVERSIONS: 'true'
 
       # Disables email confirmation requirement
-      EMAIL_CONFIRMATION_DISABLED: "true"
+      EMAIL_CONFIRMATION_DISABLED: 'true'
 
       ## Set for SSL via nginx-proxy
       #VIRTUAL_HOST: 103.112.212.22
@@ -81,14 +82,14 @@ services:
       ## so the following environment variables must be commented out to avoid compile issues.
       ##
       ## Sandboxed Compiles: https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/sandboxed-compiles
-      SANDBOXED_COMPILES: "true"
+      SANDBOXED_COMPILES: 'true'
       ### Bind-mount source for /var/lib/overleaf/data/compiles inside the container.
-      SANDBOXED_COMPILES_HOST_DIR_COMPILES: "/home/user/sharelatex_data/data/compiles"
+      SANDBOXED_COMPILES_HOST_DIR_COMPILES: '/home/user/sharelatex_data/data/compiles'
       ### Bind-mount source for /var/lib/overleaf/data/output inside the container.
-      SANDBOXED_COMPILES_HOST_DIR_OUTPUT: "/home/user/sharelatex_data/data/output"
+      SANDBOXED_COMPILES_HOST_DIR_OUTPUT: '/home/user/sharelatex_data/data/output'
       ### Backwards compatibility (before Server Pro 5.5)
-      DOCKER_RUNNER: "true"
-      SANDBOXED_COMPILES_SIBLING_CONTAINERS: "true"
+      DOCKER_RUNNER: 'true'
+      SANDBOXED_COMPILES_SIBLING_CONTAINERS: 'true'
 
       ## Works with test LDAP server shown at bottom of docker compose
       # OVERLEAF_LDAP_URL: 'ldap://ldap:389'
@@ -110,7 +111,7 @@ services:
     restart: always
     image: mongo:8.0
     container_name: mongo
-    command: "--replSet overleaf"
+    command: '--replSet overleaf'
     volumes:
       - ~/mongo_data:/data/db
       - ./bin/shared/mongodb-init-replica-set.js:/docker-entrypoint-initdb.d/mongodb-init-replica-set.js

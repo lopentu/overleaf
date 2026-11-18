@@ -1,0 +1,30 @@
+# Optional LOPE placement overlay. Create these directories before deployment.
+# The deployed catalog, host configuration and recovery runbook are maintained
+# separately. Run this overlay only with the root compose.yaml.
+services:
+  sharelatex:
+    volumes:
+      - type: bind
+        source: /srv/lope/services/overleaf/overleaf
+        target: /var/lib/overleaf
+        bind:
+          create_host_path: false
+  mongo:
+    volumes:
+      - type: bind
+        source: /srv/lope/services/overleaf/mongo
+        target: /data/db
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/lope/services/overleaf/mongo-configdb
+        target: /data/configdb
+        bind:
+          create_host_path: false
+  redis:
+    volumes:
+      - type: bind
+        source: /srv/lope/services/overleaf/redis
+        target: /data
+        bind:
+          create_host_path: false

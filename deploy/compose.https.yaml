@@ -1,0 +1,5 @@
+# Use with a TLS reverse proxy and set OVERLEAF_SITE_URL to its HTTPS origin.
+services:
+  sharelatex:
+    environment:
+      OVERLEAF_SECURE_COOKIE: 'true'
