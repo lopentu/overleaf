@@ -13,6 +13,10 @@ python3 -m venv .lope-tools
 .lope-tools/bin/pre-commit run
 ```
 
+The portable Compose hook needs Docker with the Compose v2 plugin. It checks
+the rendered configuration with a synthetic environment and runs without a
+Docker daemon.
+
 Git bridge changes also require a full JDK 21, with `JAVA_HOME` pointing to the
 JDK directory, and Apache Maven 3.9.16 on `PATH`. Install Maven from the
 [official Apache distribution](https://maven.apache.org/download.cgi) and verify

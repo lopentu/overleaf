@@ -6,8 +6,8 @@
   "lifecycle": "discovery",
   "runtime": {
     "mode": "always-on",
-    "start_documented_at": "docs/lope/OPERATIONS.md#build-and-local-checks",
-    "stop_documented_at": "docs/lope/OPERATIONS.md#recovery-and-rollback"
+    "start_documented_at": "deploy/README.md#3-start-and-create-the-administrator",
+    "stop_documented_at": "deploy/README.md#4-back-up-and-restore"
   },
   "deployment": {
     "mechanism": null,
@@ -30,13 +30,13 @@
     "storage_gib": null
   },
   "documents": {
-    "operations": "docs/lope/OPERATIONS.md",
-    "recovery": "docs/lope/OPERATIONS.md",
-    "rollback": "docs/lope/OPERATIONS.md#recovery-and-rollback",
+    "operations": "deploy/README.md",
+    "recovery": "deploy/README.md",
+    "rollback": "deploy/README.md#4-back-up-and-restore",
     "handoff": "docs/lope/OPERATIONS.md"
   },
   "dashboard": {
     "mode": "none",
-    "reason": "Current compiler increment is discovery/unselected. The accepted f5cd4cdd CE+ base is listed and probed through the separate server-utils runtime contract; this source declaration does not replace its deployment manifest."
+    "reason": "This source checkout includes a portable Compose guide. The live lab service is listed and probed through its separate server-utils runtime contract."
   }
 }

@@ -20,14 +20,9 @@ fixtures and remain separate diagnostics; never call those commands passing
 without running them. Existing CLSI tsc does not typecheck ordinary unannotated
 JavaScript; runner regressions do not establish a typed or secure implementation.
 
-Current production is the separately managed CE+ source cb7f6803/image19957473,
-accepted on November 17, 2026. Candidate image4cee833f from source516dbdf0 has
-been built and scanned with no reported HIGH or CRITICAL findings; 168 lower
-severity findings remain. It has not been promoted. The earlier 0104ea71
-compiler increment remains discovery/unselected; this checkout is not the
-runtime and does not establish hosted feature parity. See
-[operations](docs/lope/OPERATIONS.md) for the public service and canonical runtime
-contract. Before further promotion, use the lope-service-lifecycle and
+Use [the portable Compose guide](deploy/README.md) for standalone Docker
+deployments. The live lab service has a separate managed deployment and
+[runtime contract](docs/lope/OPERATIONS.md). Before further promotion, use the lope-service-lifecycle and
 lope-sysadmin workflows and validate the source declaration against the
 canonical private fleet catalog, not just the portable schema check. Keep
 runtime code/config/secrets/state at the canonical /opt/lope, /etc/lope and

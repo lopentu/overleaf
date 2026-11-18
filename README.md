@@ -1,10 +1,8 @@
-> **LOPE development fork:** the CE+ base f5cd4cdd/image5dcf4da7 was accepted
-> for the separately managed lab service on November 15. The current 0104ea71
-> compiler increment remains unselected. See
-> [development and blocking checks](docs/lope/DEVELOPMENT.md),
-> [workflow acceptance matrix](docs/lope/FEATURE_MATRIX.md), and
-> [candidate operations](docs/lope/OPERATIONS.md). Fork creation is not
-> acceptance of later increments, isolated compilation or full hosted parity.
+> **LOPE Overleaf CE+:** use the [Docker Compose deployment guide](deploy/README.md)
+> to build or load the fork image, start a dedicated instance, and restore from backup.
+> See [development and blocking checks](docs/lope/DEVELOPMENT.md), the
+> [workflow acceptance matrix](docs/lope/FEATURE_MATRIX.md), and the
+> [LOPE lab operations notes](docs/lope/OPERATIONS.md).
 
 <h1 align="center">
   <br>
@@ -63,29 +61,13 @@ If you want help installing and maintaining Overleaf in your lab or workplace, O
 
 ## Installation
 
-Detailed installation instructions can be found in the [Overleaf Toolkit](https://github.com/overleaf/toolkit/).
-Configuration details and release history for the Extended Community Edition can be found on the [Extended CE Wiki Page](https://github.com/yu-i-i/overleaf-cep/wiki).
-
-## Overleaf Docker Image
-
-This repo contains two dockerfiles, [`Dockerfile-base`](server-ce/Dockerfile-base), which builds the
-`sharelatex/sharelatex-base:ext-ce` image, and [`Dockerfile`](server-ce/Dockerfile) which builds the
-`sharelatex/sharelatex:ext-ce` image.
-
-The Base image generally contains the basic dependencies like `wget`, plus `texlive`.
-This is split out because it's a pretty heavy set of
-dependencies, and it's nice to not have to rebuild all of that every time.
-
-The `sharelatex/sharelatex` image extends the base image and adds the actual Overleaf code
-and services.
-
-Use `make build-base` and `make build-community` from `server-ce/` to build these images.
-
-The [Phusion base-image](https://github.com/phusion/baseimage-docker)
-(which is extended by the `base` image) provides a VM-like container
-in which to run the Overleaf services. Baseimage uses the `runit` service
-manager to manage services, and init scripts from the `server-ce/runit`
-folder are added.
+Follow the [Docker Compose deployment guide](deploy/README.md) for this fork.
+It covers building or importing the image, creating trusted accounts, HTTPS,
+backup, restore and rollback. The old
+[upstream Compose example](examples/upstream-docker-compose.yml) describes a
+stock-image setup. The
+[Extended CE wiki](https://github.com/yu-i-i/overleaf-cep/wiki) documents
+additional upstream configuration options.
 
 ## Authors
 

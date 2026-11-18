@@ -1,5 +1,13 @@
 .DS_Store
-.git/
+.git
+# Keep local runtime settings and package credentials out of Docker contexts.
+**/.env
+**/.env.*
+**/app.env
+**/runtime.env
+**/.npmrc
+**/.netrc
+**/.ssh
 services/git-bridge
 server-ce/server-ce
 server-ce/test
