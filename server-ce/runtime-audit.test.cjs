@@ -217,35 +217,26 @@ nodeTest('HIGH and CRITICAL fail while every lower finding is retained', () => {
     audit.assertClean(findings)
   }
 })
-nodeTest(
-  'positive control requires exact advisory HIGH for picomatch4.0.4',
-  () => {
-    nodeAssert.throws(() => audit.assertPositive([]))
-    nodeAssert.throws(() =>
-      audit.assertPositive([
-        { name: 'picomatch', version: '4.0.4', id: 'other', severity: 'HIGH' },
-      ])
-    )
-    nodeAssert.throws(() =>
-      audit.assertPositive([
-        {
-          name: 'picomatch',
-          version: '4.0.4',
-          id: 'GHSA-fc5q-39xc-vjpf',
-          severity: 'LOW',
-        },
-      ])
-    )
-    audit.assertPositive([
-      {
-        name: 'picomatch',
-        version: '4.0.4',
-        id: 'GHSA-fc5q-39xc-vjpf',
-        severity: 'HIGH',
-      },
-    ])
+nodeTest('positive control requires an exact HIGH advisory match', () => {
+  const positive = {
+    name: 'lodash',
+    version: '4.17.20',
+    id: 'GHSA-35jh-r3h4-6jhm',
+    severity: 'HIGH',
   }
-)
+  nodeAssert.throws(() => audit.assertPositive([]))
+  for (const mismatch of [
+    { name: 'other' },
+    { version: '4.17.21' },
+    { id: 'other' },
+    { severity: 'LOW' },
+  ]) {
+    nodeAssert.throws(() =>
+      audit.assertPositive([{ ...positive, ...mismatch }])
+    )
+  }
+  audit.assertPositive([positive])
+})
 
 const fs = require('node:fs')
 const path = require('node:path')

@@ -25,6 +25,9 @@ export class DockerApiFixture {
   labelsMismatch = false
   exitCode = 0
   output = Buffer.from('ok')
+  archiveEntries: Readonly<Record<string, Buffer>> = {
+    'result.pdf': Buffer.from('synthetic-pdf'),
+  }
   uploaded: Buffer = Buffer.alloc(0)
   execResponse: ServerResponse | undefined
   holdExec = false
@@ -242,7 +245,9 @@ export class DockerApiFixture {
       }
       const pack = tar.pack()
       pack.entry({ name: 'compile/', type: 'directory' })
-      pack.entry({ name: 'compile/result.pdf' }, Buffer.from('synthetic-pdf'))
+      for (const [name, content] of Object.entries(this.archiveEntries)) {
+        pack.entry({ name: 'compile/' + name }, content)
+      }
       pack.finalize()
       pack.pipe(response)
     } else {
