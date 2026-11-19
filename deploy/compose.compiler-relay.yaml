@@ -1,0 +1,51 @@
+services:
+  relay:
+    image: ${COMPILER_RELAY_IMAGE:?Set the verified relay runtime image ID}
+    pull_policy: never
+    restart: 'no'
+    stop_signal: SIGQUIT
+    stop_grace_period: 30s
+    entrypoint: ['/usr/bin/node', '/relay/config/launch.mts', --run]
+    command:
+      - ${COMPILER_RELAY_ROLE:?Set the relay role to web or worker}
+    user: '33:33'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true, apparmor=docker-default]
+    network_mode: none
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.5
+    pids_limit: 32
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: ./compiler-relay
+        target: /relay/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_RELAY_TLS_DIR:?Set the protected directory for this role's TLS files}
+        target: /relay/tls
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_RELAY_SOCKET_DIR:?Set the private directory for this role's new listeners}
+        target: /relay/run
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_RELAY_BACKEND_SOCKET:?Set the verified existing local backend socket}
+        target: /relay/input/upstream.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_RELAY_TUNNEL_SOCKET:?Set the verified existing outbound transport socket}
+        target: /relay/input/tunnel.sock
+        read_only: true
+        bind:
+          create_host_path: false

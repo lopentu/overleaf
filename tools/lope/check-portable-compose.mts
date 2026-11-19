@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { checkRelayPaths } from '../../deploy/compiler-relay/launch.mts'
 
 interface Service {
   image: string
@@ -316,6 +318,115 @@ test('a dedicated compiler cannot start without explicit image, runtime and conf
     assert.notEqual(result.status, 0)
     assert.match(result.stderr, new RegExp(name))
   }
+})
+
+const relayCompose = 'deploy/compose.compiler-relay.yaml'
+const relayEnv = {
+  COMPILER_RELAY_IMAGE: compilerEnv.COMPILER_WORKER_IMAGE,
+  COMPILER_RELAY_ROLE: 'worker',
+  COMPILER_RELAY_TLS_DIR: join(fixture, 'tls'),
+  COMPILER_RELAY_SOCKET_DIR: join(fixture, 'listeners'),
+  COMPILER_RELAY_BACKEND_SOCKET: join(fixture, 'backend.sock'),
+  COMPILER_RELAY_TUNNEL_SOCKET: join(fixture, 'tunnel.sock'),
+}
+
+test('each compiler relay can reach only the two input sockets and publish private Unix listeners', () => {
+  for (const role of ['web', 'worker']) {
+    const services = isolatedServices([relayCompose], {
+      ...relayEnv,
+      COMPILER_RELAY_ROLE: role,
+    })
+    assert.deepEqual(Object.keys(services), ['relay'])
+    const { relay } = services
+    assert.equal(relay.network_mode, 'none')
+    assert.equal(relay.group_add, undefined)
+    assert.deepEqual(relay.entrypoint, [
+      '/usr/bin/node',
+      '/relay/config/launch.mts',
+      '--run',
+    ])
+    assert.deepEqual(relay.command, [role])
+    const mounts = new Map(relay.volumes?.map(mount => [mount.target, mount]))
+    assert.deepEqual([...mounts.keys()].sort(), [
+      '/relay/config',
+      '/relay/input/tunnel.sock',
+      '/relay/input/upstream.sock',
+      '/relay/run',
+      '/relay/tls',
+    ])
+    assert.deepEqual(
+      ['/relay/input/upstream.sock', '/relay/input/tunnel.sock'].map(target => [
+        mounts.get(target)?.source,
+        mounts.get(target)?.read_only,
+      ]),
+      [
+        [relayEnv.COMPILER_RELAY_BACKEND_SOCKET, true],
+        [relayEnv.COMPILER_RELAY_TUNNEL_SOCKET, true],
+      ]
+    )
+    assert.equal(
+      mounts.get('/relay/run')?.source,
+      relayEnv.COMPILER_RELAY_SOCKET_DIR
+    )
+    assert.ok(!mounts.get('/relay/run')?.read_only)
+    assert.equal(
+      mounts.get('/relay/tls')?.source,
+      relayEnv.COMPILER_RELAY_TLS_DIR
+    )
+    assert.equal(mounts.get('/relay/tls')?.read_only, true)
+    assert.ok(
+      mounts.get('/relay/config')?.source.endsWith('/deploy/compiler-relay')
+    )
+    assert.equal(mounts.get('/relay/config')?.read_only, true)
+  }
+})
+
+test('each relay requires an explicit role, image and socket and TLS inputs', () => {
+  for (const name of Object.keys(relayEnv)) {
+    const entries: Record<string, string> = { ...relayEnv }
+    delete entries[name]
+    const result = renderCompose([relayCompose], entries)
+    assert.ifError(result.error)
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, new RegExp(name))
+  }
+})
+
+async function openFixtureSocket(path: string): Promise<Server> {
+  const listener = createServer()
+  await new Promise<void>((resolve, reject) => {
+    listener.once('error', reject)
+    listener.listen(path, resolve)
+  })
+  return listener
+}
+
+test('relay preflight refuses listener directories with existing files and aliased sockets', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'oc-r-'))
+  const paths = {
+    listenerDirectory: join(root, 'run'),
+    tlsDirectory: join(root, 'tls'),
+    backendSocket: join(root, 'backend.sock'),
+    tunnelSocket: join(root, 'tunnel.sock'),
+  }
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(paths.listenerDirectory, { mode: 0o700 })
+  mkdirSync(paths.tlsDirectory, { mode: 0o700 })
+  for (const path of [paths.backendSocket, paths.tunnelSocket]) {
+    const socket = await openFixtureSocket(path)
+    t.after(() => new Promise<void>(resolve => socket.close(() => resolve())))
+  }
+  const uid = process.geteuid?.()
+  assert.ok(uid !== undefined)
+  checkRelayPaths(paths, uid)
+  assert.throws(() =>
+    checkRelayPaths({ ...paths, tunnelSocket: paths.backendSocket }, uid)
+  )
+  assert.throws(() =>
+    checkRelayPaths({ ...paths, tlsDirectory: paths.listenerDirectory }, uid)
+  )
+  writeFileSync(join(paths.listenerDirectory, 'unexpected'), 'fixture')
+  assert.throws(() => checkRelayPaths(paths, uid))
 })
 
 test.after(() => rmSync(fixture, { recursive: true, force: true }))
