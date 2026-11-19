@@ -149,8 +149,11 @@ export async function startIsolatedCompilerWorker({
   let manager: CompilerAdmission | undefined
   let listeners: ClsiListeners | undefined
   let managerStarted = false
+  let accepting = false
+  let retryManagerCleanup = false
   let closing: Promise<void> | undefined
   function close(): Promise<void> {
+    accepting = false
     closing ??= (async () => {
       const failures: unknown[] = []
       try {
@@ -161,9 +164,14 @@ export async function startIsolatedCompilerWorker({
       try {
         // Keep the lease on failed shutdown after admission starts. A failed
         // initial sweep never admitted work, so its runtime can retry startup.
-        if (manager && managerStarted) await manager.close()
-        else await lease.close()
+        if (manager && managerStarted) {
+          if (retryManagerCleanup) await manager.retryCleanup()
+          await manager.close()
+        } else {
+          await lease.close()
+        }
       } catch (error) {
+        retryManagerCleanup = managerStarted
         failures.push(error)
       }
       if (failures.length > 0)
@@ -196,14 +204,23 @@ export async function startIsolatedCompilerWorker({
     })
     const app = express()
     app.disable('x-powered-by')
+    app.use((request, response, next) => {
+      if (accepting) {
+        next()
+        return
+      }
+      response.setHeader('connection', 'close')
+      response.once('finish', () => {
+        if (!request.complete) request.destroy()
+      })
+      response.status(503).json({ error: 'ISOLATED_WORKER_NOT_READY' })
+    })
     app.use(
       createCompilerWorkflowRouter(manager, workflow, {
         downloadHost,
         outputUrlPrefix,
       })
     )
-    await manager.start()
-    managerStarted = true
     listeners = await startClsiListeners({
       app,
       unixSocket,
@@ -214,6 +231,9 @@ export async function startIsolatedCompilerWorker({
       loadTcpPort: 0,
       loadHttpPort: 0,
     })
+    await manager.start()
+    managerStarted = true
+    accepting = true
     return Object.freeze({ close })
   } catch (error) {
     try {
