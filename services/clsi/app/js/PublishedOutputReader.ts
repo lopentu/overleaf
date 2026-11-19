@@ -101,8 +101,10 @@ export async function openPublishedOutputReader(
   const readerUid: number = owner
   const rootIdentity = await fs.lstat(root)
   async function directory(name: string): Promise<Stats> {
+    // Preserve ENOENT for an unpublished build before checking its permissions.
+    const stat = await fs.lstat(name)
     validatePrivateCompileDirectory(name)
-    return await fs.lstat(name)
+    return stat
   }
   async function withBuild<T>(
     scope: WorkflowScope,

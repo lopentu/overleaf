@@ -347,7 +347,8 @@ test('stopping an active compile preserves the cancellation response', async () 
       try {
         const address = server.address()
         assert.ok(address && typeof address !== 'string')
-        const compileUrl = `http://127.0.0.1:${address.port}/project/${projectId}/compile`
+        const projectUrl = `http://127.0.0.1:${address.port}/project/${projectId}`
+        const compileUrl = projectUrl + '/compile'
         const response = fetch(compileUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -376,7 +377,13 @@ test('stopping an active compile preserves the cancellation response', async () 
             outputFiles: [],
           },
         })
+        assert.deepEqual(await fs.readdir(path.join(root, 'operations')), [])
         assert.deepEqual(await fs.readdir(outputRoot), [])
+        const absent = await fetch(
+          projectUrl + '/build/abcdef-654321/output/output.pdf'
+        )
+        assert.equal(absent.status, 404)
+        assert.deepEqual(await absent.json(), { error: 'OUTPUT_NOT_FOUND' })
       } finally {
         server.closeAllConnections()
         await new Promise<void>(resolve => server.close(() => resolve()))
