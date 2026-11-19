@@ -314,6 +314,90 @@ test('actual workflow HTTP routes preserve compile URLs/conflicts, cached GET an
   )
 })
 
+test('stopping an active compile preserves the cancellation response', async () => {
+  const jobStarted = Promise.withResolvers<void>()
+  await withSourceFixture(
+    async (root, manager) => {
+      const outputRoot = path.join(root, 'output')
+      await fs.mkdir(outputRoot, { mode: 0o700 })
+      const workflow = await openCompilerWorkflow(manager, {
+        stagingRoot: path.join(root, 'operations'),
+        sourceCacheRoot: path.join(root, 'plans'),
+        outputRoot,
+        defaultImage: image,
+        profiles: [profile],
+        publication: {
+          optimiseInDocker: true,
+          archiveLogs: false,
+          strace: false,
+          pdfCaching: false,
+          clsiCache: false,
+        },
+      })
+      const app = express()
+      app.use(
+        createCompilerWorkflowRouter(manager, workflow, {
+          downloadHost: 'http://synthetic.invalid',
+          outputUrlPrefix: '',
+        })
+      )
+      const server = http.createServer(app)
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      try {
+        const address = server.address()
+        assert.ok(address && typeof address !== 'string')
+        const compileUrl = `http://127.0.0.1:${address.port}/project/${projectId}/compile`
+        const response = fetch(compileUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            compile: {
+              rootResourcePath: 'main.tex',
+              resources: [{ path: 'main.tex', content: 'synthetic source' }],
+              options: { buildId: 'abcdef-654321' },
+            },
+          }),
+        })
+        await Promise.race([
+          jobStarted.promise,
+          response.then(() => assert.fail('Compile returned before job start')),
+        ])
+        assert.equal(
+          (await fetch(compileUrl + '/stop', { method: 'POST' })).status,
+          204
+        )
+        const cancelled = await response
+        assert.equal(cancelled.status, 503)
+        assert.deepEqual(await cancelled.json(), {
+          compile: {
+            status: 'unavailable',
+            error: 'CANCELLED',
+            outputFiles: [],
+          },
+        })
+        assert.deepEqual(await fs.readdir(outputRoot), [])
+      } finally {
+        server.closeAllConnections()
+        await new Promise<void>(resolve => server.close(() => resolve()))
+      }
+    },
+    {
+      async run() {
+        throw new Error('Legacy fallback must not execute')
+      },
+      async runArtifacts({ signal }) {
+        assert.ok(signal)
+        jobStarted.resolve()
+        if (!signal.aborted)
+          await once(signal, 'abort', { signal: AbortSignal.timeout(4000) })
+        signal.throwIfAborted()
+        assert.fail('The compile job did not receive cancellation')
+      },
+    }
+  )
+})
+
 test('compile HTTP publishes collected output after the Docker job releases its resources', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'compiler-http-job-'))
   const stagingRoot = path.join(root, 'operations')

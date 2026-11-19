@@ -3,6 +3,7 @@ import type { Stats } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import {
+  AdmissionError,
   validatePrivateCompileDirectory,
   completedArtifactRevision,
 } from './CompilerAdmission.ts'
@@ -277,6 +278,12 @@ export async function withPreparedCompileInput<T>(
       use
     )
   } catch (error) {
+    if (
+      error instanceof AdmissionError &&
+      error.code === 'CANCELLED' &&
+      error === scope.signal.reason
+    )
+      throw error
     if (
       error instanceof SourceInputError ||
       error instanceof SourceInputAggregateError
