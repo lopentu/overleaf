@@ -1,0 +1,33 @@
+services:
+  filestore:
+    image: ${COMPILER_WORKER_IMAGE:?Set the verified compiler runtime image ID}
+    pull_policy: never
+    restart: 'no'
+    stop_grace_period: 15s
+    entrypoint: ['/usr/sbin/nginx']
+    command:
+      ['-c', '/etc/overleaf/compiler-filestore.conf', '-g', 'daemon off;']
+    user: '33:33'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true, apparmor=docker-default]
+    network_mode: service:compiler
+    mem_limit: 96m
+    memswap_limit: 96m
+    cpus: 0.5
+    pids_limit: 32
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777
+    volumes:
+      - type: bind
+        source: ${COMPILER_FILESTORE_SOCKET_DIR:?Set the private directory for the filestore relay socket}/filestore.sock
+        target: /worker/filestore/filestore.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./compiler-filestore.nginx.conf
+        target: /etc/overleaf/compiler-filestore.conf
+        read_only: true
+        bind:
+          create_host_path: false

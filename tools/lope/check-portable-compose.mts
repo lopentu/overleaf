@@ -15,6 +15,14 @@ interface Service {
   networks: Record<string, object | null>
   ports?: { host_ip: string; published: string; target: number }[]
   privileged?: boolean
+  user?: string
+  read_only?: boolean
+  cap_drop?: string[]
+  security_opt?: string[]
+  group_add?: string[]
+  entrypoint?: string[]
+  command?: string[]
+  healthcheck?: { test: string[] }
   volumes?: {
     type: string
     source: string
@@ -43,15 +51,12 @@ writeFileSync(appEnv, 'OVERLEAF_SITE_URL=http://127.0.0.1:18088\n', {
   mode: 0o600,
 })
 
-function render(overlay?: string, omit?: keyof typeof pins) {
-  const entries = Object.entries({
-    ...pins,
-    OVERLEAF_APP_ENV_FILE: appEnv,
-    OVERLEAF_HTTP_PORT: '18088',
-  }).filter(([key]) => key !== omit)
+function renderCompose(files: string[], entries: Record<string, string>) {
   writeFileSync(
     runtimeEnv,
-    entries.map(([key, value]) => `${key}=${value}\n`).join(''),
+    Object.entries(entries)
+      .map(([key, value]) => `${key}=${value}\n`)
+      .join(''),
     { mode: 0o600 }
   )
   return spawnSync(
@@ -60,7 +65,7 @@ function render(overlay?: string, omit?: keyof typeof pins) {
       'compose',
       '--env-file',
       runtimeEnv,
-      ...(overlay ? ['-f', 'compose.yaml', '-f', overlay] : []),
+      ...files.flatMap(file => ['-f', file]),
       'config',
       '--format',
       'json',
@@ -71,6 +76,16 @@ function render(overlay?: string, omit?: keyof typeof pins) {
       timeout: 30_000,
     }
   )
+}
+
+function render(overlay?: string, omit?: keyof typeof pins) {
+  const entries: Record<string, string> = {
+    ...pins,
+    OVERLEAF_APP_ENV_FILE: appEnv,
+    OVERLEAF_HTTP_PORT: '18088',
+  }
+  if (omit) delete entries[omit]
+  return renderCompose(overlay ? ['compose.yaml', overlay] : [], entries)
 }
 
 function config(overlay?: string): ComposeConfig {
@@ -193,6 +208,110 @@ test('the optional LOPE overlay replaces the four stores with existing host dire
 test('missing image pins fail before Compose can use an unintended image', () => {
   for (const name of Object.keys(pins) as (keyof typeof pins)[]) {
     const result = render(undefined, name)
+    assert.ifError(result.error)
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, new RegExp(name))
+  }
+})
+
+const compilerCompose = 'deploy/compose.compiler.yaml'
+const filestoreCompose = 'deploy/compose.compiler-filestore.yaml'
+const compilerEnv = {
+  COMPILER_WORKER_IMAGE: `sha256:${'4'.repeat(64)}`,
+  COMPILER_RUNTIME_DIR: join(fixture, 'runtime'),
+  COMPILER_STATE_DIR: join(fixture, 'state'),
+  COMPILER_CONFIG_FILE: join(fixture, 'compiler.json'),
+  COMPILER_DOCKER_GID: '967',
+}
+
+function isolatedServices(files: string[], entries: Record<string, string>) {
+  const result = renderCompose(files, entries)
+  assert.ifError(result.error)
+  assert.equal(result.status, 0, result.stderr)
+  const rendered: ComposeConfig = JSON.parse(result.stdout)
+  assert.deepEqual(Object.keys(rendered.networks ?? {}), [])
+  assert.deepEqual(Object.keys(rendered.volumes ?? {}), [])
+  for (const service of Object.values(rendered.services)) {
+    assert.equal(service.image, compilerEnv.COMPILER_WORKER_IMAGE)
+    assert.equal(service.pull_policy, 'never')
+    assert.equal(service.user, '33:33')
+    assert.equal(service.read_only, true)
+    assert.deepEqual(service.cap_drop, ['ALL'])
+    assert.ok(
+      service.security_opt?.some(option => option.includes('no-new-privileges'))
+    )
+    assert.ok(service.security_opt?.includes('apparmor=docker-default'))
+    assert.equal(service.ports, undefined)
+    assert.ok(!service.privileged)
+    assert.ok(
+      service.volumes?.every(
+        volume =>
+          volume.type === 'bind' &&
+          volume.bind !== undefined &&
+          volume.bind.create_host_path !== true
+      )
+    )
+  }
+  return rendered.services
+}
+
+test('the dedicated compiler keeps a private runtime directory and has no network', () => {
+  const services = isolatedServices([compilerCompose], compilerEnv)
+  assert.deepEqual(Object.keys(services), ['compiler'])
+  const { compiler } = services
+  assert.equal(compiler.network_mode, 'none')
+  assert.deepEqual(compiler.entrypoint, ['/usr/bin/node'])
+  assert.deepEqual(compiler.command, [
+    '/overleaf/services/clsi/app/js/IsolatedCompilerWorkerMain.ts',
+    '--config',
+    '/worker/settings.json',
+  ])
+  assert.deepEqual(compiler.group_add, [compilerEnv.COMPILER_DOCKER_GID])
+  assert.ok(compiler.healthcheck?.test.includes('/worker/runtime/clsi.sock'))
+  assert.deepEqual(
+    compiler.volumes?.map(mount => [
+      mount.source,
+      mount.target,
+      !!mount.read_only,
+    ]),
+    [
+      [compilerEnv.COMPILER_RUNTIME_DIR, '/worker/runtime', false],
+      [compilerEnv.COMPILER_STATE_DIR, '/worker/state', false],
+      [compilerEnv.COMPILER_CONFIG_FILE, '/worker/settings.json', true],
+    ]
+  )
+})
+
+test('the filestore adapter shares the isolated network and mounts only its socket and config', () => {
+  const bridgeDir = join(fixture, 'filestore')
+  const { compiler, filestore } = isolatedServices(
+    [compilerCompose, filestoreCompose],
+    { ...compilerEnv, COMPILER_FILESTORE_SOCKET_DIR: bridgeDir }
+  )
+  assert.equal(compiler.network_mode, 'none')
+  assert.equal(filestore.network_mode, 'service:compiler')
+  assert.equal(filestore.group_add, undefined)
+  assert.deepEqual(filestore.entrypoint, ['/usr/sbin/nginx'])
+  assert.deepEqual(
+    filestore.volumes?.map(mount => [mount.target, !!mount.read_only]),
+    [
+      ['/worker/filestore/filestore.sock', true],
+      ['/etc/overleaf/compiler-filestore.conf', true],
+    ]
+  )
+  assert.equal(filestore.volumes?.[0].source, join(bridgeDir, 'filestore.sock'))
+  assert.ok(
+    filestore.volumes?.[1].source.endsWith(
+      '/deploy/compiler-filestore.nginx.conf'
+    )
+  )
+})
+
+test('a dedicated compiler cannot start without explicit image, runtime and config inputs', () => {
+  for (const name of Object.keys(compilerEnv)) {
+    const entries: Record<string, string> = { ...compilerEnv }
+    delete entries[name]
+    const result = renderCompose([compilerCompose], entries)
     assert.ifError(result.error)
     assert.notEqual(result.status, 0)
     assert.match(result.stderr, new RegExp(name))

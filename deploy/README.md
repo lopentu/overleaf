@@ -3,8 +3,9 @@
 Run a dedicated Compose project on a Linux Docker host. The default stack uses
 this fork, MongoDB and Redis. It publishes HTTP on `127.0.0.1:8080` and gives
 each project its own data volumes. Use trusted accounts only because
-compilation runs inside the application container. Git integration, provider
-connections and sandboxed compilation are outside this setup.
+compilation runs inside the application container. For a separate worker, see
+the [isolated compiler Compose guide](COMPILER.md). Git and provider
+connections are configured separately.
 
 Use Docker Engine 28 or newer for the localhost binding and a Compose v2
 plugin with support for `up --wait`. Use a BuildKit-capable Docker setup if

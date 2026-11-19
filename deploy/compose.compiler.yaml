@@ -1,0 +1,62 @@
+services:
+  compiler:
+    image: ${COMPILER_WORKER_IMAGE:?Set the verified compiler runtime image ID}
+    pull_policy: never
+    restart: 'no'
+    stop_grace_period: 60s
+    working_dir: /overleaf/services/clsi
+    entrypoint: ['/usr/bin/node']
+    command:
+      - /overleaf/services/clsi/app/js/IsolatedCompilerWorkerMain.ts
+      - --config
+      - /worker/settings.json
+    user: '33:33'
+    group_add:
+      - ${COMPILER_DOCKER_GID:?Set the dedicated Docker socket group ID}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true, apparmor=docker-default]
+    network_mode: none
+    mem_limit: 768m
+    memswap_limit: 768m
+    cpus: 1
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${COMPILER_RUNTIME_DIR:?Set the private directory for the daemon and worker sockets}
+        target: /worker/runtime
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_STATE_DIR:?Set the private compiler state directory}
+        target: /worker/state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_CONFIG_FILE:?Set the protected compiler settings file}
+        target: /worker/settings.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - /usr/bin/curl
+        - --disable
+        - --noproxy
+        - '*'
+        - --silent
+        - --fail
+        - --output
+        - /dev/null
+        - --max-time
+        - '2'
+        - --unix-socket
+        - /worker/runtime/clsi.sock
+        - http://localhost/project/1234567890abcdef12345678/status
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 6
