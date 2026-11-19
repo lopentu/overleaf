@@ -7,6 +7,12 @@ const { spawnSync } = require('node:child_process')
 const projection = require('./runtime-dependencies.cjs')
 const SCANNER_SHA =
   'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8'
+// A known-vulnerable fixture scanned separately from the runtime SBOM.
+const POSITIVE_CONTROL = {
+  name: 'lodash',
+  version: '4.17.20',
+  id: 'GHSA-35jh-r3h4-6jhm',
+}
 const EMPTY_CONFIG = '# No ignores or overrides.\n'
 const GiB = 1024 ** 3
 /** @typedef {{name:string,version:string,id:string,severity:string}} Finding */
@@ -129,9 +135,9 @@ function assertPositive(findings) {
   check(
     findings.some(
       v =>
-        v.name === 'picomatch' &&
-        v.version === '4.0.4' &&
-        v.id === 'GHSA-fc5q-39xc-vjpf' &&
+        v.name === POSITIVE_CONTROL.name &&
+        v.version === POSITIVE_CONTROL.version &&
+        v.id === POSITIVE_CONTROL.id &&
         v.severity === 'HIGH'
     ),
     'missing-exact-high-positive-control'
@@ -462,7 +468,8 @@ function main() {
   const receipt = projection.project(root)
   save(path.join(evidence, 'runtime-inventory.json'), receipt)
   const bom = projection.sbom(receipt)
-  const purl = 'pkg:npm/picomatch@4.0.4'
+  const { name, version } = POSITIVE_CONTROL
+  const purl = `pkg:npm/${name}@${version}`
   const control = {
     bomFormat: 'CycloneDX',
     specVersion: '1.5',
@@ -470,8 +477,8 @@ function main() {
     components: [
       {
         type: 'library',
-        name: 'picomatch',
-        version: '4.0.4',
+        name,
+        version,
         purl,
         'bom-ref': purl,
         properties: [],
