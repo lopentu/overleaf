@@ -384,6 +384,14 @@ test('stopping an active compile preserves the cancellation response', async () 
         )
         assert.equal(absent.status, 404)
         assert.deepEqual(await absent.json(), { error: 'OUTPUT_NOT_FOUND' })
+        await fs.rmdir(outputRoot)
+        const unavailable = await fetch(
+          projectUrl + '/build/abcdef-654321/output/output.pdf'
+        )
+        assert.equal(unavailable.status, 500)
+        assert.deepEqual(await unavailable.json(), {
+          error: 'OUTPUT_IO_FAILED',
+        })
       } finally {
         server.closeAllConnections()
         await new Promise<void>(resolve => server.close(() => resolve()))

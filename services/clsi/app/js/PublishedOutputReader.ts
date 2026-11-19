@@ -177,7 +177,8 @@ export async function openPublishedOutputReader(
     scope.claimWorkspaceCleanup(cleanup)
     try {
       return await queueDirOperation(logical, async () => {
-        if (!same(await directory(root), rootIdentity))
+        validatePrivateCompileDirectory(root)
+        if (!same(await fs.lstat(root), rootIdentity))
           throw new OutputReadError('INVALID_OUTPUT')
         for (const current of [
           logical,
