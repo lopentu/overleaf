@@ -2,13 +2,25 @@ import { PreparedSyncTexInput } from '../../../app/js/PreparedSyncTexInput.ts'
 import type { StdoutJobRequest } from '../../../app/js/JobRequest.ts'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import os from 'node:os'
+import { once } from 'node:events'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import tar from 'tar-stream'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import express from 'express'
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 import { z } from '@overleaf/validation-tools'
 import { openCompilerWorkflow } from '../../../app/js/CompilerWorkflow.ts'
 import { createCompilerWorkflowRouter } from '../../../app/js/CompilerWorkflowHttp.ts'
+import { CompilerAdmission } from '../../../app/js/CompilerAdmission.ts'
+import { EphemeralDockerJob } from '../../../app/js/EphemeralDockerJob.ts'
+import {
+  CompilerLease,
+  OwnedJobReconciler,
+} from '../../../app/js/JobOwnership.ts'
+import { DockerApiFixture, gate, waitForEvent } from './DockerApiFixture.ts'
 import {
   validateRequest,
   validateStdoutRequest,
@@ -300,4 +312,224 @@ test('actual workflow HTTP routes preserve compile URLs/conflicts, cached GET an
       },
     }
   )
+})
+
+test('compile HTTP publishes collected output after the Docker job releases its resources', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'compiler-http-job-'))
+  const stagingRoot = path.join(root, 'operations')
+  const sourceCacheRoot = path.join(root, 'plans')
+  const outputRoot = path.join(root, 'output')
+  const tex = String.raw`\documentclass{article}
+\begin{document}
+Synthetic compiler adapter.
+\end{document}`
+  const pdf = Buffer.from('%PDF-synthetic fixture\n')
+  const dockerApi = new DockerApiFixture()
+  dockerApi.archiveEntries = { 'main.tex': Buffer.from(tex), 'output.pdf': pdf }
+  const app = express()
+  const server = http.createServer(app)
+  let manager: CompilerAdmission | undefined
+  let workerLease: CompilerLease | undefined
+  try {
+    for (const directory of [stagingRoot, sourceCacheRoot, outputRoot]) {
+      await fs.mkdir(directory, { mode: 0o700 })
+    }
+    const docker = await dockerApi.open()
+    workerLease = await CompilerLease.acquire(path.join(root, 'manager.sock'))
+    manager = new CompilerAdmission(
+      new EphemeralDockerJob(docker, {
+        trustedStagingRoot: stagingRoot,
+        allowedImages: [image],
+        allowedExecutables: [profile.tools.latexmk],
+        compilerProfiles: [profile],
+      }),
+      new OwnedJobReconciler(docker, workerLease),
+      { sweepIntervalMs: 60000 }
+    )
+    await manager.start()
+    const workflow = await openCompilerWorkflow(manager, {
+      stagingRoot,
+      sourceCacheRoot,
+      outputRoot,
+      defaultImage: image,
+      profiles: [profile],
+      publication: {
+        optimiseInDocker: true,
+        archiveLogs: false,
+        strace: false,
+        pdfCaching: false,
+        clsiCache: false,
+      },
+    })
+    const downloadHost = 'http://synthetic.invalid'
+    app.use(
+      createCompilerWorkflowRouter(manager, workflow, {
+        downloadHost,
+        outputUrlPrefix: '',
+      })
+    )
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    assert.ok(address && typeof address !== 'string')
+    const base = `/project/${projectId}`
+    const origin = `http://127.0.0.1:${address.port}`
+    const build = 'abcdef-654321'
+    const publishedArtifact = path.join(
+      outputRoot,
+      projectId,
+      'generated-files',
+      build,
+      'output.pdf'
+    )
+    const volumeCleanup = gate()
+    dockerApi.holds.set('remove-volume', volumeCleanup.promise)
+    const compiling = fetch(origin + base + '/compile', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        compile: {
+          rootResourcePath: 'main.tex',
+          resources: [{ path: 'main.tex', content: tex }],
+          options: { buildId: build, compiler: 'pdflatex' },
+        },
+      }),
+    })
+    let settled = false
+    const markSettled = () => {
+      settled = true
+    }
+    void compiling.then(markSettled, markSettled)
+    try {
+      await waitForEvent(dockerApi, 'remove-volume')
+      assert.equal(dockerApi.ownedContainer, false)
+      assert.equal(dockerApi.ownedVolume, true)
+      await assert.rejects(fs.lstat(publishedArtifact), { code: 'ENOENT' })
+      assert.equal(
+        settled,
+        false,
+        'Compile responded while volume removal was pending'
+      )
+    } finally {
+      volumeCleanup.release()
+    }
+    const compiled = await compiling
+    assert.equal(compiled.status, 200)
+    const { compile } = compileView.parse(await compiled.json())
+    assert.equal(compile.status, 'success')
+    const pdfPath = `${base}/build/${build}/output/output.pdf`
+    assert.deepEqual(
+      compile.outputFiles.find(file => file.path === 'output.pdf'),
+      {
+        path: 'output.pdf',
+        build,
+        url: downloadHost + pdfPath,
+      }
+    )
+    const published = await fetch(origin + pdfPath)
+    assert.equal(published.status, 200)
+    assert.deepEqual(Buffer.from(await published.arrayBuffer()), pdf)
+    assert.deepEqual(await fs.readFile(publishedArtifact), pdf)
+    assert.equal(
+      compile.outputFiles.some(file => file.path === 'main.tex'),
+      false
+    )
+
+    expect(dockerApi.containerConfig).toMatchObject({
+      Image: image,
+      User: '33:33',
+      WorkingDir: '/compile',
+      Entrypoint: ['/bin/sleep'],
+      HostConfig: {
+        Memory: 1073741824,
+        MemorySwap: 1073741824,
+        NanoCpus: 1_000_000_000,
+        PidsLimit: 256,
+        NetworkMode: 'none',
+        ReadonlyRootfs: true,
+        CapDrop: ['ALL'],
+        SecurityOpt: ['no-new-privileges'],
+        Privileged: false,
+        LogConfig: { Type: 'none' },
+        Tmpfs: {
+          '/tmp': 'rw,noexec,nosuid,nodev,size=67108864,mode=1777',
+          '/home/tex': 'rw,noexec,nosuid,nodev,size=16777216,mode=1777',
+        },
+        Mounts: [
+          {
+            Type: 'volume',
+            Source: dockerApi.volumeConfig?.Name,
+            Target: '/compile',
+            VolumeOptions: { NoCopy: true },
+          },
+        ],
+      },
+    })
+    assert.deepEqual(dockerApi.volumeConfig?.DriverOpts, {
+      type: 'tmpfs',
+      device: 'tmpfs',
+      o: 'size=256m,uid=33,gid=33,mode=0700,nodev,nosuid,noexec',
+    })
+    expect(dockerApi.execConfig).toMatchObject({
+      User: '33:33',
+      WorkingDir: '/compile',
+      Privileged: false,
+      Cmd: [
+        '/synthetic/latexmk',
+        '-cd',
+        '-jobname=output',
+        '-auxdir=/compile',
+        '-outdir=/compile',
+        '-synctex=1',
+        '-interaction=batchmode',
+        '-time',
+        '-f',
+        '-pdf',
+        '/compile/main.tex',
+      ],
+    })
+
+    const extract = tar.extract()
+    const uploaded: Array<{
+      name: string
+      owner: number | undefined
+      text: string
+    }> = []
+    extract.on('entry', (header, stream, next) => {
+      let content = ''
+      stream.setEncoding('utf8')
+      stream.on('data', (chunk: string) => {
+        content += chunk
+      })
+      stream.once('end', () => {
+        uploaded.push({ name: header.name, owner: header.uid, text: content })
+        next()
+      })
+    })
+    await pipeline(Readable.from([dockerApi.uploaded]), extract)
+    assert.deepEqual(uploaded, [{ name: 'main.tex', owner: 33, text: tex }])
+    assert.deepEqual(dockerApi.events, [
+      'volume',
+      'create',
+      'start',
+      'upload',
+      'exec',
+      'pause',
+      'collect',
+      'unpause',
+      'remove-container',
+      'remove-volume',
+    ])
+    assert.equal(dockerApi.ownedContainer || dockerApi.ownedVolume, false)
+    assert.deepEqual(await fs.readdir(stagingRoot), [])
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    await Promise.resolve()
+      .then(() => manager?.retryCleanup())
+      .finally(() => manager?.close())
+      .finally(() => workerLease?.close())
+      .finally(() => dockerApi.close())
+      .finally(() => fs.rm(root, { recursive: true, force: true }))
+  }
 })
