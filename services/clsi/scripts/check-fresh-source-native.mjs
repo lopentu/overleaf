@@ -47,6 +47,7 @@ console.log('Node24.18.1 strip-only publication and CJS error identity PASS')
 const isolatedModules = [
   'CompilerWorkflow.ts',
   'CompilerWorkflowHttp.ts',
+  'IsolatedCompilerWorker.ts',
   'PublishedOutputReader.ts',
   'PreparedCompilerInput.ts',
   'PreparedSyncTexInput.ts',
