@@ -32,11 +32,13 @@ import {
   fetchBoundedSourceText,
   boundedHistorySourceURL,
 } from './BoundedSourceDownload.ts'
+import type { SourceDownloadPolicy } from './SourceDownloadUrls.ts'
 export { parseFullSourcePlan } from './CompileSourcePlan.ts'
 export type { FullSourcePlan } from './CompileSourcePlan.ts'
 
 export interface FreshSourceConfiguration {
   stagingRoot: string
+  sourceDownload?: SourceDownloadPolicy
 }
 export interface MaterializedSource {
   readonly sourceRoot: string
@@ -199,13 +201,20 @@ export async function materializeFullSource(
           fallbackURL,
           destination,
           budget,
-          scope.signal
+          scope.signal,
+          configuration.sourceDownload
         )
       },
       async fetchText(url) {
-        return await fetchBoundedSourceText(url, budget, scope.signal)
+        return await fetchBoundedSourceText(
+          url,
+          budget,
+          scope.signal,
+          configuration.sourceDownload
+        )
       },
-      historyBlobURL: boundedHistorySourceURL,
+      historyBlobURL: (hash, context) =>
+        boundedHistorySourceURL(hash, context, configuration.sourceDownload),
     })
     checkSourceSignal(scope.signal)
     const current = await fs.lstat(directory)

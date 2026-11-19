@@ -28,10 +28,12 @@ import { z } from '@overleaf/validation-tools'
 import { canonicalProjectArchivePath } from './BoundedProjectArchive.ts'
 import type { SyncTexQuery } from './PreparedSyncTexInput.ts'
 import { openPublishedOutputReader } from './PublishedOutputReader.ts'
+import type { SourceDownloadPolicy } from './SourceDownloadUrls.ts'
 
 export interface CompilerWorkflowConfiguration {
   readonly stagingRoot: string
   readonly sourceCacheRoot: string
+  readonly sourceDownload?: SourceDownloadPolicy
   readonly outputRoot: string
   readonly defaultImage: string
   readonly profiles: readonly TrustedCompilerProfile[]
@@ -51,6 +53,7 @@ export async function openCompilerWorkflow(
   const {
     stagingRoot,
     sourceCacheRoot,
+    sourceDownload,
     outputRoot,
     defaultImage,
     profiles,
@@ -68,6 +71,10 @@ export async function openCompilerWorkflow(
     { outputRoot, profile: publication }
   )
   const reader = await openPublishedOutputReader(manager, outputRoot)
+  const sourceConfiguration = {
+    stagingRoot,
+    ...(sourceDownload === undefined ? {} : { sourceDownload }),
+  }
   return Object.freeze({
     reader,
     async compile(scope: WorkflowScope, decodedBytes: Buffer) {
@@ -75,7 +82,7 @@ export async function openCompilerWorkflow(
       if (scope.metadata.kind !== 'compile')
         throw new Error('Invalid compile workflow')
       const plan = await parseFullSourcePlan(scope, decodedBytes)
-      await materializeFullSource(scope, plan, { stagingRoot })
+      await materializeFullSource(scope, plan, sourceConfiguration)
       await cache.install(scope, plan)
       const result = await withPreparedCompileInput(
         scope,
@@ -125,7 +132,11 @@ export async function openCompilerWorkflow(
         decodedBytes === undefined
           ? await cache.load(scope)
           : await parseFullSourcePlan(scope, decodedBytes)
-      const source = await materializeFullSource(scope, plan, { stagingRoot })
+      const source = await materializeFullSource(
+        scope,
+        plan,
+        sourceConfiguration
+      )
       materializedCompileOptions(scope, plan)
       if (decodedBytes !== undefined) await cache.install(scope, plan)
       return await withCompileInputSnapshot(

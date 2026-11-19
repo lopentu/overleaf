@@ -17,6 +17,10 @@ import { createCompilerWorkflowRouter } from './CompilerWorkflowHttp.ts'
 import { EphemeralDockerJob } from './EphemeralDockerJob.ts'
 import { CompilerLease, OwnedJobReconciler } from './JobOwnership.ts'
 import { assertNewPrivateUnixSocketPath } from './PrivateUnixSocketPath.ts'
+import {
+  createIsolatedSourceDownloadPolicy,
+  type IsolatedFilestoreBridge,
+} from './SourceDownloadUrls.ts'
 
 const DAEMON_ROLE_KEY = 'org.lope.overleaf.compiler-worker'
 const DAEMON_ROLE = `${DAEMON_ROLE_KEY}=dedicated`
@@ -31,6 +35,7 @@ export interface IsolatedCompilerWorkerConfiguration {
   readonly profile: TrustedCompilerProfile
   readonly downloadHost: string
   readonly outputUrlPrefix: string
+  readonly filestoreBridge?: IsolatedFilestoreBridge
 }
 
 async function checkDockerSocket(socketPath: string): Promise<void> {
@@ -73,7 +78,9 @@ export async function startIsolatedCompilerWorker({
   profile,
   downloadHost,
   outputUrlPrefix,
+  filestoreBridge,
 }: IsolatedCompilerWorkerConfiguration): Promise<{ close(): Promise<void> }> {
+  const sourceDownload = createIsolatedSourceDownloadPolicy(filestoreBridge)
   const profiles = snapshotCompilerProfiles([profile])
   const [compiler] = profiles
   const outputOrigin = new URL(downloadHost)
@@ -191,6 +198,7 @@ export async function startIsolatedCompilerWorker({
     const workflow = await openCompilerWorkflow(manager, {
       stagingRoot,
       sourceCacheRoot,
+      sourceDownload,
       outputRoot,
       defaultImage: compiler.image,
       profiles,
