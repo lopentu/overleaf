@@ -84,6 +84,9 @@ daemon and worker runtime directory on the worker side. Authenticate the
 peers across the transport. Users retrieve PDFs through the web app's
 authenticated download route.
 
+The [private relay Compose guide](COMPILER-RELAY.md) provides mutually
+authenticated web and worker endpoints for this transport.
+
 Run the following from the repository root with `dedicated_socket`,
 `compiler_env` and `compiler_project` set to the verified daemon socket, the
 protected environment file and the dedicated fixture project name.
