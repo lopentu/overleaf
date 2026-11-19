@@ -328,3 +328,63 @@ test('a shutdown retry retries the admission manager’s failed workspace cleanu
     captureManager.mockRestore()
   }
 })
+
+test('a worker without a filestore bridge rejects an asset before contacting its source or creating a job', async () => {
+  await withDaemon(async (configuration, daemonRequests) => {
+    let downloads = 0
+    const source = http.createServer((_request, response) => {
+      downloads++
+      response.end('synthetic asset')
+    })
+    const worker = await startIsolatedCompilerWorker(configuration)
+    try {
+      source.listen(0, '127.0.0.1')
+      await once(source, 'listening')
+      const address = source.address()
+      assert.ok(address && typeof address !== 'string')
+      const initial = [...daemonRequests]
+      const status = await new Promise<number | undefined>(
+        (resolve, reject) => {
+          const request = http.request(
+            {
+              socketPath: path.join(configuration.runtimeRoot, 'clsi.sock'),
+              path: '/project/1234567890abcdef12345678/compile',
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+            },
+            response => {
+              response.resume()
+              response.once('end', () => resolve(response.statusCode))
+              response.once('error', reject)
+            }
+          )
+          request.once('error', reject)
+          request.end(
+            JSON.stringify({
+              compile: {
+                options: { syncType: 'full' },
+                resources: [
+                  { path: 'main.tex', content: 'Synthetic source' },
+                  {
+                    path: 'asset.png',
+                    url: `http://127.0.0.1:${address.port}/history/project/1234567890abcdef12345678/hash/${'a'.repeat(40)}`,
+                  },
+                ],
+              },
+            })
+          )
+        }
+      )
+      assert.equal(status, 400)
+      assert.equal(downloads, 0)
+      assert.deepEqual(daemonRequests, initial)
+    } finally {
+      try {
+        await worker.close()
+      } finally {
+        source.closeAllConnections()
+        await new Promise<void>(resolve => source.close(() => resolve()))
+      }
+    }
+  })
+})

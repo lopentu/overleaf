@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import http from 'node:http'
@@ -9,6 +10,7 @@ import {
   parseFullSourcePlan,
   materializeFullSource,
 } from '../../../app/js/FreshCompileInput.ts'
+import { createIsolatedSourceDownloadPolicy } from '../../../app/js/SourceDownloadUrls.ts'
 import { withSourceFixture } from './SourceInputFixture.ts'
 const PROJECT = '1234567890abcdef12345678'
 const MiB = 1024 * 1024
@@ -305,6 +307,138 @@ test('a workflow abort joins the real HTTP response close and owned workspace cl
       res.writeHead(200)
       res.write('held')
       entered.resolve()
+    }
+  )
+})
+
+test('isolated asset downloads use only the configured blob proxy and never follow redirects', async () => {
+  const assetPath = `/history/project/${PROJECT}/hash/${'a'.repeat(40)}`
+  const redirectPath = `/history/project/${PROJECT}/hash/${'b'.repeat(40)}`
+  const asset = Buffer.from([0, 255, 10])
+  await server(
+    async (direct, directRequests) => {
+      await server(
+        async (proxy, proxyRequests) => {
+          await withSourceFixture(async (root, manager) => {
+            const sourceDownload = createIsolatedSourceDownloadPolicy({
+              sourceOrigin: direct,
+              proxyOrigin: proxy,
+            })
+            const materialize = async (url: string, expected?: Buffer) => {
+              const lease = await manager.acquire({
+                projectId: PROJECT,
+                kind: 'compile',
+              })
+              return await lease.run(async scope => {
+                const plan = await parseFullSourcePlan(
+                  scope,
+                  body([{ path: 'asset.png', url }])
+                )
+                const result = await materializeFullSource(scope, plan, {
+                  stagingRoot: path.join(root, 'operations'),
+                  sourceDownload,
+                })
+                if (expected) {
+                  assert.deepEqual(
+                    await fs.readFile(
+                      path.join(result.sourceDirectory, 'asset.png')
+                    ),
+                    expected
+                  )
+                }
+              })
+            }
+            await materialize(direct + assetPath, asset)
+            for (const url of [
+              proxy + assetPath,
+              direct + '/bucket/project/key/asset',
+              direct + assetPath + '?style=preview',
+              direct + assetPath + '#asset',
+              direct.replace('://', '://worker@') + assetPath,
+              direct + '/alternate/..' + assetPath,
+              direct + assetPath + '\n',
+            ]) {
+              await assert.rejects(materialize(url), {
+                code: 'INVALID_SOURCE_REQUEST',
+              })
+            }
+            assert.deepEqual(proxyRequests, [assetPath])
+            await assert.rejects(materialize(direct + redirectPath), {
+              code: 'SOURCE_DOWNLOAD_FAILED',
+            })
+            assert.ok(proxyRequests.length > 1)
+            assert.ok(
+              proxyRequests.slice(1).every(request => request === redirectPath)
+            )
+            assert.deepEqual(directRequests, [])
+          })
+        },
+        (request, response) => {
+          if (request.url === assetPath) response.end(asset)
+          else response.writeHead(302, { location: direct + assetPath }).end()
+        }
+      )
+    },
+    (_request, response) => response.end(asset)
+  )
+})
+
+test('isolated error responses are closed before the next download attempt', async () => {
+  const sourceOrigin = 'http://filestore.invalid'
+  const blob = `/history/project/${PROJECT}/hash/${'c'.repeat(40)}`
+  const closed = Promise.withResolvers<void>()
+  let active = 0
+  let peak = 0
+  let closeCount = 0
+  await server(
+    async (proxyOrigin, requests) => {
+      await withSourceFixture(async (root, manager) => {
+        const sourceDownload = createIsolatedSourceDownloadPolicy({
+          sourceOrigin,
+          proxyOrigin,
+        })
+        const lease = await manager.acquire({
+          projectId: PROJECT,
+          kind: 'compile',
+        })
+        await assert.rejects(
+          lease.run(async scope => {
+            const plan = await parseFullSourcePlan(
+              scope,
+              body([{ path: 'asset.png', url: sourceOrigin + blob }])
+            )
+            await materializeFullSource(scope, plan, {
+              stagingRoot: path.join(root, 'operations'),
+              sourceDownload,
+            })
+          }),
+          { code: 'SOURCE_DOWNLOAD_FAILED' }
+        )
+        assert.deepEqual(requests, [blob, blob, blob])
+        assert.equal(
+          peak,
+          1,
+          'A retry began while a prior response was still open'
+        )
+        await Promise.race([
+          closed.promise,
+          once(AbortSignal.timeout(1000), 'abort').then(() =>
+            assert.fail('An isolated error response was left open')
+          ),
+        ])
+        assert.equal(active, 0)
+        assert.deepEqual(await fs.readdir(path.join(root, 'operations')), [])
+      })
+    },
+    (_request, response) => {
+      peak = Math.max(peak, ++active)
+      response.once('close', () => {
+        active--
+        if (++closeCount === 3) closed.resolve()
+      })
+      response.writeHead(503)
+      response.write(Buffer.alloc(96 * 1024, 65))
+      // Leave the body open. Only the downloader can finish this request.
     }
   )
 })

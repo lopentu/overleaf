@@ -15,6 +15,7 @@ import {
   resolveSourceDownloadUrls,
   historySourceBlobUrl,
   type HistoryBlobContext,
+  type SourceDownloadPolicy,
 } from './SourceDownloadUrls.ts'
 const MAX_DOWNLOAD_BYTES = 3 * INPUT_LIMITS.maxTotalBytes
 /** Current retained payload plus one joined attempt; failed attempts refund only
@@ -205,8 +206,19 @@ function settingsString(value: unknown): string | undefined {
     throw new SourceInputError('INVALID_SOURCE_REQUEST')
   return value
 }
-function sourceURLs(url: string, fallback: string | undefined) {
+function sourceURLs(
+  url: string,
+  fallback: string | undefined,
+  policy: SourceDownloadPolicy | undefined
+) {
   try {
+    if (policy) {
+      return {
+        primary: policy.resolve(url),
+        fallback: fallback === undefined ? undefined : policy.resolve(fallback),
+        redirect: 'error' as const,
+      }
+    }
     const result = resolveSourceDownloadUrls(
       url,
       fallback,
@@ -219,7 +231,7 @@ function sourceURLs(url: string, fallback: string | undefined) {
         !['http:', 'https:'].includes(new URL(candidate).protocol)
       )
         throw new Error('unsupported source protocol')
-    return result
+    return { ...result, redirect: 'follow' as const }
   } catch {
     throw new SourceInputError('INVALID_SOURCE_REQUEST')
   }
@@ -232,20 +244,37 @@ function responseStatus(error: unknown): number | undefined {
 }
 async function fetchSource(
   url: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  redirect: 'follow' | 'error'
 ): Promise<Readable> {
   checkSourceSignal(signal)
+  const attempt = redirect === 'error' ? new AbortController() : undefined
+  const signals = [signal, AbortSignal.timeout(60000)]
+  if (attempt) signals.push(attempt.signal)
   try {
     // node-fetch's size bounds its error-body text consumer; successful response
     // bodies use our incremental counter before any disk write/string assembly.
     const stream = await fetchStream(url, {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
+      signal: AbortSignal.any(signals),
       size: 64 * 1024,
+      redirect,
     })
     if (!(stream instanceof Readable))
       throw new SourceInputError('SOURCE_DOWNLOAD_FAILED')
     return stream
   } catch (error) {
+    if (attempt) {
+      const body =
+        error instanceof RequestFailedError ? error.response.body : undefined
+      const open = body instanceof Readable && !body.closed ? body : undefined
+      const closed =
+        open && new Promise<void>(resolve => open.once('close', resolve))
+      // fetchStream consumes a bounded error body without owning its teardown.
+      // Abort before destroying the body, which detaches the fetch signal.
+      attempt.abort()
+      open?.destroy()
+      await closed
+    }
     if (signal.aborted) throw new SourceInputError('SOURCE_CANCELLED')
     const safe = new SourceInputError('SOURCE_DOWNLOAD_FAILED', 'fetch')
     const status = responseStatus(error)
@@ -266,18 +295,19 @@ export async function pipeBoundedSourceUrlToFileWithRetry(
   fallbackURL: string | undefined,
   destination: string,
   budget: SourceInputBudget,
-  signal: AbortSignal
+  signal: AbortSignal,
+  policy?: SourceDownloadPolicy
 ): Promise<void> {
-  const urls = sourceURLs(url, fallbackURL)
+  const urls = sourceURLs(url, fallbackURL, policy)
   for (let attempt = 0; attempt < 3; attempt++) {
     checkSourceSignal(signal)
     let stream: Readable
     try {
       try {
-        stream = await fetchSource(urls.primary, signal)
+        stream = await fetchSource(urls.primary, signal, urls.redirect)
       } catch (error) {
         if (urls.fallback && is404(error))
-          stream = await fetchSource(urls.fallback, signal)
+          stream = await fetchSource(urls.fallback, signal, urls.redirect)
         else throw error
       }
     } catch (error) {
@@ -315,13 +345,14 @@ export async function pipeBoundedSourceUrlToFileWithRetry(
 export async function fetchBoundedSourceText(
   url: string,
   budget: SourceInputBudget,
-  signal: AbortSignal
+  signal: AbortSignal,
+  policy?: SourceDownloadPolicy
 ): Promise<string> {
-  const urls = sourceURLs(url, undefined)
+  const urls = sourceURLs(url, undefined, policy)
   for (let attempt = 0; attempt < 3; attempt++) {
     let stream: Readable | undefined, transfer: Promise<void> | undefined
     try {
-      stream = await fetchSource(urls.primary, signal)
+      stream = await fetchSource(urls.primary, signal, urls.redirect)
       const counter = budget.counter(true, false),
         chunks: Buffer[] = []
       transfer = pipeline(
@@ -370,10 +401,11 @@ export async function fetchBoundedSourceText(
 }
 export function boundedHistorySourceURL(
   hash: string,
-  context: HistoryBlobContext
+  context: HistoryBlobContext,
+  policy?: SourceDownloadPolicy
 ): string {
   try {
-    const base: unknown = Settings.apis?.filestore?.url,
+    const base: unknown = policy?.sourceOrigin ?? Settings.apis?.filestore?.url,
       perf: unknown = Settings.apis?.clsiPerf?.host
     if (
       typeof base !== 'string' ||
