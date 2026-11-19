@@ -1,0 +1,206 @@
+import assert from 'node:assert/strict'
+import { once } from 'node:events'
+import * as fs from 'node:fs/promises'
+import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
+import { test } from 'vitest'
+import { startIsolatedCompilerWorker } from '../../../app/js/IsolatedCompilerWorker.ts'
+
+const image = `sha256:${'c'.repeat(64)}`
+
+async function withDaemon(
+  use: (
+    configuration: Parameters<typeof startIsolatedCompilerWorker>[0],
+    requests: string[],
+    setSweepFailure: (value: boolean) => void
+  ) => Promise<void>
+) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clsi-worker-'))
+  const runtimeRoot = path.join(root, 'run')
+  const stateRoot = path.join(root, 'state')
+  const dockerSocket = path.join(runtimeRoot, 'docker.sock')
+  const requests: string[] = []
+  let sweepFailure = false
+  const daemon = http.createServer((request, response) => {
+    const method = request.method
+    const pathname = new URL(request.url ?? '/', 'http://fixture.invalid')
+      .pathname
+    const route = `${method} ${pathname}`
+    requests.push(route)
+    const replies: Record<string, unknown> = {
+      'GET /v1.47/info': {
+        ID: 'fixture-dedicated-daemon',
+        Labels: ['org.lope.overleaf.compiler-worker=dedicated'],
+        SecurityOptions: ['name=apparmor', 'name=seccomp,profile=builtin'],
+        CgroupDriver: 'systemd',
+        CgroupVersion: '2',
+      },
+      [`GET /v1.47/images/${image}/json`]: { Id: image, Config: {} },
+      'GET /v1.47/containers/json': [],
+      'GET /v1.47/volumes': { Volumes: [] },
+    }
+    if (
+      !Object.hasOwn(replies, route) ||
+      (sweepFailure && route === 'GET /v1.47/containers/json')
+    ) {
+      response.writeHead(500).end()
+      return
+    }
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify(replies[route]))
+  })
+  try {
+    for (const directory of [runtimeRoot, stateRoot])
+      await fs.mkdir(directory, { mode: 0o700 })
+    for (const name of ['operations', 'plans', 'published'])
+      await fs.mkdir(path.join(stateRoot, name), { mode: 0o700 })
+    daemon.listen(dockerSocket)
+    await once(daemon, 'listening')
+    await fs.chmod(dockerSocket, 0o600)
+    await use(
+      {
+        runtimeRoot,
+        stateRoot,
+        dockerSocket,
+        daemonId: 'fixture-dedicated-daemon',
+        profile: {
+          id: 'fixture',
+          image,
+          aliases: ['synthetic:2099'],
+          variant: 'standard',
+          texBinDirectory: '/synthetic/bin',
+          tools: {
+            latexmk: '/synthetic/bin/latexmk',
+            texcount: '/synthetic/bin/texcount',
+            synctex: '/synthetic/bin/synctex',
+          },
+        },
+        downloadHost: 'http://fixture.invalid',
+        outputUrlPrefix: '',
+      },
+      requests,
+      value => {
+        sweepFailure = value
+      }
+    )
+  } finally {
+    try {
+      if (daemon.listening) {
+        const closed = once(daemon, 'close')
+        daemon.close()
+        daemon.closeAllConnections()
+        await closed
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  }
+}
+
+test('refuses a different daemon before reconciliation or opening worker sockets', async () => {
+  await withDaemon(async (configuration, requests) => {
+    await assert.rejects(
+      startIsolatedCompilerWorker({
+        ...configuration,
+        daemonId: 'another-daemon',
+      }),
+      /ISOLATED_DAEMON_UNQUALIFIED/
+    )
+    assert.deepEqual(requests, ['GET /v1.47/info'])
+    assert.deepEqual(await fs.readdir(configuration.runtimeRoot), [
+      'docker.sock',
+    ])
+  })
+})
+
+test('serves on a private Unix socket and retains its lease until shutdown reconciles', async () => {
+  await withDaemon(async (configuration, requests, setSweepFailure) => {
+    const worker = await startIsolatedCompilerWorker(configuration)
+    try {
+      assert.deepEqual(requests, [
+        'GET /v1.47/info',
+        `GET /v1.47/images/${image}/json`,
+        'GET /v1.47/containers/json',
+        'GET /v1.47/volumes',
+      ])
+      const socketPath = path.join(configuration.runtimeRoot, 'clsi.sock')
+      const socket = await fs.lstat(socketPath)
+      assert.ok(socket.isSocket())
+      assert.equal(socket.mode & 0o777, 0o600)
+      const status = await new Promise<number | undefined>(
+        (resolve, reject) => {
+          const request = http.get(
+            { socketPath, path: '/project/1234567890abcdef12345678/status' },
+            response => {
+              response.resume()
+              response.once('end', () => resolve(response.statusCode))
+              response.once('error', reject)
+            }
+          )
+          request.once('error', reject)
+        }
+      )
+      assert.equal(status, 200)
+      setSweepFailure(true)
+      await assert.rejects(worker.close())
+      assert.deepEqual((await fs.readdir(configuration.runtimeRoot)).sort(), [
+        'docker.sock',
+        'manager.sock',
+      ])
+    } finally {
+      setSweepFailure(false)
+      await worker.close()
+    }
+    await worker.close()
+    assert.deepEqual(await fs.readdir(configuration.runtimeRoot), [
+      'docker.sock',
+    ])
+  })
+})
+
+test('refuses a second runtime directory for the same daemon before probing it', async () => {
+  await withDaemon(async (configuration, requests) => {
+    const alternateRuntime = path.join(
+      path.dirname(configuration.runtimeRoot),
+      'alternate-run'
+    )
+    await fs.mkdir(alternateRuntime, { mode: 0o700 })
+    const first = await startIsolatedCompilerWorker(configuration)
+    let second: typeof first | undefined
+    try {
+      const firstRequests = [...requests]
+      await assert.rejects(async () => {
+        second = await startIsolatedCompilerWorker({
+          ...configuration,
+          runtimeRoot: alternateRuntime,
+        })
+      }, /ISOLATED_DOCKER_SOCKET_UNSAFE/)
+      assert.deepEqual(requests, firstRequests)
+      assert.deepEqual(await fs.readdir(alternateRuntime), [])
+    } finally {
+      try {
+        await second?.close()
+      } finally {
+        await first.close()
+      }
+    }
+  })
+})
+
+test('releases its lease after initial reconciliation fails so the same runtime can retry', async () => {
+  await withDaemon(async (configuration, _requests, setSweepFailure) => {
+    setSweepFailure(true)
+    await assert.rejects(startIsolatedCompilerWorker(configuration))
+    assert.deepEqual(await fs.readdir(configuration.runtimeRoot), [
+      'docker.sock',
+    ])
+
+    setSweepFailure(false)
+    const worker = await startIsolatedCompilerWorker(configuration)
+    await worker.close()
+    assert.deepEqual(await fs.readdir(configuration.runtimeRoot), [
+      'docker.sock',
+    ])
+  })
+})
