@@ -20,10 +20,14 @@ inputs are distinct Unix sockets, and rejects overlaps with the TLS directory.
 The app-side bridge publishes only the filestore HTTP socket. The app's
 compile gateway reaches the web relay's `compile.sock`. Use that app-local
 gateway as both `apis.clsi.url` and `apis.clsi.downloadHost`. Overleaf still
-authorizes project access and browser downloads. Also set
-`OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB=true` in the app deployment and
-regenerate its NGINX configuration at startup. PDF and log previews then use
-the authenticated Web routes. Keep PDF caching disabled for this profile.
+authorizes project access and browser downloads. Set both
+`OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB=true` and
+`OVERLEAF_DISABLE_EMBEDDED_CLSI=true` in the app container's environment.
+At startup the app routes PDF and log previews through authenticated Web
+routes, leaves the embedded compiler down and omits its output listener on
+port 8080. With a separate compiler enabled, keep PDF caching disabled.
+Recreate the app container when switching back to the embedded compiler so
+runit starts from the image's original service directory.
 The worker-side relay
 mounts only `clsi.sock` from the dedicated runtime directory. Keep `docker.sock`
 and `manager.sock` outside both relays. The optional filestore adapter uses

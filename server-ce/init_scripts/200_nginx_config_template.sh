@@ -7,17 +7,47 @@ set -e
 
 nginx_dir='/etc/nginx'
 nginx_templates_dir="${nginx_dir}/templates"
-
-if ! [ -d "${nginx_templates_dir}" ]; then
-  echo "Nginx: no template directory found, skipping"
-  exit 0
-fi
+clsi_service_dir='/etc/service/clsi-overleaf'
 
 nginx_template_file="${nginx_templates_dir}/nginx.conf.template"
 nginx_config_file="${nginx_dir}/nginx.conf"
 
 overleaf_template_file="${nginx_templates_dir}/overleaf.conf.template"
 overleaf_config_file="${nginx_dir}/sites-enabled/overleaf.conf"
+
+disable_embedded_clsi="${OVERLEAF_DISABLE_EMBEDDED_CLSI-false}"
+case "$disable_embedded_clsi" in
+  false) OVERLEAF_EMBEDDED_CLSI_VHOST='include /etc/nginx/templates/clsi-nginx.conf;' ;;
+  true)
+    if [ "${OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB-false}" != true ]; then
+      echo 'OVERLEAF_DISABLE_EMBEDDED_CLSI requires OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB=true' >&2
+      exit 1
+    fi
+    if ! [ -x "$clsi_service_dir/run" ]; then
+      echo 'Cannot configure the embedded CLSI service' >&2
+      exit 1
+    fi
+    if ! [ -f "$nginx_template_file" ] || ! [ -f "$overleaf_template_file" ]; then
+      echo 'Disabling embedded CLSI requires both Overleaf NGINX templates' >&2
+      exit 1
+    fi
+    legacy_clsi_vhost="$nginx_dir/sites-enabled/clsi-nginx.conf"
+    if [ -e "$legacy_clsi_vhost" ] || [ -L "$legacy_clsi_vhost" ]; then
+      echo 'Cannot disable the embedded CLSI output listener from an older image' >&2
+      exit 1
+    fi
+    OVERLEAF_EMBEDDED_CLSI_VHOST=''
+    ;;
+  *)
+    echo 'OVERLEAF_DISABLE_EMBEDDED_CLSI must be true or false' >&2
+    exit 1
+    ;;
+esac
+
+if ! [ -d "${nginx_templates_dir}" ]; then
+  echo "Nginx: no template directory found, skipping"
+  exit 0
+fi
 
 if [ -f "${nginx_template_file}" ]; then
   case "${OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB-false}" in
@@ -28,7 +58,12 @@ if [ -f "${nginx_template_file}" ]; then
       exit 1
       ;;
   esac
-  export OVERLEAF_EMBEDDED_CLSI_LOCATIONS
+  export OVERLEAF_EMBEDDED_CLSI_LOCATIONS OVERLEAF_EMBEDDED_CLSI_VHOST
+
+  # Init scripts run before runsvdir starts supervised services.
+  if [ "$disable_embedded_clsi" = true ]; then
+    touch "$clsi_service_dir/down"
+  fi
 
   export NGINX_KEEPALIVE_TIMEOUT="${NGINX_KEEPALIVE_TIMEOUT:-65}"
   export NGINX_WORKER_CONNECTIONS="${NGINX_WORKER_CONNECTIONS:-768}"
@@ -49,6 +84,7 @@ if [ -f "${nginx_template_file}" ]; then
     ${NGINX_WORKER_CONNECTIONS}
     ${NGINX_WORKER_PROCESSES}
     ${MAX_UPLOAD_SIZE}
+    ${OVERLEAF_EMBEDDED_CLSI_VHOST}
   ' \
     < "${nginx_template_file}" \
     > "${nginx_config_file}"
