@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -427,6 +435,101 @@ test('relay preflight refuses listener directories with existing files and alias
   )
   writeFileSync(join(paths.listenerDirectory, 'unexpected'), 'fixture')
   assert.throws(() => checkRelayPaths(paths, uid))
+})
+
+function renderOverleafVhost(root: string, mode?: string) {
+  mkdirSync(join(root, 'templates'), { recursive: true })
+  mkdirSync(join(root, 'sites-enabled'))
+  const tools = join(root, 'tools')
+  mkdirSync(tools)
+  for (const name of ['nginx.conf.template', 'overleaf.conf.template']) {
+    copyFileSync(join('server-ce/nginx', name), join(root, 'templates', name))
+  }
+  const source = readFileSync(
+    'server-ce/init_scripts/200_nginx_config_template.sh',
+    'utf8'
+  )
+  assert.ok(source.includes("nginx_dir='/etc/nginx'"))
+  const initializer = join(root, 'init.sh')
+  writeFileSync(
+    initializer,
+    source.replace("nginx_dir='/etc/nginx'", `nginx_dir='${root}'`)
+  )
+
+  // Run the actual initializer without touching host nginx or requiring gettext.
+  writeFileSync(
+    join(tools, 'envsubst'),
+    [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs')",
+      'const names = new Set(process.argv[2].match(/\\$\\{[A-Z_]+\\}/g))',
+      "process.stdout.write(fs.readFileSync(0, 'utf8').replace(/\\$\\{[A-Z_]+\\}/g, token => names.has(token) ? process.env[token.slice(2, -1)] || '' : token))",
+    ].join('\n'),
+    { mode: 0o700 }
+  )
+  writeFileSync(join(tools, 'nginx'), '#!/bin/sh\ntest "$*" = -t\n', {
+    mode: 0o700,
+  })
+  writeFileSync(
+    join(tools, 'service'),
+    '#!/bin/sh\ntest "$*" = "nginx reload"\n',
+    { mode: 0o700 }
+  )
+  const result = spawnSync('/bin/sh', [initializer], {
+    encoding: 'utf8',
+    env: {
+      PATH: `${tools}:/usr/bin:/bin`,
+      ...(mode === undefined
+        ? {}
+        : { OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB: mode }),
+    },
+  })
+  const vhost = join(root, 'sites-enabled/overleaf.conf')
+  return {
+    result,
+    config: existsSync(vhost) ? readFileSync(vhost, 'utf8') : undefined,
+  }
+}
+
+test('only the explicit isolated mode routes previews through the authenticated Web handler', () => {
+  const implicit = renderOverleafVhost(join(fixture, 'stock'))
+  const stock = renderOverleafVhost(join(fixture, 'explicit-stock'), 'false')
+  const isolated = renderOverleafVhost(join(fixture, 'isolated'), 'true')
+  for (const { result, config } of [implicit, stock, isolated]) {
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(
+      config ?? '',
+      /location \/ \{\s*proxy_pass http:\/\/127\.0\.0\.1:4000;/
+    )
+  }
+  const stockInclude =
+    'include /etc/nginx/templates/overleaf-embedded-clsi.conf;'
+  assert.equal(stock.config, implicit.config)
+  assert.ok(stock.config?.includes(stockInclude))
+  assert.equal(isolated.config?.includes(stockInclude), false)
+  assert.equal(isolated.config?.includes('127.0.0.1:8080'), false)
+  const legacy = readFileSync(
+    'server-ce/nginx/overleaf-embedded-clsi.conf',
+    'utf8'
+  )
+  assert.equal(
+    legacy.match(/proxy_pass http:\/\/127\.0\.0\.1:8080;/g)?.length,
+    4
+  )
+})
+
+test('an invalid isolated output mode fails before publishing an NGINX vhost', () => {
+  for (const [name, mode] of [
+    ['invalid', 'yes'],
+    ['empty', ''],
+  ]) {
+    const { result, config } = renderOverleafVhost(join(fixture, name), mode)
+    assert.ifError(result.error)
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB/)
+    assert.equal(config, undefined)
+  }
 })
 
 test.after(() => rmSync(fixture, { recursive: true, force: true }))

@@ -70,6 +70,7 @@ ADD server-ce/config/env.sh /etc/overleaf/env.sh
 # ---------------
 ADD server-ce/nginx/nginx.conf.template /etc/nginx/templates/nginx.conf.template
 ADD server-ce/nginx/overleaf.conf.template /etc/nginx/templates/overleaf.conf.template
+ADD server-ce/nginx/overleaf-embedded-clsi.conf /etc/nginx/templates/overleaf-embedded-clsi.conf
 ADD server-ce/nginx/clsi-nginx.conf /etc/nginx/sites-enabled/clsi-nginx.conf
 
 

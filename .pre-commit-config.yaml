@@ -153,7 +153,7 @@ repos:
           node --test tools/lope/check-portable-compose.mts'
         language: system
         pass_filenames: false
-        files: '^(compose\.yaml$|deploy/|tools/lope/check-portable-compose\.mts$|services/web/tsconfig\.portable-compose\.json$|\.pre-commit-config\.yaml$|\.github/workflows/lope-quality\.yml$)'
+        files: '^(compose\.yaml$|deploy/|server-ce/(Dockerfile$|nginx/|init_scripts/200_nginx_config_template\.sh$)|tools/lope/check-portable-compose\.mts$|services/web/tsconfig\.portable-compose\.json$|\.pre-commit-config\.yaml$|\.github/workflows/lope-quality\.yml$)'
       - id: eslint
         name: Lint changed JavaScript and TypeScript (zero warnings)
         entry: corepack yarn exec eslint --max-warnings 0
