@@ -437,9 +437,32 @@ test('relay preflight refuses listener directories with existing files and alias
   assert.throws(() => checkRelayPaths(paths, uid))
 })
 
-function renderOverleafVhost(root: string, mode?: string) {
+interface VhostFixtureOptions {
+  mode?: string
+  disableEmbedded?: string
+  installClsi?: boolean
+  hasLegacyVhost?: boolean
+}
+
+function renderOverleafVhost(
+  root: string,
+  {
+    mode,
+    disableEmbedded,
+    installClsi = true,
+    hasLegacyVhost = false,
+  }: VhostFixtureOptions = {}
+) {
   mkdirSync(join(root, 'templates'), { recursive: true })
   mkdirSync(join(root, 'sites-enabled'))
+  if (hasLegacyVhost) {
+    writeFileSync(join(root, 'sites-enabled/clsi-nginx.conf'), 'server {}\n')
+  }
+  const clsiService = join(root, 'clsi-overleaf')
+  if (installClsi) {
+    mkdirSync(clsiService)
+    writeFileSync(join(clsiService, 'run'), '#!/bin/sh\n', { mode: 0o700 })
+  }
   const tools = join(root, 'tools')
   mkdirSync(tools)
   for (const name of ['nginx.conf.template', 'overleaf.conf.template']) {
@@ -453,7 +476,12 @@ function renderOverleafVhost(root: string, mode?: string) {
   const initializer = join(root, 'init.sh')
   writeFileSync(
     initializer,
-    source.replace("nginx_dir='/etc/nginx'", `nginx_dir='${root}'`)
+    source
+      .replace("nginx_dir='/etc/nginx'", `nginx_dir='${root}'`)
+      .replace(
+        "clsi_service_dir='/etc/service/clsi-overleaf'",
+        `clsi_service_dir='${clsiService}'`
+      )
   )
 
   // Run the actual initializer without touching host nginx or requiring gettext.
@@ -482,19 +510,31 @@ function renderOverleafVhost(root: string, mode?: string) {
       ...(mode === undefined
         ? {}
         : { OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB: mode }),
+      ...(disableEmbedded === undefined
+        ? {}
+        : { OVERLEAF_DISABLE_EMBEDDED_CLSI: disableEmbedded }),
     },
   })
   const vhost = join(root, 'sites-enabled/overleaf.conf')
+  const nginxConfig = join(root, 'nginx.conf')
   return {
     result,
     config: existsSync(vhost) ? readFileSync(vhost, 'utf8') : undefined,
+    main: existsSync(nginxConfig)
+      ? readFileSync(nginxConfig, 'utf8')
+      : undefined,
+    clsiDown: existsSync(join(clsiService, 'down')),
   }
 }
 
 test('only the explicit isolated mode routes previews through the authenticated Web handler', () => {
   const implicit = renderOverleafVhost(join(fixture, 'stock'))
-  const stock = renderOverleafVhost(join(fixture, 'explicit-stock'), 'false')
-  const isolated = renderOverleafVhost(join(fixture, 'isolated'), 'true')
+  const stock = renderOverleafVhost(join(fixture, 'explicit-stock'), {
+    mode: 'false',
+  })
+  const isolated = renderOverleafVhost(join(fixture, 'isolated'), {
+    mode: 'true',
+  })
   for (const { result, config } of [implicit, stock, isolated]) {
     assert.ifError(result.error)
     assert.equal(result.status, 0, result.stderr)
@@ -524,12 +564,103 @@ test('an invalid isolated output mode fails before publishing an NGINX vhost', (
     ['invalid', 'yes'],
     ['empty', ''],
   ]) {
-    const { result, config } = renderOverleafVhost(join(fixture, name), mode)
+    const { result, config } = renderOverleafVhost(join(fixture, name), {
+      mode,
+    })
     assert.ifError(result.error)
     assert.notEqual(result.status, 0)
     assert.match(result.stderr, /OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB/)
     assert.equal(config, undefined)
   }
+})
+
+test('external compiler startup keeps embedded CLSI and its output listener down', () => {
+  const vhost = 'include /etc/nginx/templates/clsi-nginx.conf;'
+  for (const [name, disableEmbedded] of [
+    ['embedded-default', undefined],
+    ['embedded-explicit', 'false'],
+  ] as const) {
+    const stock = renderOverleafVhost(join(fixture, name), {
+      mode: 'true',
+      disableEmbedded,
+    })
+    assert.equal(stock.result.status, 0, stock.result.stderr)
+    assert.equal(stock.clsiDown, false)
+    assert.ok(stock.main?.includes(vhost))
+  }
+
+  const external = renderOverleafVhost(join(fixture, 'external-clsi'), {
+    mode: 'true',
+    disableEmbedded: 'true',
+  })
+  assert.equal(external.result.status, 0, external.result.stderr)
+  assert.equal(external.clsiDown, true)
+  assert.equal(external.main?.includes(vhost), false)
+  assert.ok(external.config)
+  assert.doesNotMatch(
+    readFileSync('server-ce/Dockerfile', 'utf8'),
+    /^ADD server-ce\/nginx\/clsi-nginx\.conf .*sites-enabled/m
+  )
+})
+
+test('external compiler startup rejects invalid or incomplete setup before writing', () => {
+  const cases: [string, string | undefined, string, boolean, RegExp][] = [
+    [
+      'external-flag-invalid',
+      'true',
+      'yes',
+      true,
+      /OVERLEAF_DISABLE_EMBEDDED_CLSI/,
+    ],
+    ['external-flag-empty', 'true', '', true, /OVERLEAF_DISABLE_EMBEDDED_CLSI/],
+    [
+      'external-no-web-preview',
+      undefined,
+      'true',
+      true,
+      /OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB/,
+    ],
+    [
+      'external-invalid-web-preview',
+      'invalid',
+      'true',
+      true,
+      /OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB/,
+    ],
+    [
+      'external-missing-service',
+      'true',
+      'true',
+      false,
+      /embedded CLSI service/,
+    ],
+  ]
+  for (const [name, mode, disableEmbedded, installClsi, message] of cases) {
+    const external = renderOverleafVhost(join(fixture, name), {
+      mode,
+      disableEmbedded,
+      installClsi,
+    })
+    assert.notEqual(external.result.status, 0)
+    assert.match(external.result.stderr, message)
+    assert.equal(external.clsiDown, false)
+    assert.equal(external.config, undefined)
+    assert.equal(external.main, undefined)
+  }
+})
+
+test('external compiler startup rejects a stale separately enabled output listener', () => {
+  const external = renderOverleafVhost(join(fixture, 'external-legacy-vhost'), {
+    mode: 'true',
+    disableEmbedded: 'true',
+    hasLegacyVhost: true,
+  })
+  assert.ifError(external.result.error)
+  assert.notEqual(external.result.status, 0)
+  assert.match(external.result.stderr, /embedded CLSI output listener/)
+  assert.equal(external.clsiDown, false)
+  assert.equal(external.config, undefined)
+  assert.equal(external.main, undefined)
 })
 
 test.after(() => rmSync(fixture, { recursive: true, force: true }))
