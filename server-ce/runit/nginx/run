@@ -1,2 +1,5 @@
 #!/bin/bash
+if [ -f /etc/nginx/conf.d/overleaf-compiler-gateway.conf ]; then
+  /usr/bin/node /usr/local/lib/overleaf/prepare-filestore-socket.cjs || exit 1
+fi
 exec nginx

@@ -1,0 +1,31 @@
+services:
+  sharelatex:
+    environment:
+      OVERLEAF_DISABLE_EMBEDDED_CLSI: 'true'
+      OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB: 'true'
+      OVERLEAF_CONFIG: /etc/overleaf/compiler-relay-settings.cjs
+      ENABLE_PDF_CACHING: 'false'
+    volumes:
+      - type: bind
+        source: ./deploy/compiler-relay/web-gateway.conf
+        target: /etc/nginx/conf.d/overleaf-compiler-gateway.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/compiler-relay/web-settings.cjs
+        target: /etc/overleaf/compiler-relay-settings.cjs
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_WEB_RELAY_DIR:?Set the existing private Web relay listener directory}
+        target: /run/overleaf-compiler/relay
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COMPILER_WEB_FILESTORE_DIR:?Set the existing private app filestore listener directory}
+        target: /run/overleaf-compiler/filestore
+        bind:
+          create_host_path: false
