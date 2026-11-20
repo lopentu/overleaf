@@ -20,6 +20,16 @@ overleaf_template_file="${nginx_templates_dir}/overleaf.conf.template"
 overleaf_config_file="${nginx_dir}/sites-enabled/overleaf.conf"
 
 if [ -f "${nginx_template_file}" ]; then
+  case "${OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB-false}" in
+    true) OVERLEAF_EMBEDDED_CLSI_LOCATIONS='' ;;
+    false) OVERLEAF_EMBEDDED_CLSI_LOCATIONS='include /etc/nginx/templates/overleaf-embedded-clsi.conf;' ;;
+    *)
+      echo 'OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB must be true or false' >&2
+      exit 1
+      ;;
+  esac
+  export OVERLEAF_EMBEDDED_CLSI_LOCATIONS
+
   export NGINX_KEEPALIVE_TIMEOUT="${NGINX_KEEPALIVE_TIMEOUT:-65}"
   export NGINX_WORKER_CONNECTIONS="${NGINX_WORKER_CONNECTIONS:-768}"
   export NGINX_WORKER_PROCESSES="${NGINX_WORKER_PROCESSES:-4}"
@@ -43,11 +53,12 @@ if [ -f "${nginx_template_file}" ]; then
     < "${nginx_template_file}" \
     > "${nginx_config_file}"
 
-  # Config git-bridge in nginx
+  # Configure Git bridge and the optional embedded-compiler output shortcuts.
   envsubst '
     ${GIT_BRIDGE_HOST}
     ${GIT_BRIDGE_PORT}
     ${GIT_BRIDGE_REPOSTORE_MAX_FILE_SIZE}
+    ${OVERLEAF_EMBEDDED_CLSI_LOCATIONS}
   ' \
     < "${overleaf_template_file}" \
     > "${overleaf_config_file}"
