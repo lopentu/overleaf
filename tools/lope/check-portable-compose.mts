@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer, type Server } from 'node:net'
@@ -439,13 +441,13 @@ test('each compiler relay can reach only the two input sockets and publish priva
     const mounts = new Map(relay.volumes?.map(mount => [mount.target, mount]))
     assert.deepEqual([...mounts.keys()].sort(), [
       '/relay/config',
+      '/relay/input/backend',
       '/relay/input/tunnel.sock',
-      '/relay/input/upstream.sock',
       '/relay/run',
       '/relay/tls',
     ])
     assert.deepEqual(
-      ['/relay/input/upstream.sock', '/relay/input/tunnel.sock'].map(target => [
+      ['/relay/input/backend', '/relay/input/tunnel.sock'].map(target => [
         mounts.get(target)?.source,
         mounts.get(target)?.read_only,
       ]),
@@ -469,6 +471,27 @@ test('each compiler relay can reach only the two input sockets and publish priva
     )
     assert.equal(mounts.get('/relay/config')?.read_only, true)
   }
+})
+
+test('the Web relay can mount its dedicated filestore directory read-only', () => {
+  const directory = join(fixture, 'filestore')
+  const { relay } = isolatedServices([relayCompose], {
+    ...relayEnv,
+    COMPILER_RELAY_ROLE: 'web',
+    COMPILER_RELAY_BACKEND_SOCKET: directory,
+  })
+  assert.equal(relay.network_mode, 'none')
+  const mount = relay.volumes?.find(
+    volume => volume.target === '/relay/input/backend'
+  )
+  assert.equal(mount?.source, directory)
+  assert.equal(mount?.read_only, true)
+  assert.notEqual(mount?.bind?.create_host_path, true)
+  assert.ok(
+    !relay.volumes?.some(
+      volume => volume.source === relayEnv.COMPILER_RELAY_BACKEND_SOCKET
+    )
+  )
 })
 
 test('each relay requires an explicit role, image and socket and TLS inputs', () => {
@@ -525,6 +548,16 @@ test('Web startup clears a stale filestore socket and preserves active listeners
   writeFileSync(socket, 'fixture')
   await assert.rejects(prepareFilestoreSocket(socket, uid), /unexpected file/)
   assert.equal(readFileSync(socket, 'utf8'), 'fixture')
+  rmSync(socket)
+  const gid = process.getegid?.()
+  assert.ok(gid !== undefined)
+  chmodSync(root, 0o750)
+  await prepareFilestoreSocket(socket, gid)
+  chmodSync(root, 0o770)
+  await assert.rejects(
+    prepareFilestoreSocket(socket, gid),
+    /private runtime directory/
+  )
 })
 
 test('relay preflight refuses listener directories with existing files and aliased sockets', async t => {
@@ -532,13 +565,13 @@ test('relay preflight refuses listener directories with existing files and alias
   const paths = {
     listenerDirectory: join(root, 'run'),
     tlsDirectory: join(root, 'tls'),
-    backendSocket: join(root, 'backend.sock'),
+    backendPath: join(root, 'backend.sock'),
     tunnelSocket: join(root, 'tunnel.sock'),
   }
   t.after(() => rmSync(root, { recursive: true, force: true }))
   mkdirSync(paths.listenerDirectory, { mode: 0o700 })
   mkdirSync(paths.tlsDirectory, { mode: 0o700 })
-  for (const path of [paths.backendSocket, paths.tunnelSocket]) {
+  for (const path of [paths.backendPath, paths.tunnelSocket]) {
     const socket = await openFixtureSocket(path)
     t.after(() => new Promise<void>(resolve => socket.close(() => resolve())))
   }
@@ -546,13 +579,72 @@ test('relay preflight refuses listener directories with existing files and alias
   assert.ok(uid !== undefined)
   checkRelayPaths(paths, uid)
   assert.throws(() =>
-    checkRelayPaths({ ...paths, tunnelSocket: paths.backendSocket }, uid)
+    checkRelayPaths({ ...paths, tunnelSocket: paths.backendPath }, uid)
   )
   assert.throws(() =>
     checkRelayPaths({ ...paths, tlsDirectory: paths.listenerDirectory }, uid)
   )
   writeFileSync(join(paths.listenerDirectory, 'unexpected'), 'fixture')
   assert.throws(() => checkRelayPaths(paths, uid))
+})
+
+test('only Web accepts a dedicated empty or socket-only filestore directory', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'oc-rw-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const paths = {
+    listenerDirectory: join(root, 'run'),
+    tlsDirectory: join(root, 'tls'),
+    backendPath: join(root, 'filestore'),
+    tunnelSocket: join(root, 'transport.sock'),
+  }
+  for (const path of [
+    paths.listenerDirectory,
+    paths.tlsDirectory,
+    paths.backendPath,
+  ])
+    mkdirSync(path, { mode: 0o700 })
+  chmodSync(paths.backendPath, 0o750)
+  const tunnel = await openFixtureSocket(paths.tunnelSocket)
+  try {
+    const uid = process.geteuid?.()
+    const gid = process.getegid?.()
+    assert.ok(uid !== undefined)
+    assert.ok(gid !== undefined)
+    const filestoreOwner = { uid, gid }
+    const filestore = join(paths.backendPath, 'filestore-http.sock')
+    assert.equal(
+      checkRelayPaths(paths, uid, 'web', filestoreOwner),
+      'directory'
+    )
+    assert.throws(() => checkRelayPaths(paths, uid, 'worker', filestoreOwner))
+    assert.throws(() =>
+      checkRelayPaths(
+        { ...paths, backendPath: paths.tlsDirectory },
+        uid,
+        'web',
+        filestoreOwner
+      )
+    )
+    chmodSync(paths.backendPath, 0o770)
+    assert.throws(() => checkRelayPaths(paths, uid, 'web', filestoreOwner))
+    chmodSync(paths.backendPath, 0o750)
+    symlinkSync(paths.tunnelSocket, filestore)
+    assert.throws(() => checkRelayPaths(paths, uid, 'web', filestoreOwner))
+    rmSync(filestore)
+    const listener = await openFixtureSocket(filestore)
+    try {
+      assert.equal(
+        checkRelayPaths(paths, uid, 'web', filestoreOwner),
+        'directory'
+      )
+      writeFileSync(join(paths.backendPath, 'extra'), 'fixture')
+      assert.throws(() => checkRelayPaths(paths, uid, 'web', filestoreOwner))
+    } finally {
+      await new Promise<void>(resolve => listener.close(() => resolve()))
+    }
+  } finally {
+    await new Promise<void>(resolve => tunnel.close(() => resolve()))
+  }
 })
 
 interface VhostFixtureOptions {

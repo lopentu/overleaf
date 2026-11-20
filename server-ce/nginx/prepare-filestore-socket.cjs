@@ -23,11 +23,12 @@ function proveSocketIsStale(path) {
 /** @param {string} path */
 async function prepareFilestoreSocket(path, owner = 33) {
   const directory = lstatSync(dirname(path))
-  if (
-    !directory.isDirectory() ||
-    directory.uid !== owner ||
-    (directory.mode & 0o7777) !== 0o700
-  ) {
+  const mode = directory.mode & 0o7777
+  const writer = process.geteuid?.()
+  const shared =
+    directory.uid === writer && directory.gid === owner && mode === 0o750
+  const dedicated = directory.uid === owner && mode === 0o700
+  if (!directory.isDirectory() || (!shared && !dedicated)) {
     throw new Error(
       'The filestore socket requires its private runtime directory'
     )
@@ -38,7 +39,7 @@ async function prepareFilestoreSocket(path, owner = 33) {
   if (
     !existing.isSocket() ||
     existing.nlink !== 1 ||
-    (existing.uid !== owner && existing.uid !== process.geteuid?.())
+    (existing.uid !== writer && (shared || existing.uid !== owner))
   ) {
     throw new Error('The filestore socket path contains an unexpected file')
   }

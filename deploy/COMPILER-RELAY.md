@@ -14,8 +14,8 @@ Put each role's two listeners in its own UID-33-owned directory with mode
 `0700`. Keep the local HTTP listener private to its caller. The role's
 outbound transport socket must connect transparently to the other role's
 `peer.sock`. Provision a dedicated, initially empty listener directory for
-each relay. The launcher checks its ownership and mode, verifies that both
-inputs are distinct Unix sockets, and rejects overlaps with the TLS directory.
+each relay. The launcher checks its ownership and mode, verifies the distinct
+backend and transport inputs, and rejects overlaps with the TLS directory.
 
 The app-side bridge publishes only the filestore HTTP socket. The app's
 compile gateway reaches the web relay's `compile.sock`. Use that app-local
@@ -50,7 +50,7 @@ Set these values in the portable deployment's runtime environment file.
 | Setting                      | Value                                                                                                                                                 |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `COMPILER_WEB_RELAY_DIR`     | Pre-created absolute path to the Web relay's UID-33-owned mode-`0700` listener directory. The app mounts it read-only and connects to `compile.sock`. |
-| `COMPILER_WEB_FILESTORE_DIR` | A distinct pre-created absolute path to the app's UID-33-owned mode-`0700` socket directory. The app creates `filestore-http.sock` here.              |
+| `COMPILER_WEB_FILESTORE_DIR` | Dedicated absolute path owned by `root:33` with mode `0750`. The NGINX master creates `filestore-http.sock` here.                                     |
 
 The overlay disables PDF caching for the isolated worker. Projects without a
 saved TeX image use the worker's pinned default. Verify that the worker accepts
@@ -60,15 +60,16 @@ when a project is created or opened with no saved selection.
 
 Keep both directories in private runtime storage outside the application
 data and backup trees. Allocate each filestore directory to one Web app and
-its NGINX supervisor. Start Web so NGINX creates `filestore-http.sock`.
-Use that exact socket as the Web relay's backend. The compiler gateway returns
-a failure until the relay's `compile.sock` is available. The app checks its
-private filestore socket on NGINX startup. It removes an owned socket only
-when a connection was refused and the socket still has the same inode.
-After any Web or Docker restart that replaces it, recreate the Web relay so
-its file bind uses the new socket. Check both directions with an image compile
-before accepting traffic. For unattended restarts, the deployment must
-coordinate Web and relay recovery and repeat those checks.
+its NGINX supervisor. Give the Web relay that dedicated directory as its
+read-only backend. The directory can be empty during startup. Its only
+allowed entry is the root-owned `filestore-http.sock` that Web creates.
+NGINX's root master provisions the pathname. The Web and relay workers
+can traverse it without modifying the directory. The relay
+opens that name on each new request and follows a socket that Web recreates
+in the same directory. A request can fail while Web is unavailable. The
+compiler gateway returns a failure until the relay's `compile.sock` is
+available. The app checks for a stale filestore socket on NGINX startup.
+Check both directions with an image compile before accepting traffic.
 
 ## Configure TLS identity
 
@@ -97,16 +98,16 @@ blob GETs. It forwards neither request headers nor bodies from the caller.
 ## Start and check each relay
 
 Provision one protected Compose environment file per role. Use absolute paths
-for both input sockets and both directories.
+for every input and directory.
 
-| Setting                         | Value                                                                      |
-| ------------------------------- | -------------------------------------------------------------------------- |
-| `COMPILER_RELAY_ROLE`           | `web` or `worker`, according to the table above.                           |
-| `COMPILER_RELAY_IMAGE`          | Verified runtime image content ID with Node 24.18.1 and `/usr/sbin/nginx`. |
-| `COMPILER_RELAY_TLS_DIR`        | This role's protected TLS directory.                                       |
-| `COMPILER_RELAY_SOCKET_DIR`     | Private directory for this role's new listeners.                           |
-| `COMPILER_RELAY_BACKEND_SOCKET` | Exact socket for this role's local HTTP backend.                           |
-| `COMPILER_RELAY_TUNNEL_SOCKET`  | Exact outgoing transport socket connected to the other role's `peer.sock`. |
+| Setting                         | Value                                                                                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `COMPILER_RELAY_ROLE`           | `web` or `worker`, according to the table above.                                                                                                 |
+| `COMPILER_RELAY_IMAGE`          | Verified runtime image content ID with Node 24.18.1 and `/usr/sbin/nginx`.                                                                       |
+| `COMPILER_RELAY_TLS_DIR`        | This role's protected TLS directory.                                                                                                             |
+| `COMPILER_RELAY_SOCKET_DIR`     | Private directory for this role's new listeners.                                                                                                 |
+| `COMPILER_RELAY_BACKEND_SOCKET` | Dedicated mode-`0750`, `root:33` Web filestore directory, or the exact Unix socket for a file-bound backend. The worker always uses `clsi.sock`. |
+| `COMPILER_RELAY_TUNNEL_SOCKET`  | Exact outgoing transport socket connected to the other role's `peer.sock`.                                                                       |
 
 Start the base compiler project with its bridge settings first. Wait for the
 protected `clsi.sock` health check. Start the app's filestore bridge and
@@ -144,9 +145,11 @@ backend. The status probe alone covers only the compiler direction.
 
 Drain compilation traffic before stopping the relay projects. Stop using the
 same project and environment files. Remove only stale listener sockets after
-confirming the old process is gone. Keep both input sockets owned by their
-provisioners. If an input is recreated, recreate the receiving relay container
-so its file bind uses the new socket inode. For a compiler replacement, stop
+confirming the old process is gone. Keep both inputs owned by their
+provisioners. A Web relay using the dedicated directory follows replacement
+of `filestore-http.sock` in that directory. If a file-bound input is recreated,
+recreate its receiving relay so the bind uses the new socket. Replacing the
+backend directory itself requires a relay recreation. For a compiler replacement, stop
 the adapter, replace the base compiler, recreate the worker relay using the
 new `clsi.sock`, then recreate the adapter using the new `filestore.sock`.
 After rotating TLS files, recreate each affected relay so nginx loads the
