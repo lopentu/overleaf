@@ -38,8 +38,8 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${COMPILER_RELAY_BACKEND_SOCKET:?Set the verified existing local backend socket}
-        target: /relay/input/upstream.sock
+        source: ${COMPILER_RELAY_BACKEND_SOCKET:?Set the verified local backend socket or private Web filestore directory}
+        target: /relay/input/backend
         read_only: true
         bind:
           create_host_path: false

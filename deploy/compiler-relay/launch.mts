@@ -1,5 +1,5 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { basename, isAbsolute, relative, sep } from 'node:path'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import process from 'node:process'
 
 type Role = 'web' | 'worker'
@@ -7,14 +7,14 @@ type Role = 'web' | 'worker'
 interface RelayPaths {
   listenerDirectory: string
   tlsDirectory: string
-  backendSocket: string
+  backendPath: string
   tunnelSocket: string
 }
 
 const mountedPaths: RelayPaths = {
   listenerDirectory: '/relay/run',
   tlsDirectory: '/relay/tls',
-  backendSocket: '/relay/input/upstream.sock',
+  backendPath: '/relay/input/backend',
   tunnelSocket: '/relay/input/tunnel.sock',
 }
 
@@ -32,11 +32,16 @@ function contains(directory: string, path: string) {
   return local !== '..' && !local.startsWith('..' + sep) && !isAbsolute(local)
 }
 
-export function checkRelayPaths(paths: RelayPaths, owner: number): void {
-  const { listenerDirectory, tlsDirectory, backendSocket, tunnelSocket } = paths
+export function checkRelayPaths(
+  paths: RelayPaths,
+  owner: number,
+  role: Role = 'worker',
+  filestoreOwner = { uid: 0, gid: owner }
+): 'socket' | 'directory' {
+  const { listenerDirectory, tlsDirectory, backendPath, tunnelSocket } = paths
   const listeners = canonical(listenerDirectory)
   const tls = canonical(tlsDirectory)
-  const backend = canonical(backendSocket)
+  const backend = canonical(backendPath)
   const tunnel = canonical(tunnelSocket)
   if (
     !listeners.isDirectory() ||
@@ -49,16 +54,47 @@ export function checkRelayPaths(paths: RelayPaths, owner: number): void {
     (tls.dev === listeners.dev && tls.ino === listeners.ino) ||
     contains(listenerDirectory, tlsDirectory) ||
     contains(tlsDirectory, listenerDirectory) ||
-    !backend.isSocket() ||
     !tunnel.isSocket() ||
     (backend.dev === tunnel.dev && backend.ino === tunnel.ino) ||
-    [backendSocket, tunnelSocket].some(socket =>
+    [backendPath, tunnelSocket].some(input =>
       [listenerDirectory, tlsDirectory].some(directory =>
-        contains(directory, socket)
+        contains(directory, input)
       )
     )
   )
     invalid()
+  if (backend.isSocket()) return 'socket'
+  if (
+    role !== 'web' ||
+    !backend.isDirectory() ||
+    backend.uid !== filestoreOwner.uid ||
+    backend.gid !== filestoreOwner.gid ||
+    (backend.mode & 0o7777) !== 0o750 ||
+    [listenerDirectory, tlsDirectory, tunnelSocket].some(path =>
+      contains(backendPath, path)
+    ) ||
+    [listeners, tls].some(
+      directory =>
+        directory.dev === backend.dev && directory.ino === backend.ino
+    )
+  )
+    invalid()
+
+  const entries = readdirSync(backendPath)
+  const socketName = 'filestore-http.sock'
+  if (entries.some(entry => entry !== socketName)) invalid()
+  const socket = lstatSync(join(backendPath, socketName), {
+    throwIfNoEntry: false,
+  })
+  if (!socket) return 'directory'
+  if (
+    !socket.isSocket() ||
+    socket.nlink !== 1 ||
+    socket.uid !== filestoreOwner.uid ||
+    (socket.dev === tunnel.dev && socket.ino === tunnel.ino)
+  )
+    invalid()
+  return 'directory'
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -78,35 +114,38 @@ function checkRenderedConfig(expectedBackend: string, expectedTunnel: string) {
   if (
     !Array.isArray(relay.command) ||
     relay.command.length !== 1 ||
-    !Array.isArray(relay.volumes)
+    !Array.isArray(relay.volumes) ||
+    relay.volumes.length !== 5
   )
     return invalid()
   const role = relayRole(relay.command[0])
   const mounts = relay.volumes.map(record)
-  function source(target: string): string {
+  function source(target: string, readOnly = true): string {
     const matches = mounts.filter(mount => mount.target === target)
     const [mount] = matches
     if (
       matches.length !== 1 ||
       mount.type !== 'bind' ||
-      typeof mount.source !== 'string'
+      typeof mount.source !== 'string' ||
+      (mount.read_only ?? false) !== readOnly
     )
       return invalid()
     return mount.source
   }
+  source('/relay/config')
   const paths = {
-    listenerDirectory: source(mountedPaths.listenerDirectory),
+    listenerDirectory: source(mountedPaths.listenerDirectory, false),
     tlsDirectory: source(mountedPaths.tlsDirectory),
-    backendSocket: source(mountedPaths.backendSocket),
+    backendPath: source(mountedPaths.backendPath),
     tunnelSocket: source(mountedPaths.tunnelSocket),
   }
   if (
-    paths.backendSocket !== expectedBackend ||
+    paths.backendPath !== expectedBackend ||
     paths.tunnelSocket !== expectedTunnel ||
     (role === 'worker' && basename(expectedBackend) !== 'clsi.sock')
   )
     return invalid()
-  checkRelayPaths(paths, 33)
+  checkRelayPaths(paths, 33, role)
 }
 
 if (typeof import.meta.main !== 'boolean') invalid()
@@ -118,13 +157,14 @@ if (import.meta.main) {
       checkRenderedConfig(args[1], args[2])
     } else if (args[0] === '--run' && args.length === 2) {
       const role = relayRole(args[1])
-      checkRelayPaths(mountedPaths, 33)
+      const mode = checkRelayPaths(mountedPaths, 33, role)
+      const config = mode === 'directory' ? 'web-directory' : role
       const nginx = '/usr/sbin/nginx'
       if (process.execve === undefined) invalid()
       process.execve(nginx, [
         nginx,
         '-c',
-        `/relay/config/${role}.conf`,
+        `/relay/config/${config}.conf`,
         '-g',
         'daemon off;',
       ])
