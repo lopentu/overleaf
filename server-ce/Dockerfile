@@ -72,6 +72,7 @@ ADD server-ce/nginx/nginx.conf.template /etc/nginx/templates/nginx.conf.template
 ADD server-ce/nginx/overleaf.conf.template /etc/nginx/templates/overleaf.conf.template
 ADD server-ce/nginx/overleaf-embedded-clsi.conf /etc/nginx/templates/overleaf-embedded-clsi.conf
 ADD server-ce/nginx/clsi-nginx.conf /etc/nginx/templates/clsi-nginx.conf
+COPY server-ce/nginx/prepare-filestore-socket.cjs /usr/local/lib/overleaf/prepare-filestore-socket.cjs
 
 
 # Configure log rotation

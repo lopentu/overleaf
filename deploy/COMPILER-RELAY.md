@@ -34,6 +34,42 @@ and `manager.sock` outside both relays. The optional filestore adapter uses
 the worker relay's `filestore.sock` as described in the
 [compiler guide](COMPILER.md#optional-image-and-binary-file-inputs).
 
+## Attach the private gateway to the portable Web app
+
+Build the Web image from a fork revision that includes the NGINX filestore
+socket startup check. Add `-f deploy/compose.compiler-web.yaml` after the
+portable `compose.yaml`.
+The overlay adds a compiler listener on the app container's loopback and a
+filestore listener on a private Unix socket. It leaves the exposed Web port
+and persistent volumes as configured by the base Compose file. The gateway
+settings merge with the fork's normal image settings. Deployments with a
+custom settings module should merge the same compiler endpoints into it.
+
+Set these values in the portable deployment's runtime environment file.
+
+| Setting                      | Value                                                                                                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COMPILER_WEB_RELAY_DIR`     | Pre-created absolute path to the Web relay's UID-33-owned mode-`0700` listener directory. The app mounts it read-only and connects to `compile.sock`. |
+| `COMPILER_WEB_FILESTORE_DIR` | A distinct pre-created absolute path to the app's UID-33-owned mode-`0700` socket directory. The app creates `filestore-http.sock` here.              |
+
+The overlay disables PDF caching for the isolated worker. Projects without a
+saved TeX image use the worker's pinned default. Verify that the worker accepts
+each saved image name before switching a deployment. Setting
+`TEX_LIVE_DOCKER_IMAGE` in the app environment can persist that image choice
+when a project is created or opened with no saved selection.
+
+Keep both directories in private runtime storage outside the application
+data and backup trees. Allocate each filestore directory to one Web app and
+its NGINX supervisor. Start Web so NGINX creates `filestore-http.sock`.
+Use that exact socket as the Web relay's backend. The compiler gateway returns
+a failure until the relay's `compile.sock` is available. The app checks its
+private filestore socket on NGINX startup. It removes an owned socket only
+when a connection was refused and the socket still has the same inode.
+After any Web or Docker restart that replaces it, recreate the Web relay so
+its file bind uses the new socket. Check both directions with an image compile
+before accepting traffic. For unattended restarts, the deployment must
+coordinate Web and relay recovery and repeat those checks.
+
 ## Configure TLS identity
 
 Use purpose-limited trust roots and a protected TLS directory for each role.

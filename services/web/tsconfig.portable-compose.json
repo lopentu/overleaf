@@ -4,10 +4,16 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": true,
     "types": ["node"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["../../tools/lope/check-portable-compose.mts"]
+  "include": [
+    "../../tools/lope/check-portable-compose.mts",
+    "../../deploy/compiler-relay/web-settings.cjs",
+    "../../server-ce/nginx/prepare-filestore-socket.cjs"
+  ]
 }

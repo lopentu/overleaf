@@ -13,7 +13,9 @@ import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { runInNewContext } from 'node:vm'
 import { checkRelayPaths } from '../../deploy/compiler-relay/launch.mts'
+import { prepareFilestoreSocket } from '../../server-ce/nginx/prepare-filestore-socket.cjs'
 
 interface Service {
   image: string
@@ -224,6 +226,86 @@ test('missing image pins fail before Compose can use an unintended image', () =>
   }
 })
 
+test('the optional Web compiler gateway uses private sockets without publishing another port', () => {
+  const result = renderCompose(
+    ['compose.yaml', 'deploy/compose.compiler-web.yaml'],
+    {
+      ...pins,
+      OVERLEAF_APP_ENV_FILE: appEnv,
+      OVERLEAF_HTTP_PORT: '18088',
+      COMPILER_WEB_RELAY_DIR: join(fixture, 'relay'),
+      COMPILER_WEB_FILESTORE_DIR: join(fixture, 'filestore'),
+    }
+  )
+  assert.ifError(result.error)
+  assert.equal(result.status, 0, result.stderr)
+  const { services, volumes }: ComposeConfig = JSON.parse(result.stdout)
+  const app = services.sharelatex
+  const base = config()
+  assert.deepEqual(Object.keys(services).sort(), [
+    'mongo',
+    'redis',
+    'sharelatex',
+  ])
+  assert.deepEqual(volumes, base.volumes)
+  assert.deepEqual(app.ports, base.services.sharelatex.ports)
+  assert.equal(app.environment?.OVERLEAF_DISABLE_EMBEDDED_CLSI, 'true')
+  assert.equal(app.environment?.OVERLEAF_PROXY_CLSI_OUTPUT_THROUGH_WEB, 'true')
+  assert.equal(app.environment?.ENABLE_PDF_CACHING, 'false')
+  assert.equal(app.environment?.TEX_LIVE_DOCKER_IMAGE, undefined)
+  assert.equal(base.services.sharelatex.environment?.OVERLEAF_CONFIG, undefined)
+  const mounts = app.volumes
+  assert.ok(mounts)
+  const bind = (target: string) =>
+    mounts.find(volume => volume.target === target)
+  for (const [name, target, readOnly] of [
+    ['relay', '/run/overleaf-compiler/relay', true],
+    ['filestore', '/run/overleaf-compiler/filestore', false],
+  ] as const) {
+    const volume = bind(target)
+    assert.equal(volume?.source, join(fixture, name))
+    assert.equal(volume?.read_only ?? false, readOnly)
+    assert.equal(volume?.type, 'bind')
+    assert.notEqual(volume?.bind?.create_host_path, true)
+  }
+  const settings = app.environment?.OVERLEAF_CONFIG
+  assert.equal(settings, '/etc/overleaf/compiler-relay-settings.cjs')
+  assert.equal(bind(settings)?.read_only, true)
+  assert.equal(
+    bind('/etc/nginx/conf.d/overleaf-compiler-gateway.conf')?.read_only,
+    true
+  )
+  assert.ok(!mounts.some(volume => volume.target.endsWith('docker.sock')))
+})
+
+test('the gateway settings change only the compiler URLs in the normal image settings', () => {
+  const original = {
+    adminPrivilegeAvailable: true,
+    apis: {
+      web: { url: 'http://127.0.0.1:3000' },
+      clsi: { backendGroupName: 'fixture' },
+    },
+  }
+  const module: { exports?: unknown } = {}
+  const config = readFileSync('deploy/compiler-relay/web-settings.cjs', 'utf8')
+  runInNewContext(config, {
+    module,
+    require(path: string) {
+      assert.equal(path, '/etc/overleaf/settings.js')
+      return original
+    },
+  })
+  const gateway = 'http://127.0.0.1:37499'
+  assert.deepEqual(JSON.parse(JSON.stringify(module.exports)), {
+    ...original,
+    apis: {
+      ...original.apis,
+      clsi: { ...original.apis.clsi, url: gateway, downloadHost: gateway },
+    },
+  })
+  assert.deepEqual(original.apis.clsi, { backendGroupName: 'fixture' })
+})
+
 const compilerCompose = 'deploy/compose.compiler.yaml'
 const filestoreCompose = 'deploy/compose.compiler-filestore.yaml'
 const compilerEnv = {
@@ -408,6 +490,42 @@ async function openFixtureSocket(path: string): Promise<Server> {
   })
   return listener
 }
+
+test('Web startup clears a stale filestore socket and preserves active listeners and other files', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'oc-web-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const socket = join(root, 'filestore-http.sock')
+  const uid = process.geteuid?.()
+  assert.ok(uid !== undefined)
+  const child = spawnSync(
+    process.execPath,
+    [
+      '-e',
+      "require('node:net').createServer().listen(process.argv[1], () => process.kill(process.pid, 'SIGKILL'))",
+      socket,
+    ],
+    { timeout: 5000 }
+  )
+  assert.ifError(child.error)
+  assert.equal(child.signal, 'SIGKILL')
+  assert.ok(existsSync(socket))
+  await prepareFilestoreSocket(socket, uid)
+  assert.ok(!existsSync(socket))
+
+  const listener = await openFixtureSocket(socket)
+  try {
+    await assert.rejects(
+      prepareFilestoreSocket(socket, uid),
+      /already has a listener/
+    )
+    assert.ok(existsSync(socket))
+  } finally {
+    await new Promise<void>(resolve => listener.close(() => resolve()))
+  }
+  writeFileSync(socket, 'fixture')
+  await assert.rejects(prepareFilestoreSocket(socket, uid), /unexpected file/)
+  assert.equal(readFileSync(socket, 'utf8'), 'fixture')
+})
 
 test('relay preflight refuses listener directories with existing files and aliased sockets', async t => {
   const root = mkdtempSync(join(tmpdir(), 'oc-r-'))
