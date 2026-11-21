@@ -31,6 +31,18 @@ settings, references, comments, suggestions and history. A source ZIP is not
 proof of full review/history transfer. Never modify hosted account credentials
 or existing projects merely to test a proposed import.
 
+## GitHub access token renewal
+
+New authorizations request the GitHub `offline_access` scope. Expiring
+grants renew during a GitHub request when the access token is near expiry.
+The app serializes renewal per account and stores the rotated grant in its
+encrypted MongoDB credential record. Existing access-token-only records
+remain usable until GitHub rejects them. A user with an expired or rejected
+refresh token must connect GitHub again from account settings.
+
+Verify a real provider-issued refresh grant and an actual rotation in the
+private staging environment before relying on this behavior in production.
+
 ## Recovery and rollback
 
 The serving image's fresh pre-upgrade cold state and portable image recovery

@@ -1,3 +1,4 @@
+import { parseTokenResponse } from './GitHubOAuthGrant.mjs'
 import { withProviderHttpsAgent } from '../../../../app/src/Features/Integrations/ProviderHttpsAgent.mjs'
 import logger from '@overleaf/logger'
 import Settings from '@overleaf/settings'
@@ -168,26 +169,87 @@ function getOAuth2Url() {
   const oAuthUrl = new URL(`${GITHUB_URL}/login/oauth/authorize`)
   oAuthUrl.searchParams.append('client_id', Settings.githubSync.clientID)
   oAuthUrl.searchParams.append('redirect_uri', Settings.githubSync.callbackURL)
-  oAuthUrl.searchParams.append('scope', 'read:org,repo,workflow')
+  oAuthUrl.searchParams.append('scope', 'read:org repo workflow offline_access')
   return oAuthUrl
 }
 
-function exchangeCodeForToken(code) {
-  return fetchGitHubJson(
-    `${GITHUB_URL}/login/oauth/access_token`,
-    {
-      method: 'POST',
-      headers: buildHeaders(),
-      json: {
-        code,
-        client_id: Settings.githubSync.clientID,
-        client_secret: Settings.githubSync.clientSecret,
-        redirect_uri: Settings.githubSync.callbackURL,
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+/** @param {unknown} error */
+function isRejectedRefreshToken(error) {
+  if (
+    !(error instanceof RequestFailedError) ||
+    typeof error.body !== 'string'
+  ) {
+    return false
+  }
+  try {
+    return JSON.parse(error.body)?.error === 'bad_refresh_token'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * @param {{code: string, redirect_uri: string} | {grant_type: 'refresh_token', refresh_token: string}} fields
+ */
+async function requestOAuthToken(fields) {
+  const url = `${GITHUB_URL}/login/oauth/access_token`
+  const options = {
+    method: 'POST',
+    headers: { ...buildHeaders(), Accept: 'application/json' },
+    json: {
+      client_id: Settings.githubSync.clientID,
+      client_secret: Settings.githubSync.clientSecret,
+      ...fields,
     },
-    'exchangeCodeForToken'
-  ).then(r => r.access_token)
+    // Keep refresh below the default lock acquire deadline for other requests.
+    signal: AbortSignal.timeout(
+      'grant_type' in fields ? 8_000 : REQUEST_TIMEOUT_MS
+    ),
+  }
+  try {
+    return await fetchJson(url, withProviderHttpsAgent('github', url, options))
+  } catch (error) {
+    if (isRejectedRefreshToken(error)) {
+      return { error: 'bad_refresh_token' }
+    }
+    // This endpoint receives authorization codes and refresh tokens in the
+    // request body and can echo credentials in error responses.
+    throw new ProviderRequestError('GitHub OAuth request failed', {
+      status: 502,
+    })
+  }
+}
+
+/** @param {string} code */
+async function exchangeCodeForToken(code) {
+  const response = await requestOAuthToken({
+    code,
+    redirect_uri: Settings.githubSync.callbackURL,
+  })
+  return parseTokenResponse(response)
+}
+
+/** @param {string} refreshToken */
+async function refreshAccessToken(refreshToken) {
+  const response = await requestOAuthToken({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  })
+  if (response?.error === 'bad_refresh_token') {
+    throw new InvalidTokenError('GitHub authorization must be renewed', {
+      status: 401,
+    })
+  }
+  const result = parseTokenResponse(response)
+  if (!result || typeof result === 'string') {
+    throw new ProviderRequestError(
+      'GitHub returned an incomplete refresh grant',
+      {
+        status: 502,
+      }
+    )
+  }
+  return result
 }
 
 function revokeToken(token) {
@@ -578,6 +640,7 @@ export default {
   maxConcurrency,
   getOAuth2Url,
   exchangeCodeForToken,
+  refreshAccessToken,
   revokeToken,
   getUser,
   getUserAndOrgs,
