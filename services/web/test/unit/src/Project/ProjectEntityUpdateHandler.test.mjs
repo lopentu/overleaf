@@ -1179,6 +1179,30 @@ describe('ProjectEntityUpdateHandler', function () {
         )
       })
 
+      it('refuses to overwrite a file created after the path was recorded as absent', async function (ctx) {
+        const replaceFile =
+          ctx.ProjectEntityMongoUpdateHandler.promises.replaceFileWithDoc
+        replaceFile.resetHistory()
+
+        await assert.rejects(
+          ctx.ProjectEntityUpdateHandler.promises.upsertDoc(
+            projectId,
+            folderId,
+            'foo.tex',
+            ctx.docLines,
+            'github',
+            userId,
+            null
+          ),
+          {
+            message:
+              'The editable document at this path changed during GitHub sync.',
+          }
+        )
+
+        expect(replaceFile.called).to.be.false
+      })
+
       it('notifies docstore of the new doc', function (ctx) {
         expect(ctx.DocstoreManager.promises.updateDoc).to.have.been.calledWith(
           projectId,
@@ -1687,6 +1711,37 @@ describe('ProjectEntityUpdateHandler', function () {
         expect(result.newFolders).to.deep.equal([])
       })
 
+      it('creates a guarded path under the exact-case parent', async function (ctx) {
+        const path = '/Folder/doc.tex'
+        ctx.ProjectLocator.promises.findElementByPath.rejects(
+          new Errors.NotFoundError()
+        )
+        const { mkdirp } = ctx.ProjectEntityUpdateHandler.promises
+        mkdirp.withoutLock.resetHistory()
+        const exact = sinon
+          .stub()
+          .resolves({ newFolders: [], folder: ctx.folder })
+        ctx.ProjectEntityUpdateHandler.promises.mkdirpWithExactCase = {
+          withoutLock: exact,
+        }
+
+        await ctx.ProjectEntityUpdateHandler.promises.upsertDocWithPath(
+          projectId,
+          path,
+          ctx.docLines,
+          'github',
+          userId,
+          null
+        )
+
+        expect(exact).to.have.been.calledWithExactly(
+          projectId,
+          '/Folder',
+          userId
+        )
+        expect(mkdirp.withoutLock.called).to.be.false
+      })
+
       it('creates any necessary folders', function (ctx) {
         ctx.ProjectEntityUpdateHandler.promises.mkdirp.withoutLock
           .calledWith(projectId, '/folder', userId)
@@ -1826,6 +1881,119 @@ describe('ProjectEntityUpdateHandler', function () {
             userId,
             ctx.source
           )
+      })
+
+      it('refuses to overwrite a different binary file at the same path', async function (ctx) {
+        ctx.ProjectLocator.promises.findElementByPath.resolves({
+          element: { _id: fileId, rev: 4 },
+          type: 'file',
+          folder: ctx.folder,
+        })
+        const { mkdirp, upsertFile } = ctx.ProjectEntityUpdateHandler.promises
+        mkdirp.withoutLock.resetHistory()
+        upsertFile.mainTask.resetHistory()
+
+        await assert.rejects(
+          ctx.ProjectEntityUpdateHandler.promises.upsertFileWithPath(
+            projectId,
+            ctx.path,
+            ctx.fileSystemPath,
+            ctx.linkedFileData,
+            userId,
+            'github',
+            { fileId: fileId.toString(), rev: 3 }
+          ),
+          { message: 'The file at this path changed during GitHub sync.' }
+        )
+
+        expect(mkdirp.withoutLock.called).to.be.false
+        expect(upsertFile.mainTask.called).to.be.false
+      })
+
+      it('replaces the captured binary file without creating folders', async function (ctx) {
+        const existing = { _id: fileId, rev: 0 }
+        ctx.ProjectLocator.promises.findElementByPath.resolves({
+          element: existing,
+          type: 'file',
+          folder: ctx.folder,
+        })
+        const { mkdirp, upsertFile } = ctx.ProjectEntityUpdateHandler.promises
+        mkdirp.withoutLock.resetHistory()
+        upsertFile.mainTask.resetHistory()
+
+        const result =
+          await ctx.ProjectEntityUpdateHandler.promises.upsertFileWithPath(
+            projectId,
+            ctx.path,
+            ctx.fileSystemPath,
+            ctx.linkedFileData,
+            userId,
+            'github',
+            { fileId: fileId.toString(), rev: 0 }
+          )
+
+        expect(mkdirp.withoutLock.called).to.be.false
+        expect(upsertFile.mainTask).to.have.been.calledOnce
+        expect(result.newFolders).to.deep.equal([])
+      })
+
+      it('refuses to create a binary file over an editable document', async function (ctx) {
+        ctx.ProjectLocator.promises.findElementByPath.resolves({
+          element: { _id: docId },
+          type: 'doc',
+          folder: ctx.folder,
+        })
+        const { mkdirp, upsertFile } = ctx.ProjectEntityUpdateHandler.promises
+        mkdirp.withoutLock.resetHistory()
+        upsertFile.mainTask.resetHistory()
+
+        await assert.rejects(
+          ctx.ProjectEntityUpdateHandler.promises.upsertFileWithPath(
+            projectId,
+            ctx.path,
+            ctx.fileSystemPath,
+            ctx.linkedFileData,
+            userId,
+            'github',
+            null
+          ),
+          { message: 'The file at this path changed during GitHub sync.' }
+        )
+
+        expect(mkdirp.withoutLock.called).to.be.false
+        expect(upsertFile.mainTask.called).to.be.false
+      })
+
+      it('creates a guarded path under the exact-case parent', async function (ctx) {
+        const path = '/Folder/file.png'
+        ctx.ProjectLocator.promises.findElementByPath.rejects(
+          new Errors.NotFoundError()
+        )
+        const { mkdirp } = ctx.ProjectEntityUpdateHandler.promises
+        mkdirp.withoutLock.resetHistory()
+        const exact = sinon
+          .stub()
+          .resolves({ newFolders: [], folder: ctx.folder })
+        ctx.ProjectEntityUpdateHandler.promises.mkdirpWithExactCase = {
+          withoutLock: exact,
+        }
+
+        await ctx.ProjectEntityUpdateHandler.promises.upsertFileWithPath(
+          projectId,
+          path,
+          ctx.fileSystemPath,
+          ctx.linkedFileData,
+          userId,
+          'github',
+          null
+        )
+
+        expect(exact).to.have.been.calledWithExactly(
+          projectId,
+          '/Folder',
+          userId
+        )
+        expect(mkdirp.withoutLock.called).to.be.false
       })
 
       it('creates any necessary folders', function (ctx) {
@@ -2048,6 +2216,87 @@ describe('ProjectEntityUpdateHandler', function () {
           ctx.source
         )
       })
+    })
+
+    it('leaves a replacement binary file in place when the expected file is gone', async function (ctx) {
+      const deleteEntity = sinon.stub().resolves()
+      ctx.ProjectEntityUpdateHandler.promises.deleteEntity = {
+        withoutLock: deleteEntity,
+      }
+      ctx.ProjectLocator.promises.findElementByPath.resolves({
+        element: { _id: fileId, rev: 1 },
+        type: 'file',
+      })
+
+      await assert.rejects(
+        ctx.ProjectEntityUpdateHandler.promises.deleteEntityWithPath(
+          projectId,
+          '/file.png',
+          userId,
+          'github',
+          { fileId: fileId.toString(), rev: 0 }
+        ),
+        { message: 'The file at this path changed during GitHub sync.' }
+      )
+
+      expect(deleteEntity.called).to.be.false
+    })
+
+    it('leaves a folder that replaced the captured editable document', async function (ctx) {
+      const deleteEntity = sinon.stub().resolves()
+      ctx.ProjectEntityUpdateHandler.promises.deleteEntity = {
+        withoutLock: deleteEntity,
+      }
+      ctx.ProjectLocator.promises.findElementByPath.resolves({
+        element: { _id: folderId },
+        type: 'folder',
+      })
+
+      await assert.rejects(
+        ctx.ProjectEntityUpdateHandler.promises.deleteEntityWithPath(
+          projectId,
+          '/main.tex',
+          userId,
+          'github',
+          { docId: docId.toString(), version: 0 }
+        ),
+        {
+          message:
+            'The editable document at this path changed during GitHub sync.',
+        }
+      )
+
+      expect(deleteEntity.called).to.be.false
+    })
+
+    it('refuses to delete an editable document with a newer editor version', async function (ctx) {
+      const deleteEntity = sinon.stub().resolves()
+      ctx.ProjectEntityUpdateHandler.promises.deleteEntity = {
+        withoutLock: deleteEntity,
+      }
+      ctx.ProjectLocator.promises.findElementByPath.resolves({
+        element: { _id: docId },
+        type: 'doc',
+      })
+      ctx.DocumentUpdaterHandler.promises.getDocument = sinon
+        .stub()
+        .resolves({ version: 1 })
+
+      await assert.rejects(
+        ctx.ProjectEntityUpdateHandler.promises.deleteEntityWithPath(
+          projectId,
+          '/main.tex',
+          userId,
+          'github',
+          { docId: docId.toString(), version: 0 }
+        ),
+        {
+          message:
+            'The editable document at this path changed during GitHub sync.',
+        }
+      )
+
+      expect(deleteEntity.called).to.be.false
     })
 
     describe('when the entity does not exist', function () {

@@ -56,11 +56,7 @@ async function _findExistingFileType(projectId, path) {
   return null
 }
 
-async function _determineFileType(projectId, path, fsPath) {
-  // check if there is an existing file with the same path (we either need
-  // to overwrite it or delete it)
-  const existingFileType = await _findExistingFileType(projectId, path)
-
+async function _determineFileType(path, fsPath, existingFileType) {
   // determine whether the update should create a doc or binary file
   const { binary, encoding } = await FileTypeManager.promises.getType(
     path,
@@ -91,6 +87,8 @@ async function _determineFileType(projectId, path, fsPath) {
 }
 
 /** @typedef {{docId: string, version: number}} ExpectedDocument */
+/** @typedef {{fileId: string, rev: number | undefined}} ExpectedFile */
+/** @typedef {ExpectedDocument | ExpectedFile | null} ExpectedEntity */
 
 /**
  * @param {string} userId
@@ -98,7 +96,7 @@ async function _determineFileType(projectId, path, fsPath) {
  * @param {string} path
  * @param {string} fsPath
  * @param {string} source
- * @param {ExpectedDocument|null} [expectedDocument] null requires no editable document at the path
+ * @param {ExpectedEntity} [expectedEntity] null requires an unused path
  */
 async function _mergeUpdate(
   userId,
@@ -106,9 +104,18 @@ async function _mergeUpdate(
   path,
   fsPath,
   source,
-  expectedDocument
+  expectedEntity
 ) {
-  const fileType = await _determineFileType(projectId, path, fsPath)
+  const expectedDocument = expectedEntity && 'docId' in expectedEntity
+  let existingFileType
+  if (expectedEntity === undefined) {
+    existingFileType = await _findExistingFileType(projectId, path)
+  } else if (expectedEntity === null) {
+    existingFileType = null
+  } else {
+    existingFileType = expectedDocument ? 'doc' : 'file'
+  }
+  const fileType = await _determineFileType(path, fsPath, existingFileType)
 
   if (fileType === 'file') {
     if (expectedDocument) {
@@ -124,7 +131,8 @@ async function _mergeUpdate(
       fsPath,
       path,
       source,
-      userId
+      userId,
+      expectedEntity
     )
     return {
       projectId,
@@ -140,7 +148,7 @@ async function _mergeUpdate(
       fsPath,
       path,
       source,
-      expectedDocument
+      expectedEntity
     )
     return {
       projectId,
@@ -155,15 +163,24 @@ async function _mergeUpdate(
   }
 }
 
-async function deleteUpdate(userId, projectId, path, source) {
+/**
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {string} path
+ * @param {string} source
+ * @param {NonNullable<ExpectedEntity>} [expectedEntity]
+ */
+async function deleteUpdate(userId, projectId, path, source, expectedEntity) {
   try {
     return await EditorController.promises.deleteEntityWithPath(
       projectId,
       path,
       source,
-      userId
+      userId,
+      ...(expectedEntity !== undefined ? [expectedEntity] : [])
     )
   } catch (err) {
+    if (expectedEntity !== undefined) throw err
     logger.warn(
       { err, userId, projectId, path, source },
       'failed to delete entity'
@@ -193,14 +210,22 @@ async function _processDoc(
   return { ...result, contentHash: blobHashFromString(docLines.join('\n')) }
 }
 
-async function _processFile(projectId, fsPath, path, source, userId) {
+async function _processFile(
+  projectId,
+  fsPath,
+  path,
+  source,
+  userId,
+  expectedFile
+) {
   const { file, folder } = await EditorController.promises.upsertFileWithPath(
     projectId,
     path,
     fsPath,
     null,
     source,
-    userId
+    userId,
+    ...(expectedFile !== undefined ? [expectedFile] : [])
   )
   return { file, folder }
 }

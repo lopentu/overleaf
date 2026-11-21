@@ -664,7 +664,10 @@ async function applyGitSnapshotToProject({
       )
     )
 
-    const documentVersions = await captureDocumentVersions(projectId, updates)
+    const importTargets = await captureImportTargets(projectId, [
+      ...updates,
+      ...deletions,
+    ])
     // Complete provider reads before checking the editor version and mutating files.
     await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
     if ((await HistoryManager.latestVersion(projectId)) !== expectedVersion) {
@@ -682,7 +685,7 @@ async function applyGitSnapshotToProject({
             '/' + path,
             fsPath,
             'github',
-            documentVersions.get('/' + path) ?? null
+            importTargets.get('/' + path) ?? null
           )
           importedHashes.set(path, contentHash ?? blobMap[path])
         })
@@ -690,14 +693,18 @@ async function applyGitSnapshotToProject({
     )
     await settleUpdates(
       deletions.map(path =>
-        localLimit(() =>
-          UpdateMerger.promises.deleteUpdate(
+        localLimit(async () => {
+          const target = importTargets.get('/' + path)
+          // No captured identity means there is nothing eligible to remove.
+          if (!target) return
+          await UpdateMerger.promises.deleteUpdate(
             userId,
             projectId,
             '/' + path,
-            'github'
+            'github',
+            target
           )
-        )
+        })
       )
     )
   } finally {
@@ -715,7 +722,7 @@ async function applyGitSnapshotToProject({
     projectId,
     resultVersion
   )
-  // The shared deletion helper logs editor failures. Require the file to be gone.
+  // Verify absence even if deletion was skipped or the legacy path logged an error.
   if (deletions.some(path => Object.hasOwn(result, path))) {
     throw new GitConflictError(
       'GitHub deletions were not applied. Retry the sync.',
@@ -751,15 +758,21 @@ async function applyGitSnapshotToProject({
 
 /**
  * @param {string} projectId
- * @param {string[]} updatedPaths
+ * @param {string[]} affectedPaths
  */
-async function captureDocumentVersions(projectId, updatedPaths) {
-  /** @type {Map<string, {docId: string, version: number}>} */
-  const versions = new Map()
-  if (updatedPaths.length === 0) return versions
+async function captureImportTargets(projectId, affectedPaths) {
+  /** @type {Map<string, NonNullable<import('../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs').ExpectedEntity>>} */
+  const targets = new Map()
+  if (affectedPaths.length === 0) return targets
 
-  const paths = new Set(updatedPaths.map(path => '/' + path))
-  const { docs } = await ProjectEntityHandler.promises.getAllEntities(projectId)
+  const paths = new Set(affectedPaths.map(path => '/' + path))
+  const { docs, files } =
+    await ProjectEntityHandler.promises.getAllEntities(projectId)
+  for (const { path, file } of files) {
+    if (paths.has(path)) {
+      targets.set(path, { fileId: file._id.toString(), rev: file.rev })
+    }
+  }
   const limit = pLimit(5)
   await Promise.all(
     docs
@@ -780,11 +793,11 @@ async function captureDocumentVersions(projectId, updatedPaths) {
               { status: 502 }
             )
           }
-          versions.set(path, { docId, version })
+          targets.set(path, { docId, version })
         })
       )
   )
-  return versions
+  return targets
 }
 
 function projectChangedDuringSync() {

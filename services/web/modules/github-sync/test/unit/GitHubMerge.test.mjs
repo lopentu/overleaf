@@ -360,6 +360,11 @@ describe('GitHub merge and recovery', () => {
     test.provider.getBranchHead.mockResolvedValue(integrated)
     test.provider.isCommitIncluded.mockResolvedValue(true)
     test.provider.listBlobsAtCommit.mockResolvedValue([])
+    const fileId = '507f1f77bcf86cd799439014'
+    test.entities.getAllEntities.mockResolvedValue({
+      docs: [],
+      files: [{ path: '/main.tex', file: { _id: fileId, rev: 1 } }],
+    })
     await assert.rejects(test.doGitMerge(userId, projectId, '', true), {
       name: 'GitConflictError',
       message: 'GitHub deletions were not applied. Retry the sync.',
@@ -368,7 +373,8 @@ describe('GitHub merge and recovery', () => {
       userId,
       projectId,
       '/main.tex',
-      'github'
+      'github',
+      { fileId, rev: 1 }
     )
     expect(test.store.updateProjectState).not.toHaveBeenCalled()
   })
@@ -491,6 +497,29 @@ describe('GitHub merge and recovery', () => {
       'github',
       { docId, version: 0 }
     )
+  })
+
+  it('passes the captured identity and revision of an existing binary file', async () => {
+    test.store.getProjectState.mockResolvedValue(conflict)
+    test.provider.getBranchHead.mockResolvedValue(integrated)
+    test.provider.isCommitIncluded.mockResolvedValue(true)
+    const fileId = '507f1f77bcf86cd799439014'
+    test.entities.getAllEntities.mockResolvedValue({
+      docs: [],
+      files: [{ path: '/main.tex', file: { _id: fileId, rev: 0 } }],
+    })
+
+    await test.doGitMerge(userId, projectId, '', true)
+
+    expect(test.editor._mergeUpdate).toHaveBeenCalledExactlyOnceWith(
+      userId,
+      projectId,
+      '/main.tex',
+      test.localBlob,
+      'github',
+      { fileId, rev: 0 }
+    )
+    expect(test.docUpdater.getDocument).not.toHaveBeenCalled()
   })
 
   it('does not upload a path created and removed before the next sync', async () => {

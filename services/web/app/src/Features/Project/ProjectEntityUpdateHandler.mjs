@@ -435,7 +435,7 @@ const upsertDoc = wrapWithLock(
     const existingDoc = element.docs.find(({ name }) => name === docName)
     const existingFile = element.fileRefs.find(({ name }) => name === docName)
     if (
-      (expectedDocument === null && existingDoc) ||
+      (expectedDocument === null && (existingDoc || existingFile)) ||
       (expectedDocument &&
         existingDoc?._id.toString() !== expectedDocument.docId)
     ) {
@@ -621,6 +621,7 @@ const upsertFile = wrapWithLock({
     fileRef,
     createdBlob,
     source,
+    expectVacant,
   }) {
     let element
     try {
@@ -641,6 +642,7 @@ const upsertFile = wrapWithLock({
     }
     const existingFile = element.fileRefs.find(({ name }) => name === fileName)
     const existingDoc = element.docs.find(({ name }) => name === fileName)
+    if (expectVacant && (existingFile || existingDoc)) throw githubFileChanged()
 
     if (existingDoc) {
       let path
@@ -767,12 +769,18 @@ const upsertDocWithPath = wrapWithLock(
       ;({ folder } = located)
       newFolders = []
     } else {
-      ;({ newFolders, folder } =
-        await ProjectEntityUpdateHandler.promises.mkdirp.withoutLock(
-          projectId,
-          Path.dirname(elementPath),
-          userId
-        ))
+      if (
+        expectedDocument === null &&
+        (await findGitHubImportTarget(projectId, elementPath))
+      ) {
+        throw githubDocumentChanged()
+      }
+      ;({ newFolders, folder } = await getImportFolder(
+        projectId,
+        Path.dirname(elementPath),
+        userId,
+        expectedDocument === null
+      ))
     }
     const { isNew, doc } =
       await ProjectEntityUpdateHandler.promises.upsertDoc.withoutLock(
@@ -789,6 +797,48 @@ const upsertDocWithPath = wrapWithLock(
   }
 )
 
+async function findGitHubImportTarget(projectId, elementPath) {
+  try {
+    return await ProjectLocator.promises.findElementByPath({
+      project_id: projectId,
+      path: elementPath,
+      exactCaseMatch: true,
+    })
+  } catch (error) {
+    if (error instanceof Errors.NotFoundError) return null
+    throw error
+  }
+}
+
+function getImportFolder(projectId, path, userId, exactCase) {
+  const { mkdirp, mkdirpWithExactCase } = ProjectEntityUpdateHandler.promises
+  return (exactCase ? mkdirpWithExactCase : mkdirp).withoutLock(
+    projectId,
+    path,
+    userId
+  )
+}
+
+function githubFileChanged() {
+  return new OError('The file at this path changed during GitHub sync.', {
+    status: 409,
+  })
+}
+
+/**
+ * @param {Awaited<ReturnType<typeof findGitHubImportTarget>>} located
+ * @param {import('../ThirdPartyDataStore/UpdateMerger.mjs').ExpectedFile|null} expectedFile
+ */
+function assertGitHubFileMatches(located, expectedFile) {
+  const matches =
+    expectedFile === null
+      ? !located
+      : located?.type === 'file' &&
+        located.element._id.toString() === expectedFile.fileId &&
+        located.element.rev === expectedFile.rev
+  if (!matches) throw githubFileChanged()
+}
+
 const upsertFileWithPath = wrapWithLock({
   async beforeLock(
     projectId,
@@ -796,7 +846,8 @@ const upsertFileWithPath = wrapWithLock({
     fsPath,
     linkedFileData,
     userId,
-    source
+    source,
+    expectedFile
   ) {
     if (!SafePath.isCleanPath(elementPath)) {
       throw new Errors.InvalidNameError('invalid element name')
@@ -817,6 +868,7 @@ const upsertFileWithPath = wrapWithLock({
 
     return {
       projectId,
+      elementPath,
       folderPath,
       fileName,
       fsPath,
@@ -825,10 +877,12 @@ const upsertFileWithPath = wrapWithLock({
       fileRef,
       createdBlob,
       source,
+      expectedFile,
     }
   },
   async withLock({
     projectId,
+    elementPath,
     folderPath,
     fileName,
     fsPath,
@@ -837,13 +891,21 @@ const upsertFileWithPath = wrapWithLock({
     fileRef,
     createdBlob,
     source,
+    expectedFile,
   }) {
-    const { newFolders, folder } =
-      await ProjectEntityUpdateHandler.promises.mkdirp.withoutLock(
-        projectId,
-        folderPath,
-        userId
-      )
+    let located
+    if (expectedFile !== undefined) {
+      located = await findGitHubImportTarget(projectId, elementPath)
+      assertGitHubFileMatches(located, expectedFile)
+    }
+    const { newFolders, folder } = located
+      ? { newFolders: [], folder: located.folder }
+      : await getImportFolder(
+          projectId,
+          folderPath,
+          userId,
+          expectedFile === null
+        )
     // this calls directly into the upsertFile main task (without the beforeLock part)
     const {
       fileRef: newFileRef,
@@ -859,6 +921,7 @@ const upsertFileWithPath = wrapWithLock({
       fileRef,
       createdBlob,
       source,
+      ...(expectedFile === null ? { expectVacant: true } : {}),
     })
 
     return {
@@ -917,12 +980,32 @@ const deleteEntity = wrapWithLock(
 )
 
 const deleteEntityWithPath = wrapWithLock(
-  async (projectId, path, userId, source) => {
-    const { element, type } = await ProjectLocator.promises.findElementByPath({
-      project_id: projectId,
-      path,
-      exactCaseMatch: true,
-    })
+  async (projectId, path, userId, source, expectedEntity) => {
+    const located =
+      expectedEntity === undefined
+        ? await ProjectLocator.promises.findElementByPath({
+            project_id: projectId,
+            path,
+            exactCaseMatch: true,
+          })
+        : await findGitHubImportTarget(projectId, path)
+    if (expectedEntity && 'fileId' in expectedEntity) {
+      assertGitHubFileMatches(located, expectedEntity)
+    } else if (expectedEntity) {
+      if (
+        located?.type !== 'doc' ||
+        located.element._id.toString() !== expectedEntity.docId
+      ) {
+        throw githubDocumentChanged()
+      }
+      const { version } = await DocumentUpdaterHandler.promises.getDocument(
+        projectId,
+        expectedEntity.docId,
+        -1
+      )
+      if (version !== expectedEntity.version) throw githubDocumentChanged()
+    }
+    const { element, type } = located
     if (element == null) {
       throw new Errors.NotFoundError('project not found')
     }

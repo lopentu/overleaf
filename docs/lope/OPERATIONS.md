@@ -95,10 +95,13 @@ remains visible on retry. Legacy ShareJS can rewrite supplementary Unicode
 characters such as emoji during a replacement. The history check rejects those
 results. Verify those imports with History OT before rollout.
 
-Imports can apply several files concurrently. Deletions and binary file
-writes still use their existing paths. GitHub sync stops if an incoming
-binary file would replace an editable document. Those operations and live
-provider verification remain rollout checks.
+Imports can apply several files concurrently. Binary replacements and
+deletions check the captured file ID and revision under the structure lock.
+Creating a file requires the exact-case path to remain vacant. Editable
+document deletion checks the captured identity and editor version, with an
+atomic check for late queued edits still pending. GitHub sync rejects attempts
+to convert an editable document to a binary file. Live provider verification
+remains a rollout check.
 
 ## Final-image dependency projection
 

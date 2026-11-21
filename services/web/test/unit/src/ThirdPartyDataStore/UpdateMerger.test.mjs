@@ -183,6 +183,36 @@ describe('UpdateMerger :', function () {
       expect(result.contentHash).to.equal(blobHashFromString('café\nnext\n'))
     })
 
+    it('keeps an existing binary path binary and forwards its identity', async function (ctx) {
+      const expectedFile = { fileId: ctx.file._id.toString(), rev: 0 }
+      ctx.FileTypeManager.promises.getType.resolves({
+        binary: false,
+        encoding: 'utf-8',
+      })
+
+      const result = await ctx.UpdateMerger.promises._mergeUpdate(
+        ctx.userId,
+        ctx.projectId,
+        ctx.filePath,
+        ctx.fsPath,
+        'github',
+        expectedFile
+      )
+
+      expect(result.entityType).to.equal('file')
+      expect(
+        ctx.EditorController.promises.upsertFileWithPath
+      ).to.have.been.calledWithExactly(
+        ctx.projectId,
+        ctx.filePath,
+        ctx.fsPath,
+        null,
+        'github',
+        ctx.userId,
+        expectedFile
+      )
+    })
+
     it('keeps an editable document when the imported bytes are binary', async function (ctx) {
       const expected = { docId: ctx.doc._id.toString(), version: 0 }
       ctx.FileTypeManager.promises.getType.resolves({
