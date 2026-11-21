@@ -192,7 +192,8 @@ export default {
   createFolder: callbackify(createFolder),
   promises: {
     mergeUpdate,
-    _mergeUpdate, // called by GitBridgeHandler
+    _mergeUpdate, // applies a previously staged update
+    writeUpdateToDisk,
     deleteUpdate,
     createFolder,
   },

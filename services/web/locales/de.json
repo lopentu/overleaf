@@ -684,7 +684,7 @@
   "github_integration_lowercase": "Git- und GitHub-Integration",
   "github_is_premium": "GitHub-Sync ist eine Premiumfunktion",
   "github_large_files_error": "Zusammenführung fehlgeschlagen: Dein GitHub-Repository enthält Dateien mit einer Dateigröße von mehr als 50 MB ",
-  "github_manual_merge_user_prompt": "Bitte führe den <0>__sharelatex_branch__</0> mit dem Standard-Branch in Git zusammen. Klicke unten um fortzufahren, nachdem du manuell zusammengeführt hast.",
+  "github_manual_merge_user_prompt": "Führe den Branch <0>__sharelatex_branch__</0> mit einem Merge-Commit in den Standard-Branch zusammen. Klicke unten, sobald der Commit im Standard-Branch enthalten ist.",
   "github_merge_failed_error": "Deine Änderungen in __appName__ und GitHub konnten nicht automatisch zusammengeführt werden.",
   "github_no_master_branch_error": "Dieses Repository kann nicht importiert werden, da ihm ein Standard-Branch fehlt. Stell sicher, dass das Projekt einen Standard-Branch hat",
   "github_private_description": "Du wählst, wer dieses Repository sehen und etwas übergeben kann.",

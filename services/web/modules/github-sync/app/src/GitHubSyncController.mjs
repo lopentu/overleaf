@@ -8,7 +8,11 @@ import GitHubSyncHandler from './GitHubSyncHandler.mjs'
 import TokenManager from './TokenManager.mjs'
 import api from './GitHubApiClient.mjs'
 import { doGitMerge } from './GitMerge.mjs'
-import { InvalidTokenError, AlreadyExistsError } from './GitSyncErrors.mjs'
+import {
+  InvalidTokenError,
+  AlreadyExistsError,
+  GitHubExportIncompleteError,
+} from './GitSyncErrors.mjs'
 
 async function getConnectionStatus(req, res) {
   const userId = SessionManager.getLoggedInUserId(req.session)
@@ -196,6 +200,13 @@ async function exportProject(req, res) {
     const errStatus = info?.status || 500
     logger.error(OError.getFullStack(err))
     logger.error({ info, projectId }, 'Error exporting project')
+    if (err instanceof GitHubExportIncompleteError) {
+      return res.status(errStatus).json({
+        key: 'github_export_incomplete',
+        repoFullName: err.repoFullName,
+        message: err.message,
+      })
+    }
     let key = 'github_validation_check'
     if (err instanceof AlreadyExistsError) key = 'github_validation_name_exists'
     else if (errStatus === 401 || errStatus === 403)

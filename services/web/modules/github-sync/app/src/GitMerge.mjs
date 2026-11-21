@@ -1,56 +1,70 @@
-import { normalize } from 'path/posix'
+import fsPromises from 'node:fs/promises'
+import { normalize } from 'node:path/posix'
 import pLimit from 'p-limit'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import logger from '@overleaf/logger'
+import OError from '@overleaf/o-error'
 import SyncStateManager from './SyncStateManager.mjs'
 import api from './GitHubApiClient.mjs'
 import HistoryManager from './HistoryManager.mjs'
-import { GitConflictError } from './GitSyncErrors.mjs'
+import { GitConflictError, GitNotLinkedError } from './GitSyncErrors.mjs'
 import TokenManager from './TokenManager.mjs'
-import { ObjectId } from '../../../../app/src/infrastructure/mongodb.mjs'
 import LockManager from '../../../../app/src/infrastructure/LockManager.mjs'
-import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 
 const SyncLockManager = LockManager.withTimeout(300) // 5 min
 
-export async function doGitMerge(userId, projectId, message, claimConflictIsResolved) {
-  return await SyncLockManager.promises.runWithLock(
-    'gitSync',
-    projectId,
-    () => doGitMergeWithoutLock(userId, projectId, message, claimConflictIsResolved)
+/**
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {string} message
+ * @param {boolean} [claimConflictIsResolved]
+ */
+export async function doGitMerge(
+  userId,
+  projectId,
+  message,
+  claimConflictIsResolved
+) {
+  return await SyncLockManager.promises.runWithLock('gitSync', projectId, () =>
+    doGitMergeWithoutLock(userId, projectId, message, claimConflictIsResolved)
   )
 }
 
-async function doGitMergeWithoutLock(userId, projectId, message, claimConflictIsResolved) {
+async function doGitMergeWithoutLock(
+  userId,
+  projectId,
+  message,
+  claimConflictIsResolved
+) {
   const projectSyncState = await SyncStateManager.getProjectState(projectId)
   if (!projectSyncState) throw new GitNotLinkedError(projectId)
-  const {
-    repoFullName,
-    defaultBranchName,
-    mergeStatus,
-    unmergedBranchName
-  } = projectSyncState
+  const { repoFullName, defaultBranchName, mergeStatus, unmergedBranchName } =
+    projectSyncState
 
   // do nothing if conflict is not yet resolved and 'Sync' button is pushed
   // do nothing if conflict is already resolved and 'I have manually merged' button is pushed
   if (
-    !claimConflictIsResolved && mergeStatus === 'conflict' ||
-    claimConflictIsResolved && mergeStatus !== 'conflict'
-  ) return { mergeStatus, repoFullName, unmergedBranchName }
+    (!claimConflictIsResolved && mergeStatus === 'conflict') ||
+    (claimConflictIsResolved && mergeStatus !== 'conflict')
+  )
+    return { mergeStatus, repoFullName, unmergedBranchName }
 
   const token = await TokenManager.getUserToken(userId)
 
   await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
 
   const currentVersion = await HistoryManager.latestVersion(projectId)
-  const defaultBranchHead = await api.getBranchHead(token, repoFullName, defaultBranchName)
+  const defaultBranchHead = await api.getBranchHead(
+    token,
+    repoFullName,
+    defaultBranchName
+  )
 
   let newUnmergedBranchName
 
   switch (mergeStatus) {
-
     case 'clean':
       newUnmergedBranchName = await resolveCleanSyncState(
         token,
@@ -58,7 +72,7 @@ async function doGitMergeWithoutLock(userId, projectId, message, claimConflictIs
         projectSyncState,
         currentVersion,
         defaultBranchHead,
-        message,
+        message
       )
       break
 
@@ -79,7 +93,7 @@ async function doGitMergeWithoutLock(userId, projectId, message, claimConflictIs
         projectSyncState,
         currentVersion,
         defaultBranchHead,
-        message,
+        message
       )
       break
 
@@ -88,7 +102,11 @@ async function doGitMergeWithoutLock(userId, projectId, message, claimConflictIs
   }
 
   const newMergeStatus = newUnmergedBranchName ? 'conflict' : 'clean'
-  return { mergeStatus: newMergeStatus, repoFullName, unmergedBranchName: newUnmergedBranchName }
+  return {
+    mergeStatus: newMergeStatus,
+    repoFullName,
+    unmergedBranchName: newUnmergedBranchName,
+  }
 }
 
 // ----------- clean flow
@@ -98,7 +116,7 @@ async function resolveCleanSyncState(
   projectSyncState,
   currentVersion,
   defaultBranchHead,
-  message,
+  message
 ) {
   const { projectId, repoFullName, defaultBranchName } = projectSyncState
 
@@ -115,27 +133,32 @@ async function resolveCleanSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
 
-    await SyncStateManager.updateProjectState(projectId, { lastSyncVersion, lastSyncCommit })
+    await SyncStateManager.updateProjectState(projectId, {
+      lastSyncVersion,
+      lastSyncCommit,
+    })
     return null
   }
 
   // Possible changes in OL
-  const olBranchHead =
-    await exportChangesToGit({
-      token,
-      projectId,
-      repoFullName,
-      lastSyncVersion: projectSyncState.lastSyncVersion,
-      currentVersion,
-      message,
-      baseCommit: projectSyncState.lastSyncCommit,
-    })
+  const olBranchHead = await exportChangesToGit({
+    token,
+    projectId,
+    repoFullName,
+    lastSyncVersion: projectSyncState.lastSyncVersion,
+    currentVersion,
+    message,
+    baseCommit: projectSyncState.lastSyncCommit,
+  })
 
   if (!olBranchHead) {
-    if ( defaultBranchHead === projectSyncState.lastSyncCommit) {
-      await SyncStateManager.updateProjectState(projectId, { lastSyncVersion: currentVersion })
+    if (defaultBranchHead === projectSyncState.lastSyncCommit) {
+      await SyncStateManager.updateProjectState(projectId, {
+        lastSyncVersion: currentVersion,
+      })
       return null
     }
 
@@ -146,16 +169,38 @@ async function resolveCleanSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
-    await SyncStateManager.updateProjectState(projectId, { lastSyncVersion, lastSyncCommit })
+    await SyncStateManager.updateProjectState(projectId, {
+      lastSyncVersion,
+      lastSyncCommit,
+    })
     return null
   }
 
+  let conflictBase = defaultBranchHead
   if (defaultBranchHead === projectSyncState.lastSyncCommit) {
-    // Trying to FF
+    let fastForwarded = false
     try {
-      await api.updateBranch(token, repoFullName, defaultBranchName, olBranchHead)
-
+      await api.updateBranch(
+        token,
+        repoFullName,
+        defaultBranchName,
+        olBranchHead
+      )
+      fastForwarded = true
+    } catch (err) {
+      const isConflict = err instanceof GitConflictError
+      const isValidationError = OError.getFullInfo(err)?.status === 422
+      if (!isConflict && !isValidationError) throw err
+      conflictBase = await api.getBranchHead(
+        token,
+        repoFullName,
+        defaultBranchName
+      )
+      if (!isConflict && conflictBase === defaultBranchHead) throw err
+    }
+    if (fastForwarded) {
       const lastSyncCommit = olBranchHead
       const lastSyncVersion = await applyGitSnapshotToProject({
         token,
@@ -163,12 +208,13 @@ async function resolveCleanSyncState(
         projectId,
         repoFullName,
         lastSyncCommit,
+        expectedVersion: currentVersion,
       })
-      await SyncStateManager.updateProjectState(projectId, { lastSyncVersion, lastSyncCommit })
+      await SyncStateManager.updateProjectState(projectId, {
+        lastSyncVersion,
+        lastSyncCommit,
+      })
       return null
-
-    } catch (err) {
-      if (!(err instanceof GitConflictError)) { throw err }
     }
   }
 
@@ -183,7 +229,7 @@ async function resolveCleanSyncState(
   if (conflict) {
     await SyncStateManager.updateProjectState(projectId, {
       mergeStatus: 'conflict',
-      lastSyncCommit: defaultBranchHead,
+      lastSyncCommit: conflictBase,
       unmergedBranchName: tempBranchName,
       unmergedBranchHead: olBranchHead,
       conflictVersion: currentVersion,
@@ -197,8 +243,12 @@ async function resolveCleanSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
-    await SyncStateManager.updateProjectState(projectId, { lastSyncVersion, lastSyncCommit })
+    await SyncStateManager.updateProjectState(projectId, {
+      lastSyncVersion,
+      lastSyncCommit,
+    })
     return null
   }
 }
@@ -211,7 +261,31 @@ async function resolveConflictSyncState(
   currentVersion,
   defaultBranchHead
 ) {
-  const { projectId, repoFullName, defaultBranchName, conflictVersion } = projectSyncState
+  const {
+    projectId,
+    repoFullName,
+    defaultBranchName,
+    conflictVersion,
+    unmergedBranchHead,
+    unmergedBranchName,
+  } = projectSyncState
+  if (!unmergedBranchHead || !unmergedBranchName) {
+    throw new GitConflictError('GitHub conflict details are missing', {
+      status: 409,
+    })
+  }
+  if (
+    !(await api.isCommitIncluded(
+      token,
+      repoFullName,
+      unmergedBranchHead,
+      defaultBranchHead
+    ))
+  ) {
+    // The button is an intent to continue. The Git history is the evidence
+    // that the incoming snapshot includes the saved Overleaf changes.
+    return unmergedBranchName
+  }
 
   // No OL changes after manual conflict resolving: pull GH changes only
   if (currentVersion === conflictVersion) {
@@ -222,6 +296,7 @@ async function resolveConflictSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
 
     await SyncStateManager.updateProjectState(projectId, {
@@ -230,7 +305,7 @@ async function resolveConflictSyncState(
       lastSyncCommit,
       conflictVersion: null,
       unmergedBranchName: null,
-      unmergedBranchHead: null
+      unmergedBranchHead: null,
     })
     return null
   }
@@ -258,6 +333,7 @@ async function resolveConflictSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
 
     await SyncStateManager.updateProjectState(projectId, {
@@ -266,7 +342,7 @@ async function resolveConflictSyncState(
       lastSyncCommit,
       conflictVersion: null,
       unmergedBranchName: null,
-      unmergedBranchHead: null
+      unmergedBranchHead: null,
     })
     return null
   }
@@ -276,7 +352,7 @@ async function resolveConflictSyncState(
     token,
     repoFullName,
     defaultBranchName,
-    newOlBranchHead,
+    newOlBranchHead
   )
 
   if (conflict) {
@@ -298,6 +374,7 @@ async function resolveConflictSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
     await SyncStateManager.updateProjectState(projectId, {
       mergeStatus: 'clean',
@@ -305,7 +382,7 @@ async function resolveConflictSyncState(
       lastSyncCommit,
       conflictVersion: null,
       unmergedBranchName: null,
-      unmergedBranchHead: null
+      unmergedBranchHead: null,
     })
     return null
   }
@@ -319,7 +396,7 @@ async function resolveDetachedSyncState(
   projectSyncState,
   currentVersion,
   defaultBranchHead,
-  message,
+  message
 ) {
   const { projectId, repoFullName, defaultBranchName } = projectSyncState
 
@@ -332,15 +409,30 @@ async function resolveDetachedSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
-    await SyncStateManager.updateProjectState(projectId, { mergeStatus: 'clean', lastSyncVersion, lastSyncCommit })
+    await SyncStateManager.updateProjectState(projectId, {
+      mergeStatus: 'clean',
+      lastSyncVersion,
+      lastSyncCommit,
+    })
     return null
   }
 
   // Need to compare lastSync OL version (base), current OL version (local) and GH version (remote)
-  const baseSnapshot = await HistoryManager.getProjectSnapshot(projectId, projectSyncState.lastSyncVersion)
-  const localSnapshot = await HistoryManager.getProjectSnapshot(projectId, currentVersion)
-  const remoteBlobMap = await getGitBlobMap(token, repoFullName, defaultBranchHead)
+  const baseSnapshot = await HistoryManager.getProjectSnapshot(
+    projectId,
+    projectSyncState.lastSyncVersion
+  )
+  const localSnapshot = await HistoryManager.getProjectSnapshot(
+    projectId,
+    currentVersion
+  )
+  const remoteBlobMap = await getGitBlobMap(
+    token,
+    repoFullName,
+    defaultBranchHead
+  )
 
   const {
     cleanLocalEntries,
@@ -348,7 +440,7 @@ async function resolveDetachedSyncState(
     conflictLocalEntries,
     conflictBaseEntries,
     hasConflicts,
-    hasChanges
+    hasChanges,
   } = await buildDetachedSyncPlan({
     token,
     repoFullName,
@@ -362,9 +454,9 @@ async function resolveDetachedSyncState(
   // were any changes introduced in GH?
   if (!hasChanges) {
     await SyncStateManager.updateProjectState(projectId, {
-       mergeStatus: 'clean',
-       lastSyncVersion: currentVersion,
-       lastSyncCommit: defaultBranchHead
+      mergeStatus: 'clean',
+      lastSyncVersion: currentVersion,
+      lastSyncCommit: defaultBranchHead,
     })
     return null
   }
@@ -379,7 +471,12 @@ async function resolveDetachedSyncState(
         entries: cleanLocalEntries,
         message,
       })
-      await api.updateBranch(token, repoFullName, defaultBranchName, lastSyncCommit)
+      await api.updateBranch(
+        token,
+        repoFullName,
+        defaultBranchName,
+        lastSyncCommit
+      )
     }
     const lastSyncVersion = await applyGitSnapshotToProject({
       token,
@@ -387,8 +484,13 @@ async function resolveDetachedSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
-    await SyncStateManager.updateProjectState(projectId, { mergeStatus: 'clean', lastSyncVersion, lastSyncCommit })
+    await SyncStateManager.updateProjectState(projectId, {
+      mergeStatus: 'clean',
+      lastSyncVersion,
+      lastSyncCommit,
+    })
     return null
   }
 
@@ -466,8 +568,13 @@ async function resolveDetachedSyncState(
       projectId,
       repoFullName,
       lastSyncCommit,
+      expectedVersion: currentVersion,
     })
-    await SyncStateManager.updateProjectState(projectId, { mergeStatus: 'clean', lastSyncVersion, lastSyncCommit })
+    await SyncStateManager.updateProjectState(projectId, {
+      mergeStatus: 'clean',
+      lastSyncVersion,
+      lastSyncCommit,
+    })
     return null
   }
 
@@ -483,14 +590,22 @@ async function resolveDetachedSyncState(
 }
 
 // ----------- Helpers
-async function applyGitSnapshotToProject({ token, userId, projectId, repoFullName, lastSyncCommit }) {
-
+async function applyGitSnapshotToProject({
+  token,
+  userId,
+  projectId,
+  repoFullName,
+  lastSyncCommit,
+  expectedVersion,
+}) {
   const invalidFiles = []
   const updates = []
   const deletions = []
 
-  const currentVersion = await HistoryManager.latestVersion(projectId)
-  const historySnapshot = await HistoryManager.getProjectSnapshot(projectId, currentVersion)
+  const historySnapshot = await HistoryManager.getProjectSnapshot(
+    projectId,
+    expectedVersion
+  )
   const blobMap = await getGitBlobMap(token, repoFullName, lastSyncCommit)
   const blobPaths = new Set()
 
@@ -518,23 +633,123 @@ async function applyGitSnapshotToProject({ token, userId, projectId, repoFullNam
 
   // TODO: do not silently ignore invalidFiles, inform user about them
   if (invalidFiles.length > 0) {
-    logger.warn({ projectId, invalidFiles }, 'Invalid file paths detected at Git server')
+    logger.warn(
+      { projectId, invalidFiles },
+      'Invalid file paths detected at Git server'
+    )
   }
   const limit = pLimit(api.maxConcurrency)
-  await Promise.all(
-    updates.map(path => limit(async () => {
-      const stream = await api.getBlobStream(token, repoFullName, lastSyncCommit, path)
-      return UpdateMerger.promises.mergeUpdate(userId, projectId, '/' + path, stream, 'github')
-    }))
-  )
-  const localLimit = pLimit(5)
-  await Promise.all(
-    deletions.map(path => localLimit(() => {
-      return UpdateMerger.promises.deleteUpdate(userId, projectId, '/' + path, 'github')
-    }))
-  )
+  /** @type {Map<string, string>} */
+  const stagedFiles = new Map()
+  try {
+    await settleUpdates(
+      updates.map(path =>
+        limit(async () => {
+          const stream = await api.getBlobStream(
+            token,
+            repoFullName,
+            lastSyncCommit,
+            path
+          )
+          const fsPath = await UpdateMerger.promises.writeUpdateToDisk(
+            projectId,
+            stream
+          )
+          stagedFiles.set(path, fsPath)
+        })
+      )
+    )
 
-  return await HistoryManager.latestVersion(projectId)
+    // Complete provider reads before checking the editor version and mutating files.
+    await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
+    if ((await HistoryManager.latestVersion(projectId)) !== expectedVersion) {
+      throw projectChangedDuringSync()
+    }
+    if (updates.length === 0 && deletions.length === 0) return expectedVersion
+
+    const localLimit = pLimit(5)
+    await settleUpdates(
+      [...stagedFiles].map(([path, fsPath]) =>
+        localLimit(() =>
+          UpdateMerger.promises._mergeUpdate(
+            userId,
+            projectId,
+            '/' + path,
+            fsPath,
+            'github'
+          )
+        )
+      )
+    )
+    await settleUpdates(
+      deletions.map(path =>
+        localLimit(() =>
+          UpdateMerger.promises.deleteUpdate(
+            userId,
+            projectId,
+            '/' + path,
+            'github'
+          )
+        )
+      )
+    )
+  } finally {
+    const cleanup = await Promise.allSettled(
+      [...stagedFiles.values()].map(fsPath => fsPromises.unlink(fsPath))
+    )
+    const failed = cleanup.filter(result => result.status === 'rejected').length
+    if (failed)
+      logger.warn({ projectId, failed }, 'GitHub staged file cleanup failed')
+  }
+
+  await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
+  const resultVersion = await HistoryManager.latestVersion(projectId)
+  const result = await HistoryManager.getProjectSnapshot(
+    projectId,
+    resultVersion
+  )
+  // The shared deletion helper logs editor failures. Require the file to be gone.
+  if (deletions.some(path => Object.hasOwn(result, path))) {
+    throw new GitConflictError(
+      'GitHub deletions were not applied. Retry the sync.',
+      {
+        status: 409,
+      }
+    )
+  }
+  const applied = new Set([...updates, ...deletions])
+  const paths = new Set([
+    ...Object.keys(historySnapshot),
+    ...Object.keys(result),
+  ])
+
+  // Do not include unrelated local changes in the recorded GitHub sync point.
+  for (const path of paths) {
+    if (
+      !applied.has(path) &&
+      (Object.hasOwn(historySnapshot, path) !== Object.hasOwn(result, path) ||
+        getEntryHash(historySnapshot[path]) !== getEntryHash(result[path]))
+    ) {
+      throw projectChangedDuringSync()
+    }
+  }
+  return resultVersion
+}
+
+function projectChangedDuringSync() {
+  return new GitConflictError(
+    'Overleaf changed during GitHub sync. Retry the sync.',
+    {
+      status: 409,
+    }
+  )
+}
+
+/** @param {Promise<unknown>[]} work */
+async function settleUpdates(work) {
+  const results = await Promise.allSettled(work)
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure) throw failure.reason
 }
 
 async function buildDetachedSyncPlan({
@@ -544,7 +759,7 @@ async function buildDetachedSyncPlan({
   currentVersion,
   baseSnapshot,
   localSnapshot,
-  remoteBlobMap
+  remoteBlobMap,
 }) {
   const cleanLocalEntries = []
   const conflictRemoteEntries = []
@@ -569,12 +784,17 @@ async function buildDetachedSyncPlan({
     if (localHash && localHash !== baseHash && localHash !== remoteHash) {
       let buffer
       if (localSnapshot[path].data?.content) {
-        buffer = Buffer.from(localSnapshot[path].data.content, 'utf8').toString('base64')
+        buffer = Buffer.from(localSnapshot[path].data.content, 'utf8').toString(
+          'base64'
+        )
       } else {
-        buffer = await HistoryManager.getProjectFileBuffer(projectId, currentVersion, path)
+        buffer = await HistoryManager.getProjectFileBuffer(
+          projectId,
+          currentVersion,
+          path
+        )
       }
-      const sha = await api.uploadBlob(token, repoFullName, buffer)
-      // assert sha !== localHash
+      await api.uploadBlob(token, repoFullName, buffer)
     }
 
     // OL == GH, do nothing
@@ -597,7 +817,7 @@ async function buildDetachedSyncPlan({
     hasConflicts = true
 
     conflictRemoteEntries.push({ path, sha: remoteHash })
-    conflictLocalEntries.push({ path, sha: localHash})
+    conflictLocalEntries.push({ path, sha: localHash })
     conflictBaseEntries.push({ path, sha: baseHash })
   }
   return {
@@ -626,38 +846,33 @@ async function createCommitFromEntries({
   })
 }
 
+/**
+ * @param {string} token
+ * @param {string} repoFullName
+ * @param {string} branchName
+ * @param {string} updateCommit
+ */
 async function mergeWithTempBranch(
   token,
   repoFullName,
   branchName,
   updateCommit
 ) {
-  const tempBranchName = generateBranchName()
-
-  await api.createBranch(
-    token,
-    repoFullName,
-    tempBranchName,
-    updateCommit
-  )
-
   try {
-    const mergeCommit =
-      await api.mergeBranch(token, repoFullName, branchName, tempBranchName)
-
-    try {
-      await api.deleteBranch(token, repoFullName, tempBranchName)
-    } catch (err) {
-      logger.warn({ err, repoFullName, tempBranchName }, 'Delete temp branch failed')
-    }
-
+    // GitHub accepts a commit SHA. Only a conflict needs a durable ref for the
+    // user's merge, so success and unrelated failures leave no extra branch.
+    const mergeCommit = await api.mergeBranch(
+      token,
+      repoFullName,
+      branchName,
+      updateCommit
+    )
     return { conflict: false, mergeCommit }
-
   } catch (err) {
-    if (err instanceof GitConflictError) {
-      return { conflict: true, tempBranchName }
-    }
-    throw err
+    if (!(err instanceof GitConflictError)) throw err
+    const tempBranchName = generateBranchName()
+    await api.createBranch(token, repoFullName, tempBranchName, updateCommit)
+    return { conflict: true, tempBranchName }
   }
 }
 
@@ -676,51 +891,43 @@ async function exportChangesToGit({
     currentVersion
   )
 
-  const { paths } = await HistoryManager.getPathsAtVersion(projectId, lastSyncVersion)
-  const existedAtLastSync = new Set(paths)
-
-  const deletePaths = new Set()
-  const upsertPaths = new Set()
-
+  const changed = new Set()
   for (const item of diff) {
-    const oldPath = item.pathname
-
-    if (item.operation === 'removed') {
-      // it can happen that removed file was created after last sync
-      if (existedAtLastSync.has(oldPath)) deletePaths.add(oldPath)
-      continue
-    }
-
-    if (item.operation === 'renamed') {
-      if (existedAtLastSync.has(oldPath)) deletePaths.add(oldPath)
-      upsertPaths.add(item.newPathname)
-      continue
-    }
-    if (item.operation === 'added' || item.operation === 'edited') {
-      upsertPaths.add(oldPath)
+    if (['added', 'edited', 'removed', 'renamed'].includes(item.operation)) {
+      changed.add(item.pathname)
+      if (item.operation === 'renamed') changed.add(item.newPathname)
     }
   }
-  // if a file is renamed and a new file with the old name is created,
-  // then the name will be in both sets, need to exclude it from deletePaths
-  for (const path of upsertPaths) {
-    if (deletePaths.has(path)) deletePaths.delete(path)
-  }
+  if (changed.size === 0) return null
 
-  // this can happen when a file is created and then removed
-  if (deletePaths.size === 0 && upsertPaths.size === 0) return null
+  const [base, current] = await Promise.all([
+    HistoryManager.getPathsAtVersion(projectId, lastSyncVersion),
+    HistoryManager.getPathsAtVersion(projectId, currentVersion),
+  ])
+  const basePaths = new Set(base.paths)
+  const currentPaths = new Set(current.paths)
+  const upsertPaths = [...changed].filter(path => currentPaths.has(path))
+  const deletePaths = [...changed].filter(
+    path => basePaths.has(path) && !currentPaths.has(path)
+  )
+  if (deletePaths.length === 0 && upsertPaths.length === 0) return null
 
   const limit = pLimit(api.maxConcurrency)
   const upsertEntries = await Promise.all(
-    [...upsertPaths].map(path =>
+    upsertPaths.map(path =>
       limit(async () => {
-        const buffer = await HistoryManager.getProjectFileBuffer(projectId, currentVersion, path)
+        const buffer = await HistoryManager.getProjectFileBuffer(
+          projectId,
+          currentVersion,
+          path
+        )
         const sha = await api.uploadBlob(token, repoFullName, buffer)
         return { path, sha }
       })
     )
   )
 
-  const deleteEntries = [...deletePaths].map(path => ({ path, sha: null }))
+  const deleteEntries = deletePaths.map(path => ({ path, sha: null }))
   const entries = [...deleteEntries, ...upsertEntries]
 
   const newCommit = await createCommitFromEntries({
@@ -735,24 +942,18 @@ async function exportChangesToGit({
 }
 
 function generateBranchName() {
-  const d = new Date()
-  const pad = n => `${n}`.padStart(2, '0')
-  return `overleaf-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  const date = new Date().toISOString().slice(0, 10)
+  return `overleaf-${date}-${randomUUID()}`
 }
 
 async function getGitBlobMap(token, repoFullName, commit) {
   const blobEntries = await api.listBlobsAtCommit(token, repoFullName, commit)
-  return Object.fromEntries(
-    blobEntries.map(({ path, sha }) => [path, sha])
-  )
+  return Object.fromEntries(blobEntries.map(({ path, sha }) => [path, sha]))
 }
 
 function getEntryHash(entry) {
   if (!entry?.data) return null
-  return (
-    entry.data.hash ||
-    gitBlobShaFromString(entry.data.content)
-  )
+  return entry.data.hash || gitBlobShaFromString(entry.data.content)
 }
 
 function gitBlobShaFromString(str) {
@@ -765,11 +966,8 @@ function gitBlobShaFromString(str) {
 }
 
 function validateFileName(name) {
-  if (
-    typeof name !== 'string' ||
-    name.length === 0 ||
-    name.includes('\0')
-  ) return { name }
+  if (typeof name !== 'string' || name.length === 0 || name.includes('\0'))
+    return { name }
 
   const normalized = normalize(name)
 
@@ -777,7 +975,8 @@ function validateFileName(name) {
     normalized !== name ||
     normalized.startsWith('/') ||
     normalized.startsWith('../')
-  ) return { name }
+  )
+    return { name }
 
   return null
 }

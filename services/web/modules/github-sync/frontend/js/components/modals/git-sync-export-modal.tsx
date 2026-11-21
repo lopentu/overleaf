@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useState, useEffect } from 'react'
 import useAsync from '@/shared/hooks/use-async'
 import { debugConsole } from '@/utils/debugging'
-import { getJSON, postJSON } from '@/infrastructure/fetch-json'
+import { FetchError, getJSON, postJSON } from '@/infrastructure/fetch-json'
 import { OLModalBody, OLModalFooter } from '@/shared/components/ol/ol-modal'
 import Notification from '@/shared/components/notification'
 import OLButton from '@/shared/components/ol/ol-button'
@@ -73,10 +73,33 @@ const GitSyncExportModal = ({
       })
     )
       .then(() => setModalStatus('loading'))
-      .catch(err => {
-        debugConsole.error(err?.data?.message || err?.message || err)
-        if (!err?.data?.key) setErrorMessage(t('something_went_wrong_server'))
-        else setErrorMessage(t(err.data.key))
+      .catch((err: unknown) => {
+        const data = err instanceof FetchError ? err.data : undefined
+        const message: unknown = data?.message
+        debugConsole.error(
+          typeof message === 'string'
+            ? message
+            : err instanceof Error
+              ? err.message
+              : undefined
+        )
+        const key: unknown = data?.key
+        const repoFullName: unknown = data?.repoFullName
+        if (
+          key === 'github_export_incomplete' &&
+          typeof repoFullName === 'string' &&
+          /^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(repoFullName)
+        ) {
+          setErrorMessage(t('github_export_incomplete', { repoFullName }))
+        } else if (
+          key === 'github_validation_check' ||
+          key === 'github_validation_check_auth' ||
+          key === 'github_validation_name_exists'
+        ) {
+          setErrorMessage(t(key))
+        } else {
+          setErrorMessage(t('something_went_wrong_server'))
+        }
       })
   }
 

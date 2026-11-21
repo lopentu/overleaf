@@ -107,6 +107,9 @@ Do not substitute that result for a successful production image build.
   disabled. A separately managed private allowlisted proxy and real provider
   qualification are still required; this source change deploys no proxy, network,
   service or credentials.
+- GitHub sync workflow checks also type the sync handler and run fixtures for
+  private-by-default export, seeded commit ancestry, changed refs, conflict
+  confirmation and already-merged provider responses.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
   and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox

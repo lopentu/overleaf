@@ -48,6 +48,44 @@ acceptance, untrusted compilation and complete hosted parity remain open;
 accepting the serving image does not qualify those capabilities or promote the
 candidate.
 
+## GitHub export and conflict recovery
+
+Export to a new repository keeps the initial GitHub commit in history. If
+the export stops after repository creation, check the named repository and
+its default branch before retrying.
+
+MongoDB records one export claim per project in `githubSyncExportClaims`.
+The collection uses the project's ObjectId as its unique `_id`. This keeps
+another export from creating a repository even if the Redis lease expires.
+An interrupted worker, unconfirmed repository creation or sync-state write,
+or failed claim release can leave a claim in place. A conflicting request
+returns HTTP 409.
+
+To reconcile a retained claim, read its `_id`, `claimId`, `startedAt`, `userId`,
+`repositoryName`, and `organization` from the primary database. Confirm the
+original request stopped or completed. If its worker cannot be identified,
+drain the Web workers that could still be running it under an authorized
+maintenance window. Claim age alone is insufficient. Check the project's
+local sync state on the primary and verify the target repository and branch
+with the GitHub account or organization owner. Record the outcome and preserve
+the repository for review. Once the outcomes are known and the original
+request can no longer perform writes, an authorized operator can remove only
+the captured `{ _id, claimId }` with a majority-acknowledged `deleteOne` and
+verify that the claim is gone. Leave the claim in place while the request or
+either write outcome remains uncertain.
+
+On conflict, the app publishes a uniquely named branch with the Overleaf
+changes. Merge that branch into the GitHub default branch with a merge
+commit. Once that commit is on the default branch, use **Continue** in
+Overleaf to import the resolution. The app checks the commit history before
+it applies the GitHub snapshot.
+
+The app downloads the files before checking the Overleaf version again. It
+verifies deletions and keeps unrelated edits out of the sync position. An
+import can write several files concurrently. An editor change to the same
+file during its final write can still be overwritten. Verify this scenario
+before production rollout.
+
 ## Final-image dependency projection
 
 The image build keeps the normal developer manifests, lockfile and native build

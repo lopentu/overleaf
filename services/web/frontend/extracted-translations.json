@@ -872,6 +872,7 @@
   "github_commit_message_placeholder": "",
   "github_credentials_expired": "",
   "github_empty_repository_error": "",
+  "github_export_incomplete": "",
   "github_file_name_error": "",
   "github_file_sync_error": "",
   "github_git_folder_error": "",
