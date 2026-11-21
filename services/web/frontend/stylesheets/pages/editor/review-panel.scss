@@ -772,9 +772,14 @@ del.review-panel-content-highlight {
         background-color: var(--blue-20);
       }
 
-      // In the toolbar the label text does not expand on hover (would shift other buttons)
-      .review-mode-switcher-toggle-label {
-        display: none;
+      // Preserve the first-use hit area until the user clicks the toggle.
+      // After that, hovering keeps the toolbar label collapsed.
+      .review-mode-switcher-toggle-button:not(
+        .review-mode-switcher-toggle-button-expanded
+      ) {
+        .review-mode-switcher-toggle-label {
+          display: none;
+        }
       }
     }
   }
