@@ -120,7 +120,9 @@ COPY --chmod=0644 server-ce/config/latexmkrc /usr/local/share/latexmk/LatexMk
 # File that controls open|closed status of the site
 # -------------------------------------------------
 ENV SITE_MAINTENANCE_FILE="/etc/overleaf/site_status"
-RUN touch $SITE_MAINTENANCE_FILE
+# COPY --chmod can also set the mode of a destination directory it creates.
+RUN chmod 0755 /etc/overleaf /usr/local/share/latexmk \
+    && touch "$SITE_MAINTENANCE_FILE"
 
 # Set Environment Variables
 # --------------------------------
