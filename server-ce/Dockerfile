@@ -59,7 +59,7 @@ RUN chmod -R a+rX,go-w /overleaf
 
 # Copy runit service startup scripts to its location
 # --------------------------------------------------
-ADD server-ce/runit /etc/service
+COPY --chmod=0755 server-ce/runit/ /etc/service/
 
 # Copy runit global settings to its location
 # ------------------------------------------
@@ -159,6 +159,7 @@ RUN --network=none \
 RUN --network=none runuser -u www-data -- /bin/sh -ec '\
     test -r /etc/overleaf/env.sh; \
     test -r /usr/local/share/latexmk/LatexMk; \
+    test -x /etc/service/web-overleaf; \
     cd /overleaf/services/history-v1; \
     test -r config/production.json; \
     test -r config/custom-environment-variables.json; \
