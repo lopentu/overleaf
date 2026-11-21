@@ -163,6 +163,28 @@ beforeEach(() => {
 })
 
 describe('exporting a project to a new GitHub repository', () => {
+  it('checks project ownership before accessing a provider grant or project history', async () => {
+    mocks.getProject.mockResolvedValue({ owner_ref: projectId })
+    mocks.getUserToken.mockRejectedValue(
+      new Error('provider access is disabled in this authorization test')
+    )
+
+    await assert.rejects(
+      GitHubSyncHandler.exportProject(userId, projectId, repoOptions),
+      error =>
+        error instanceof PermissionDeniedError &&
+        /** @type {{ status?: unknown }} */ (OError.getFullInfo(error))
+          .status === 403
+    )
+    expect(mocks.getProject).toHaveBeenCalledExactlyOnceWith(projectId, {
+      owner_ref: 1,
+    })
+    expect(mocks.getUserToken).not.toHaveBeenCalled()
+    expect(mocks.flushProjectToMongo).not.toHaveBeenCalled()
+    expect(mocks.insertExportClaim).not.toHaveBeenCalled()
+    expect(mocks.createRepo).not.toHaveBeenCalled()
+  })
+
   it('leaves GitHub untouched when a project history snapshot cannot be read', async () => {
     const error = new Error('synthetic history lookup failure')
     mocks.getPathsAtVersion.mockRejectedValue(error)

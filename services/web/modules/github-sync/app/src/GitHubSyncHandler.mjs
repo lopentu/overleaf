@@ -287,6 +287,16 @@ async function exportProject(userId, projectId, repoOptions) {
     'gitSync',
     projectId,
     async () => {
+      const project = await ProjectGetter.promises.getProject(projectId, {
+        owner_ref: 1,
+      })
+      const ownerId = project?.owner_ref
+      if (!ownerId || ownerId.toString() !== userId) {
+        throw new PermissionDeniedError(
+          'Only the project owner can export to GitHub',
+          { status: 403 }
+        )
+      }
       await ensureProjectIsNotLinked(projectId)
 
       const token = await TokenManager.getUserToken(userId)
