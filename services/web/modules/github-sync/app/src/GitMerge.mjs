@@ -43,8 +43,10 @@ async function doGitMergeWithoutLock(
   message,
   claimConflictIsResolved
 ) {
-  const projectSyncState = await SyncStateManager.getProjectState(projectId)
-  if (!projectSyncState) throw new GitNotLinkedError(projectId)
+  const storedState = await SyncStateManager.getProjectState(projectId)
+  if (!storedState) throw new GitNotLinkedError(projectId)
+  // The stored ID is a Mongo ObjectId. The editor and updater use string IDs.
+  const projectSyncState = { ...storedState, projectId }
   const { repoFullName, defaultBranchName, mergeStatus, unmergedBranchName } =
     projectSyncState
 

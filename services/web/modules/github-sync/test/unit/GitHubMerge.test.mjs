@@ -1,6 +1,7 @@
 // @ts-check
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
+import { ObjectId } from 'mongodb-legacy'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const projectId = '507f1f77bcf86cd799439011'
@@ -556,7 +557,10 @@ describe('GitHub merge and recovery', () => {
 
   it('forwards the immutable Git blob to guarded binary conversion and reuses the action on retry', async () => {
     const blobHash = 'b'.repeat(40)
-    test.store.getProjectState.mockResolvedValue(conflict)
+    test.store.getProjectState.mockResolvedValue({
+      ...conflict,
+      projectId: new ObjectId(projectId),
+    })
     test.provider.getBranchHead.mockResolvedValue(integrated)
     test.provider.isCommitIncluded.mockResolvedValue(true)
     test.provider.listBlobsAtCommit.mockResolvedValue([
@@ -616,6 +620,10 @@ describe('GitHub merge and recovery', () => {
     ).toBe('clean')
 
     expect(upsertFileWithPath).toHaveBeenCalledTimes(2)
+    expect(upsertFileWithPath.mock.calls.map(call => call[0])).toEqual([
+      projectId,
+      projectId,
+    ])
     const action = upsertFileWithPath.mock.calls[0][6]
     expect(action).toEqual({
       docId,
