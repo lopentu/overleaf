@@ -87,12 +87,13 @@ repos:
         pass_filenames: false
         always_run: true
       - id: conditional-document-updater
-        name: Conditional document writes and updater HTTP regressions
+        name: Conditional document writes, editor queue and updater HTTP regressions
         entry: >-
           env REQ_VALIDATION_MODE=enforce corepack yarn workspace @overleaf/document-updater
           exec mocha --exit --reporter dot
           test/unit/js/DocumentManager/DocumentManagerTests.js
           test/unit/js/HttpController/HttpControllerTests.js
+          test/unit/js/UpdateManager/UpdateManagerTests.js
         language: system
         pass_filenames: false
         files: '^(services/document-updater/|services/web/(app/src/Features/(DocumentUpdater|Editor|Project|ThirdPartyDataStore)/|modules/github-sync/)|\.pre-commit-config\.yaml$)'

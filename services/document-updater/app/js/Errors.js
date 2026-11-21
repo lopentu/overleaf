@@ -1,6 +1,8 @@
 const OError = require('@overleaf/o-error')
 
 class NotFoundError extends OError {}
+// A 404 returned by the authoritative Web API when loading a document.
+class WebDocumentNotFoundError extends NotFoundError {}
 class OpRangeNotAvailableError extends OError {}
 class ProjectStateChangedError extends OError {}
 class DocumentVersionMismatchError extends OError {}
@@ -21,6 +23,7 @@ class WebApiServerError extends OError {}
 
 module.exports = {
   NotFoundError,
+  WebDocumentNotFoundError,
   OpRangeNotAvailableError,
   ProjectStateChangedError,
   DocumentVersionMismatchError,

@@ -71,10 +71,18 @@ const UpdateManager = {
     }
     for (const update of updates) {
       const docId = update.doc
-      if (HistoryOTUpdateManager.isHistoryOTEditOperationUpdate(update)) {
-        await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
-      } else {
-        await UpdateManager.applyUpdate(projectId, docId, update)
+      try {
+        if (HistoryOTUpdateManager.isHistoryOTEditOperationUpdate(update)) {
+          await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
+        } else {
+          await UpdateManager.applyUpdate(projectId, docId, update)
+        }
+      } catch (error) {
+        if (!(error instanceof Errors.WebDocumentNotFoundError)) throw error
+        // The client was already notified. The rest of the batch was also
+        // removed from Redis and still needs to be processed.
+        profile.log('skipMissingProjectDoc')
+        continue
       }
       profile.log('applyProjectUpdate')
     }
