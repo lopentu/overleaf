@@ -12,6 +12,36 @@ import async from 'async'
 import PublicAccessLevels from '../Authorization/PublicAccessLevels.mjs'
 import { promisify, promisifyMultiResult } from '@overleaf/promise-utils'
 
+function notifyNewDoc(projectId, folderId, doc, source, userId) {
+  EditorRealTimeController.emitToRoom(
+    projectId,
+    'reciveNewDoc',
+    folderId,
+    doc,
+    source,
+    userId
+  )
+}
+
+function notifyNewFile(
+  projectId,
+  folderId,
+  file,
+  source,
+  linkedFileData,
+  userId
+) {
+  EditorRealTimeController.emitToRoom(
+    projectId,
+    'reciveNewFile',
+    folderId,
+    file,
+    source,
+    linkedFileData,
+    userId
+  )
+}
+
 const EditorController = {
   addDoc(projectId, folderId, docName, docLines, source, userId, callback) {
     EditorController.addDocWithRanges(
@@ -54,14 +84,7 @@ const EditorController = {
           })
           return callback(err)
         }
-        EditorRealTimeController.emitToRoom(
-          projectId,
-          'reciveNewDoc',
-          folderId,
-          doc,
-          source,
-          userId
-        )
+        notifyNewDoc(projectId, folderId, doc, source, userId)
         callback(err, doc)
       }
     )
@@ -96,9 +119,8 @@ const EditorController = {
           })
           return callback(err)
         }
-        EditorRealTimeController.emitToRoom(
+        notifyNewFile(
           projectId,
-          'reciveNewFile',
           folderId,
           fileRef,
           source,
@@ -756,6 +778,41 @@ const EditorController = {
 }
 
 EditorController.promises = {
+  async addHistoryRecovery(
+    projectId,
+    folderId,
+    basename,
+    restoredBasename,
+    content,
+    source,
+    userId,
+    beforeInsert
+  ) {
+    const result = await ProjectEntityUpdateHandler.promises.addHistoryRecovery(
+      projectId,
+      folderId,
+      basename,
+      restoredBasename,
+      content,
+      source,
+      userId,
+      beforeInsert
+    )
+    if (result.type === 'doc') {
+      notifyNewDoc(projectId, result.folderId, result.doc, source, userId)
+      return { _id: result.doc._id, type: 'doc' }
+    }
+
+    notifyNewFile(
+      projectId,
+      result.folderId,
+      result.fileRef,
+      source,
+      content.linkedFileData,
+      userId
+    )
+    return { _id: result.fileRef._id, type: 'file' }
+  },
   addDoc: promisify(EditorController.addDoc),
   addDocWithRanges: promisify(EditorController.addDocWithRanges),
   addFile: promisify(EditorController.addFile),

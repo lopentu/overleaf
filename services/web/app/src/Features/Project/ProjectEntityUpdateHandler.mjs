@@ -436,6 +436,131 @@ const addFile = wrapWithLock({
   },
 })
 
+/**
+ * Add a historical copy without replacing a live entity that uses its name.
+ * @param {string} projectId
+ * @param {string} folderId
+ * @param {string} basename
+ * @param {string} restoredBasename
+ * @param {{type: 'doc', lines: string[], ranges: ReturnType<typeof import('overleaf-editor-core').getDocUpdaterCompatibleRanges>} | {type: 'file', fsPath: string, linkedFileData: object | undefined}} content
+ * @param {object} source
+ * @param {string} userId
+ * @param {() => void} [beforeInsert]
+ */
+const addHistoryRecovery = wrapWithLock({
+  async beforeLock(
+    projectId,
+    folderId,
+    basename,
+    restoredBasename,
+    content,
+    source,
+    userId,
+    beforeInsert
+  ) {
+    // Blob uploads and docstore writes identify their data by hash or ID.
+    // Prepare them before the lease, then select the visible name under it.
+    if (content.type === 'doc') {
+      const prepared = await addDocWithRanges.beforeLock(
+        projectId,
+        folderId,
+        basename,
+        content.lines,
+        content.ranges,
+        userId,
+        source
+      )
+      return {
+        type: /** @type {const} */ ('doc'),
+        prepared,
+        basename,
+        restoredBasename,
+        beforeInsert,
+      }
+    }
+
+    const prepared = await addFile.beforeLock(
+      projectId,
+      folderId,
+      basename,
+      content.fsPath,
+      content.linkedFileData,
+      userId,
+      source
+    )
+    return {
+      type: /** @type {const} */ ('file'),
+      prepared,
+      basename,
+      restoredBasename,
+      beforeInsert,
+    }
+  },
+  async withLock(recovery) {
+    const { basename, restoredBasename, prepared } = recovery
+    const { projectId, folderId } = prepared
+    const project = await ProjectGetter.promises.getProject(projectId, {
+      rootFolder: true,
+    })
+    if (!project) {
+      throw new Errors.NotFoundError('project not found')
+    }
+    const { element: folder, path } = await ProjectLocator.promises.findElement(
+      {
+        project,
+        element_id: folderId ?? project.rootFolder[0]._id,
+        type: 'folder',
+      }
+    )
+    const occupied = new Set(
+      [
+        ...(folder.docs ?? []),
+        ...(folder.fileRefs ?? []),
+        ...(folder.folders ?? []),
+      ].map(entity => entity.name)
+    )
+
+    let name = basename
+    if (occupied.has(name)) {
+      name = restoredBasename
+      const extension = Path.extname(restoredBasename)
+      const stem = Path.basename(restoredBasename, extension)
+      for (let index = 2; occupied.has(name); index++) {
+        name = stem + ' ' + index + extension
+      }
+    }
+    if (
+      !SafePath.isCleanFilename(name) ||
+      !SafePath.isAllowedLength(path.fileSystem + '/' + name)
+    ) {
+      throw new Errors.InvalidNameError('invalid recovered filename')
+    }
+
+    // The add main tasks retain the Mongo sibling-name check and the normal
+    // project-history updates.
+    if (recovery.type === 'doc') {
+      const doc = recovery.prepared.doc
+      doc.name = name
+      recovery.beforeInsert?.()
+      const result = await addDocWithRanges.mainTask({
+        ...recovery.prepared,
+        folderId: folder._id,
+        docName: name,
+      })
+      return { type: /** @type {const} */ ('doc'), ...result }
+    }
+
+    const fileRef = recovery.prepared.fileRef
+    fileRef.name = name
+    recovery.beforeInsert?.()
+    const result = await addFile.mainTask({
+      ...recovery.prepared,
+      folderId: folder._id,
+    })
+    return { type: /** @type {const} */ ('file'), ...result }
+  },
+})
+
 function githubDocumentChanged(cause) {
   return new OError(
     'The editable document at this path changed during GitHub sync.',
@@ -1531,6 +1656,7 @@ const ProjectEntityUpdateHandler = {
     addDoc,
     addDocWithRanges,
     addFile,
+    addHistoryRecovery,
     addFolder,
     convertDocToFile,
     deleteEntity,

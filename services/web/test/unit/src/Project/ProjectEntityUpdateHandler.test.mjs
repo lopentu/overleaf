@@ -717,6 +717,192 @@ describe('ProjectEntityUpdateHandler', function () {
     })
   })
 
+  describe('addHistoryRecovery', function () {
+    beforeEach(function (ctx) {
+      ctx.folder = { _id: folderId, docs: [], fileRefs: [], folders: [] }
+      ctx.project.rootFolder = [ctx.folder]
+      ctx.ProjectGetter.promises.getProject.resolves(ctx.project)
+      ctx.ProjectLocator.promises.findElement.resolves({
+        element: ctx.folder,
+        path: { fileSystem: '' },
+      })
+      ctx.DocstoreManager.promises.updateDoc.resolves({ rev: 0 })
+      ctx.ProjectEntityMongoUpdateHandler.promises.addDoc.callsFake(
+        async (_projectId, _folderId, doc) => {
+          ctx.folder.docs.push(doc)
+          return {
+            result: { path: { fileSystem: '/' + doc.name } },
+            project: ctx.project,
+          }
+        }
+      )
+      ctx.historyDocument = {
+        type: 'doc',
+        lines: ['historical lines'],
+        ranges: {
+          changes: [{ op: { p: 0, i: 'tracked' } }],
+          comments: [{ op: { p: 0, c: 'note', t: 'copy-thread' } }],
+        },
+      }
+      ctx.recover = () =>
+        ctx.ProjectEntityUpdateHandler.promises.addHistoryRecovery(
+          projectId,
+          folderId,
+          'renamed.tex',
+          'renamed (Restored).tex',
+          ctx.historyDocument,
+          ctx.source,
+          userId
+        )
+    })
+
+    for (const entities of ['docs', 'fileRefs', 'folders']) {
+      it(`preserves a same-name live entity in ${entities}`, async function (ctx) {
+        const live = { _id: 'current-entity', name: 'renamed.tex' }
+        ctx.folder[entities].push(live)
+
+        const result = await ctx.recover()
+
+        expect(result.type).to.equal('doc')
+        expect(result.doc.name).to.equal('renamed (Restored).tex')
+        expect(ctx.folder[entities][0]).to.equal(live)
+        sinon.assert.notCalled(
+          ctx.ProjectEntityMongoUpdateHandler.promises.deleteEntity
+        )
+        sinon.assert.calledOnceWithExactly(
+          ctx.ProjectLocator.promises.findElement,
+          { project: ctx.project, element_id: folderId, type: 'folder' }
+        )
+        sinon.assert.calledOnceWithExactly(
+          ctx.DocstoreManager.promises.updateDoc,
+          projectId,
+          docId,
+          ctx.historyDocument.lines,
+          0,
+          ctx.historyDocument.ranges
+        )
+      })
+    }
+
+    it('chooses the binary name after a slow upload outside the structure lock', async function (ctx) {
+      const beforeInsert = sinon.stub()
+      const uploadStarted = Promise.withResolvers()
+      const finishUpload = Promise.withResolvers()
+      const fileRef = {
+        _id: fileId,
+        name: 'asset.pdf',
+        linkedFileData: ctx.linkedFileData,
+      }
+      ctx.FileStoreHandler.promises.uploadFileFromDisk.callsFake(async () => {
+        uploadStarted.resolve()
+        await finishUpload.promise
+        return { fileRef, createdBlob: true }
+      })
+      ctx.ProjectEntityMongoUpdateHandler.promises.addFile.resolves({
+        result: { path: { fileSystem: '/asset (Restored).pdf' } },
+        project: ctx.project,
+      })
+
+      const recovery =
+        ctx.ProjectEntityUpdateHandler.promises.addHistoryRecovery(
+          projectId,
+          folderId,
+          'asset.pdf',
+          'asset (Restored).pdf',
+          {
+            type: 'file',
+            fsPath: ctx.fileSystemPath,
+            linkedFileData: ctx.linkedFileData,
+          },
+          ctx.source,
+          userId,
+          beforeInsert
+        )
+      await uploadStarted.promise
+      sinon.assert.notCalled(beforeInsert)
+      const structureLockWasFree = !ctx.LockManager.promises.runWithLock.called
+      const live = { _id: 'live-asset', name: 'asset.pdf' }
+      ctx.folder.docs.push(live)
+      finishUpload.resolve()
+      const result = await recovery
+
+      expect(structureLockWasFree).to.equal(true)
+      expect(result.type).to.equal('file')
+      expect(result.fileRef).to.equal(fileRef)
+      expect(result.fileRef.name).to.equal('asset (Restored).pdf')
+      expect(ctx.folder.docs).to.deep.equal([live])
+      sinon.assert.calledOnce(beforeInsert)
+      sinon.assert.callOrder(
+        ctx.FileStoreHandler.promises.uploadFileFromDisk,
+        beforeInsert,
+        ctx.ProjectEntityMongoUpdateHandler.promises.addFile
+      )
+      sinon.assert.calledOnceWithExactly(
+        ctx.FileStoreHandler.promises.uploadFileFromDisk,
+        projectId,
+        { name: 'asset.pdf', linkedFileData: ctx.linkedFileData },
+        ctx.fileSystemPath
+      )
+      sinon.assert.calledOnceWithExactly(
+        ctx.ProjectEntityMongoUpdateHandler.promises.addFile,
+        projectId,
+        folderId,
+        fileRef,
+        userId
+      )
+      sinon.assert.notCalled(
+        ctx.ProjectEntityMongoUpdateHandler.promises.deleteEntity
+      )
+    })
+
+    it('chooses the document name after docstore preparation outside the structure lock', async function (ctx) {
+      const prepareStarted = Promise.withResolvers()
+      const finishPreparation = Promise.withResolvers()
+      ctx.DocstoreManager.promises.updateDoc.callsFake(async () => {
+        prepareStarted.resolve()
+        await finishPreparation.promise
+        return { rev: 2 }
+      })
+
+      const recovery = ctx.recover()
+      await prepareStarted.promise
+      const structureLockWasFree = !ctx.LockManager.promises.runWithLock.called
+      const live = { _id: 'live-doc', name: 'renamed.tex' }
+      ctx.folder.docs.push(live)
+      finishPreparation.resolve()
+      const result = await recovery
+
+      expect(structureLockWasFree).to.equal(true)
+      expect(result.doc.name).to.equal('renamed (Restored).tex')
+      expect(result.doc.rev).to.equal(2)
+      expect(ctx.folder.docs[0]).to.equal(live)
+      sinon.assert.calledOnce(ctx.DocstoreManager.promises.updateDoc)
+    })
+
+    it('reserves distinct suffixes before writes when two recoveries run concurrently', async function (ctx) {
+      ctx.folder.fileRefs.push({ name: 'renamed.tex' })
+      ctx.folder.docs.push({ name: 'renamed (Restored).tex' })
+      let pending = Promise.resolve()
+      ctx.LockManager.promises.runWithLock = sinon.spy(
+        (namespace, id, operation) => {
+          expect(namespace).to.equal('sequentialProjectStructureUpdateLock')
+          expect(id).to.equal(projectId)
+          const next = pending.then(operation)
+          pending = next.catch(() => {})
+          return next
+        }
+      )
+
+      const recovered = await Promise.all([ctx.recover(), ctx.recover()])
+
+      expect(recovered.map(item => item.doc.name)).to.deep.equal([
+        'renamed (Restored) 2.tex',
+        'renamed (Restored) 3.tex',
+      ])
+      sinon.assert.calledTwice(ctx.LockManager.promises.runWithLock)
+    })
+  })
+
   describe('addFile', function () {
     describe('adding a file', function () {
       beforeEach(async function (ctx) {

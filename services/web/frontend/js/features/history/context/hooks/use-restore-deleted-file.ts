@@ -83,10 +83,7 @@ export function useRestoreDeletedFile() {
 
           setState('restoring')
 
-          restoreFile(projectId, {
-            ...selectedFile,
-            pathname: file.newPathname ?? file.pathname,
-          }).then(
+          restoreFile(projectId, file).then(
             (data: RestoreFileResponse) => {
               setRestoredFileMetadata(data)
               setState('waitingForFileTree')

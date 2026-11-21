@@ -30,6 +30,7 @@ describe('HttpController', function () {
       isGuardedAppendReady: sinon.stub(),
     }
     this.SnapshotManager = {
+      getFileRecoverySnapshot: sinon.stub(),
       getFileSnapshotStream: sinon.stub(),
       getProjectSnapshot: sinon.stub(),
     }
@@ -561,6 +562,41 @@ describe('HttpController', function () {
 
     it('should pipe the returned stream into the response', function () {
       this.pipeline.should.have.been.calledWith(this.stream, this.res)
+    })
+  })
+
+  describe('getFileRecoverySnapshot', function () {
+    beforeEach(function () {
+      this.req = {
+        params: {
+          project_id: this.projectId,
+          version: '0',
+          pathname: 'chapters/deleted.tex',
+        },
+      }
+    })
+
+    it('returns the file data for revision zero and a nested path', function () {
+      const data = {
+        editable: true,
+        content: 'historical text',
+        timestamp: null,
+        metadata: null,
+        comments: [],
+        changes: [],
+      }
+      this.SnapshotManager.getFileRecoverySnapshot.yields(null, data)
+
+      this.HttpController.getFileRecoverySnapshot(this.req, this.res, this.next)
+
+      sinon.assert.calledWith(
+        this.SnapshotManager.getFileRecoverySnapshot,
+        this.projectId,
+        0,
+        'chapters/deleted.tex'
+      )
+      sinon.assert.calledOnceWithExactly(this.res.json, data)
+      sinon.assert.notCalled(this.next)
     })
   })
 

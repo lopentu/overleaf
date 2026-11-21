@@ -109,6 +109,16 @@ repos:
         language: system
         pass_filenames: false
         files: '^(services/document-updater/|services/web/(app/src/Features/(DocumentUpdater|Editor|Project|ThirdPartyDataStore)/|modules/github-sync/|test/unit/src/(DocumentUpdater|Editor|Project|ThirdPartyDataStore)/)|\.pre-commit-config\.yaml$)'
+      - id: file-history-recovery
+        name: Project-history file recovery types and snapshot regressions
+        entry: >-
+          bash -ec 'corepack yarn workspace @overleaf/project-history types:check &&
+          exec corepack yarn workspace @overleaf/project-history exec mocha
+          --loader=esmock --exit test/unit/js/SnapshotManager/SnapshotManagerTests.js
+          test/unit/js/HttpController/HttpControllerTests.js'
+        language: system
+        pass_filenames: false
+        files: '^(services/project-history/|services/web/(app/src/Features/History/|test/unit/src/History/)|\.pre-commit-config\.yaml$)'
       - id: git-bridge-quality
         name: Git bridge Java formatting, compilation and tests
         entry: tools/lope/check-git-bridge.sh
@@ -194,12 +204,13 @@ repos:
         pass_filenames: false
         always_run: true
       - id: backend-regressions
-        name: Public comment permissions and linked-file backend regressions
+        name: Public comment, history and linked-file backend regressions
         entry: >-
           corepack yarn workspace @overleaf/web exec vitest run
           --config vitest.config.js modules/track-changes/test/unit
           modules/admin-tools/test/unit
           test/unit/src/Chat/ChatApiHandler.test.mjs
+          test/unit/src/History/RestoreManager.test.mjs
           test/unit/src/LinkedFiles/LinkedFilesController.test.mjs
           test/unit/src/Subscription/CustomerIoPlanHelpers.test.mjs
           test/unit/src/infrastructure/DependencySecurity.test.mjs
@@ -224,6 +235,8 @@ repos:
           env NODE_ENV=test TZ=GMT corepack yarn workspace @overleaf/web exec
           mocha --timeout 15000 --exit --require test/frontend/bootstrap.js
           test/frontend/features/file-tree/flows/create-linked-file.test.tsx
+          test/frontend/features/history/components/restore-deleted-file.test.tsx
+          test/frontend/features/history/components/restore-selected-file.test.tsx
           modules/github-sync/test/frontend/modal-state.test.tsx
           test/frontend/modules/admin-tools/unit/*.test.ts
           test/frontend/modules/template-gallery/unit/*.test.tsx

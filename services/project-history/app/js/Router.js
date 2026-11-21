@@ -80,6 +80,11 @@ export function initialize(app) {
   )
 
   app.get(
+    '/project/:project_id/recovery/version/:version/:pathname',
+    HttpController.getFileRecoverySnapshot
+  )
+
+  app.get(
     '/project/:project_id/metadata/version/:version/:pathname',
     HttpController.getFileMetadataSnapshot
   )

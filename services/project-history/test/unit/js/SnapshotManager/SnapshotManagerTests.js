@@ -618,6 +618,97 @@ Four five six\
       this.getString.resolves('the quick brown fox jumps over the lazy dog')
     })
 
+    describe('single-file recovery', function () {
+      beforeEach(function () {
+        this.chunk.history.snapshot.files['unrelated.tex'] = {
+          hash: '35c9bd86574d61dcadbce2fdd3d4a0684272c6ea',
+          stringLength: 41,
+        }
+      })
+
+      it('loads only the selected text and preserves normalized review ranges', async function () {
+        const timestamp = '2024-01-01T00:00:00.000Z'
+        this.chunk.history.snapshot.timestamp = timestamp
+        this.getString.resolves('one two three')
+        this.getObject.resolves({
+          trackedChanges: [
+            {
+              range: { pos: 4, length: 4 },
+              tracking: { type: 'delete', userId: '31', ts: timestamp },
+            },
+          ],
+          comments: [
+            {
+              id: 'thread-id',
+              ranges: [{ pos: 8, length: 5 }],
+              resolved: true,
+            },
+          ],
+        })
+
+        const recovery =
+          await this.SnapshotManager.promises.getFileRecoverySnapshot(
+            this.projectId,
+            1,
+            'main.tex'
+          )
+
+        expect(recovery).to.deep.equal({
+          editable: true,
+          timestamp,
+          metadata: null,
+          content: 'one three',
+          changes: [
+            {
+              op: { d: 'two ', p: 4 },
+              metadata: { user_id: '31', ts: timestamp },
+            },
+          ],
+          comments: [
+            {
+              id: 'thread-id',
+              op: { c: 'three', p: 4, resolved: true, t: 'thread-id' },
+            },
+          ],
+        })
+        sinon.assert.calledOnceWithExactly(this.getString, this.fileHash)
+        sinon.assert.calledOnceWithExactly(this.getObject, this.rangesHash)
+      })
+
+      it('returns historical linked metadata without loading binary contents', async function () {
+        const metadata = {
+          provider: 'project_file',
+          source_project_id: 'source-project-id',
+          source_entity_path: '/figure.png',
+        }
+        this.chunk.history.snapshot.files['linked.png'] = {
+          hash: 'c6654ea913979e13e22022653d284444f284a172',
+          byteLength: 41,
+          metadata,
+        }
+
+        const recovery =
+          await this.SnapshotManager.promises.getFileRecoverySnapshot(
+            this.projectId,
+            1,
+            'linked.png'
+          )
+
+        expect(recovery).to.deep.equal({
+          editable: false,
+          timestamp: null,
+          metadata,
+          content: null,
+          changes: [],
+          comments: [],
+        })
+        sinon.assert.notCalled(this.HistoryStoreManager.getBlobStore)
+        sinon.assert.notCalled(
+          this.HistoryStoreManager.promises.getProjectBlobStream
+        )
+      })
+    })
+
     describe('with tracked deletes', function () {
       beforeEach(async function () {
         this.getObject.resolves({

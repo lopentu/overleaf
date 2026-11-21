@@ -773,7 +773,7 @@ export function getFileSnapshot(req, res, next) {
   )
 }
 
-const getRangesSnapshotSchema = z.object({
+const singleFileSnapshotSchema = z.object({
   params: z.strictObject({
     project_id: historyIdSchema,
     version: z.coerce.number().int(),
@@ -792,7 +792,7 @@ const getRangesSnapshotFallbackSchema = z.object({
 })
 
 export function getRangesSnapshot(req, res, next) {
-  const { params } = parseReq(req, getRangesSnapshotSchema, {
+  const { params } = parseReq(req, singleFileSnapshotSchema, {
     fallbackSchema: getRangesSnapshotFallbackSchema,
   })
   const { project_id: projectId, version, pathname } = params
@@ -805,6 +805,22 @@ export function getRangesSnapshot(req, res, next) {
         return next(OError.tag(err))
       }
       res.json(ranges)
+    }
+  )
+}
+
+export function getFileRecoverySnapshot(req, res, next) {
+  const { params } = parseReq(req, singleFileSnapshotSchema)
+  const { project_id: projectId, version, pathname } = params
+  SnapshotManager.getFileRecoverySnapshot(
+    projectId,
+    version,
+    pathname,
+    (err, data) => {
+      if (err) {
+        return next(OError.tag(err))
+      }
+      res.json(data)
     }
   )
 }

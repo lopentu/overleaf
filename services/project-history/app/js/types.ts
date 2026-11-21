@@ -226,6 +226,13 @@ export type RangesSnapshot = {
   comments: CommentSnapshot[]
 }
 
+export type FileRecoverySnapshot = RangesSnapshot & {
+  editable: boolean
+  content: string | null
+  timestamp: string | null
+  metadata: object | null
+}
+
 export type Doc = {
   doc: string
   path: string
