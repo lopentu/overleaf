@@ -7,11 +7,20 @@ const config = require('config')
 const assert = require('../assert')
 const mongodb = require('../mongodb')
 const { ChunkVersionConflictError } = require('./errors')
+const {
+  createMongoHistoryActivationReceipts,
+  hasHistoryActivationReceipts,
+} = require('./mongo_activation_receipts')
+
+const historyActivationReceipts = createMongoHistoryActivationReceipts(
+  mongodb.activationReceipts
+)
 
 const DUPLICATE_KEY_ERROR_CODE = 11000
 
 /**
  * @import { ClientSession } from 'mongodb'
+ * @import { HistoryPublication } from './mongo_activation_receipts'
  */
 
 /**
@@ -194,6 +203,37 @@ async function insertPendingChunk(projectId, chunk) {
 }
 
 /**
+ * @param {string} historyId
+ * @param {HistoryPublication} publication
+ */
+function lookupHistoryActivationReceipt(historyId, publication) {
+  return historyActivationReceipts.lookup(historyId, publication)
+}
+
+/**
+ * Commit tagged activations and their prerequisite chunks at majority.
+ * @param {ClientSession} session
+ * @param {boolean} pinned
+ * @param {() => Promise<void>} operation
+ */
+function activationTransaction(session, pinned, operation) {
+  if (pinned) {
+    return session.withTransaction(operation, {
+      writeConcern: { w: 'majority' },
+    })
+  }
+  return session.withTransaction(operation)
+}
+
+/** @param {Chunk} chunk */
+function chunkVersionBounds(chunk) {
+  return {
+    startVersion: chunk.getStartVersion(),
+    endVersion: chunk.getEndVersion(),
+  }
+}
+
+/**
  * Record that a new chunk was created.
  *
  * @param {string} projectId
@@ -202,19 +242,48 @@ async function insertPendingChunk(projectId, chunk) {
  * @param {object} opts
  * @param {Date} [opts.earliestChangeTimestamp]
  * @param {string} [opts.oldChunkId]
+ * @param {number} [opts.expectedPreviousEnd]
  */
 async function confirmCreate(projectId, chunk, chunkId, opts = {}) {
   assert.mongoId(projectId, 'bad projectId')
   assert.instance(chunk, Chunk, 'bad newChunk')
   assert.mongoId(chunkId, 'bad newChunkId')
 
+  const tagged = hasHistoryActivationReceipts(chunk)
+  const start = chunk.getStartVersion()
+  const expectedEnd = opts.expectedPreviousEnd
+  const pinActivation = tagged || expectedEnd !== undefined
+  if (
+    (expectedEnd !== undefined ||
+      (tagged && (start > 0 || opts.oldChunkId != null))) &&
+    (opts.oldChunkId == null ||
+      expectedEnd !== start ||
+      !Number.isSafeInteger(expectedEnd))
+  ) {
+    throw new ChunkVersionConflictError('invalid tagged chunk predecessor', {
+      projectId,
+    })
+  }
   await mongodb.client.withSession(async session => {
-    await session.withTransaction(async () => {
+    await activationTransaction(session, pinActivation, async () => {
       if (opts.oldChunkId != null) {
-        await closeChunk(projectId, opts.oldChunkId, { session })
+        await closeChunk(projectId, opts.oldChunkId, { session }, expectedEnd)
       }
 
-      await activateChunk(projectId, chunkId, { session })
+      await activateChunk(
+        projectId,
+        chunkId,
+        { session },
+        pinActivation ? chunkVersionBounds(chunk) : undefined
+      )
+      if (tagged) {
+        await historyActivationReceipts.recordNewlyActivated(
+          projectId,
+          chunk,
+          chunk.getStartVersion(),
+          session
+        )
+      }
 
       await updateProjectRecord(
         projectId,
@@ -291,6 +360,7 @@ async function resolveHistoryIdToMongoProjectId(projectId) {
  * @param {string} newChunkId
  * @param {object} [opts]
  * @param {Date} [opts.earliestChangeTimestamp]
+ * @param {number} [opts.expectedPreviousEnd]
  */
 async function confirmUpdate(
   projectId,
@@ -304,11 +374,49 @@ async function confirmUpdate(
   assert.instance(newChunk, Chunk, 'bad newChunk')
   assert.mongoId(newChunkId, 'bad newChunkId')
 
+  const tagged = hasHistoryActivationReceipts(newChunk)
+  const expectedEnd = opts.expectedPreviousEnd
+  const pinActivation = tagged || expectedEnd !== undefined
+  const start = newChunk.getStartVersion()
+  if (
+    (tagged && expectedEnd === undefined) ||
+    (expectedEnd !== undefined &&
+      (!Number.isSafeInteger(expectedEnd) ||
+        expectedEnd < start ||
+        expectedEnd > newChunk.getEndVersion()))
+  ) {
+    throw new ChunkVersionConflictError('invalid tagged chunk predecessor', {
+      projectId,
+      oldChunkId,
+    })
+  }
+  const previousBounds =
+    expectedEnd === undefined
+      ? undefined
+      : { startVersion: start, endVersion: expectedEnd }
   await mongodb.client.withSession(async session => {
-    await session.withTransaction(async () => {
-      await deleteActiveChunk(projectId, oldChunkId, { session })
+    await activationTransaction(session, pinActivation, async () => {
+      await deleteActiveChunk(
+        projectId,
+        oldChunkId,
+        { session },
+        previousBounds
+      )
 
-      await activateChunk(projectId, newChunkId, { session })
+      await activateChunk(
+        projectId,
+        newChunkId,
+        { session },
+        pinActivation ? chunkVersionBounds(newChunk) : undefined
+      )
+      if (tagged && previousBounds) {
+        await historyActivationReceipts.recordNewlyActivated(
+          projectId,
+          newChunk,
+          previousBounds.endVersion,
+          session
+        )
+      }
 
       await updateProjectRecord(
         projectId,
@@ -327,8 +435,9 @@ async function confirmUpdate(
  * @param {string} chunkId
  * @param {object} [opts]
  * @param {ClientSession} [opts.session]
+ * @param {{startVersion: number, endVersion: number}} [versionBounds]
  */
-async function activateChunk(projectId, chunkId, opts = {}) {
+async function activateChunk(projectId, chunkId, opts = {}, versionBounds) {
   assert.mongoId(projectId, 'bad projectId')
   assert.mongoId(chunkId, 'bad chunkId')
 
@@ -339,6 +448,7 @@ async function activateChunk(projectId, chunkId, opts = {}) {
         _id: new ObjectId(chunkId),
         projectId: new ObjectId(projectId),
         state: 'pending',
+        ...versionBounds,
       },
       { $set: { state: 'active', updatedAt: new Date() } },
       opts
@@ -367,13 +477,15 @@ async function activateChunk(projectId, chunkId, opts = {}) {
  * @param {string} chunkId
  * @param {object} [opts]
  * @param {ClientSession} [opts.session]
+ * @param {number} [expectedEnd]
  */
-async function closeChunk(projectId, chunkId, opts = {}) {
+async function closeChunk(projectId, chunkId, opts = {}, expectedEnd) {
   const result = await mongodb.chunks.updateOne(
     {
       _id: new ObjectId(chunkId),
       projectId: new ObjectId(projectId),
       state: 'active',
+      ...(expectedEnd !== undefined && { endVersion: expectedEnd }),
     },
     { $set: { state: 'closed' } },
     opts
@@ -398,13 +510,15 @@ async function closeChunk(projectId, chunkId, opts = {}) {
  * @param {string} chunkId
  * @param {object} [opts]
  * @param {ClientSession} [opts.session]
+ * @param {{startVersion: number, endVersion: number}} [versionBounds]
  */
-async function deleteActiveChunk(projectId, chunkId, opts = {}) {
+async function deleteActiveChunk(projectId, chunkId, opts = {}, versionBounds) {
   const updateResult = await mongodb.chunks.updateOne(
     {
       _id: new ObjectId(chunkId),
       projectId: new ObjectId(projectId),
       state: 'active',
+      ...versionBounds,
     },
     { $set: { state: 'deleted', updatedAt: new Date() } },
     opts
@@ -523,6 +637,7 @@ module.exports = {
   insertPendingChunk,
   confirmCreate,
   confirmUpdate,
+  lookupHistoryActivationReceipt,
   updateProjectRecord,
   deleteChunk,
   deleteProjectChunks,

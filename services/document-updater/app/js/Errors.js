@@ -5,6 +5,7 @@ class NotFoundError extends OError {}
 class WebDocumentNotFoundError extends NotFoundError {}
 class OpRangeNotAvailableError extends OError {}
 class ProjectStateChangedError extends OError {}
+class ProjectUpdateQueueGuardedError extends OError {}
 class DocumentVersionMismatchError extends OError {}
 class DeleteMismatchError extends OError {}
 class FileTooLargeError extends OError {}
@@ -26,6 +27,7 @@ module.exports = {
   WebDocumentNotFoundError,
   OpRangeNotAvailableError,
   ProjectStateChangedError,
+  ProjectUpdateQueueGuardedError,
   DocumentVersionMismatchError,
   DeleteMismatchError,
   FileTooLargeError,

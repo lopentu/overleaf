@@ -2,6 +2,7 @@ import sinon from 'sinon'
 import { expect } from 'chai'
 import mongodb from 'mongodb-legacy'
 import { strict as esmock } from 'esmock'
+import { HistoryPublicationTransportUnavailableError } from '../../../../app/js/Errors.js'
 const { ObjectId } = mongodb
 
 const MODULE_PATH = '../../../../app/js/RetryManager.js'
@@ -100,6 +101,29 @@ describe('RetryManager', function () {
   })
 
   describe('RetryManager', function () {
+    it('retries a repeatedly unresolved publication without resetting history', async function () {
+      this.ErrorRecorder.promises.getFailedProjects.resolves([
+        {
+          project_id: this.projectId1,
+          error: new HistoryPublicationTransportUnavailableError(
+            'History publication is unresolved'
+          ).toString(),
+          attempts: 25,
+          resyncAttempts: 1,
+        },
+      ])
+
+      await this.RetryManager.promises.retryFailures({ failureType: 'hard' })
+      sinon.assert.notCalled(this.SyncManager.promises.startHardResync)
+      sinon.assert.notCalled(this.SyncManager.promises.startResync)
+
+      await this.RetryManager.promises.retryFailures({ failureType: 'soft' })
+      sinon.assert.calledOnceWithExactly(
+        this.UpdatesProcessor.promises.processUpdatesForProject,
+        this.projectId1
+      )
+    })
+
     describe('for a soft failure', function () {
       beforeEach(async function () {
         await this.RetryManager.promises.retryFailures({ failureType: 'soft' })

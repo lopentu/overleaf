@@ -5,6 +5,9 @@ import EventEmitter from 'node:events'
 import OError from '@overleaf/o-error'
 import { RequestFailedError } from '@overleaf/fetch-utils'
 import * as Errors from '../../../../app/js/Errors.js'
+import { reconcileRetirementPublication } from '../../../../app/js/HistoryPublication.js'
+import { parseHistoryUpdate } from '../../../../app/js/HistoryPublicationEnvelope.js'
+import { convertToChanges } from '../../../../app/js/UpdateTranslator.js'
 
 const MODULE_PATH = '../../../../app/js/HistoryStoreManager.js'
 
@@ -42,6 +45,8 @@ describe('HistoryStoreManager', function () {
       .yields(null, this.historyId)
 
     this.FetchUtils = {
+      fetchJson: sinon.stub(),
+      fetchJsonWithResponse: sinon.stub(),
       fetchStream: sinon.stub(),
       fetchString: sinon.stub(),
       fetchNothing: sinon.stub().resolves(),
@@ -60,6 +65,130 @@ describe('HistoryStoreManager', function () {
       '../../../../app/js/WebApiManager.js': this.WebApiManager,
       '../../../../app/js/Errors.js': Errors,
       '@overleaf/logger': this.logger,
+    })
+  })
+
+  describe('lookupActivationReceipt', function () {
+    beforeEach(function () {
+      this.publication = {
+        historyId: '123456789012345678901234',
+        batchId: '12345678-1234-1234-1234-123456789012',
+        ordinal: 0,
+        entryOrdinal: 0,
+        digest: 'ab'.repeat(32),
+      }
+    })
+
+    for (const status of [
+      { status: 'pending' },
+      { status: 'conflict' },
+      { status: 'committed', historyVersion: 42 },
+    ]) {
+      it(`returns the exact ${status.status} result`, async function () {
+        this.FetchUtils.fetchJson.resolves(status)
+
+        const result = await this.HistoryStoreManager.lookupActivationReceipt(
+          this.publication
+        )
+
+        expect(result).to.deep.equal(status)
+        sinon.assert.calledOnceWithExactly(
+          this.FetchUtils.fetchJson,
+          'http://example.com/projects/123456789012345678901234/activation-receipts/lookup',
+          sinon.match({
+            method: 'POST',
+            json: this.publication,
+            basicAuth: { user: 'overleaf', password: 'password' },
+          })
+        )
+      })
+    }
+
+    it('rejects a committed result without a valid persisted version', async function () {
+      this.FetchUtils.fetchJson.resolves({
+        status: 'committed',
+        historyVersion: 0,
+      })
+
+      await expect(
+        this.HistoryStoreManager.lookupActivationReceipt(this.publication)
+      ).to.be.rejected
+    })
+
+    it('rejects a malformed history ID before sending the request', async function () {
+      const publication = { ...this.publication, historyId: '../other' }
+
+      await expect(
+        this.HistoryStoreManager.lookupActivationReceipt(publication)
+      ).to.be.rejected
+      sinon.assert.notCalled(this.FetchUtils.fetchJson)
+    })
+  })
+
+  describe('appendGuardedChange', function () {
+    beforeEach(function () {
+      this.change = {
+        timestamp: '2026-11-21T00:00:00.000Z',
+        operations: [],
+        historyPublication: {
+          historyId: '123456789012345678901234',
+          batchId: '12345678-1234-1234-1234-123456789012',
+          ordinal: 0,
+          entryOrdinal: 0,
+          digest: 'ab'.repeat(32),
+        },
+      }
+    })
+
+    it('sends preserved storage bytes with the expected base version', async function () {
+      const receipt = { status: 'committed', historyVersion: 9 }
+      this.FetchUtils.fetchJsonWithResponse.resolves({
+        json: receipt,
+        response: { status: 200 },
+      })
+
+      const result = await this.HistoryStoreManager.appendGuardedChange(
+        this.change,
+        8
+      )
+
+      expect(result).to.deep.equal(receipt)
+      sinon.assert.calledOnceWithExactly(
+        this.FetchUtils.fetchJsonWithResponse,
+        'http://example.com/projects/123456789012345678901234/activation-receipts/append?end_version=8',
+        sinon.match({ method: 'POST', json: this.change })
+      )
+    })
+
+    it('returns pending for an indeterminate append', async function () {
+      this.FetchUtils.fetchJsonWithResponse.resolves({
+        json: { status: 'pending' },
+        response: { status: 202 },
+      })
+
+      expect(
+        await this.HistoryStoreManager.appendGuardedChange(this.change, 8)
+      ).to.deep.equal({ status: 'pending' })
+    })
+
+    it('rejects a committed proof carried by a pending response', async function () {
+      this.FetchUtils.fetchJsonWithResponse.resolves({
+        json: { status: 'committed', historyVersion: 9 },
+        response: { status: 202 },
+      })
+
+      await expect(
+        this.HistoryStoreManager.appendGuardedChange(this.change, 8)
+      ).to.be.rejectedWith('Unexpected guarded history append response')
+    })
+
+    it('rejects a tag-free change before the private request', async function () {
+      delete this.change.historyPublication
+
+      await expect(
+        this.HistoryStoreManager.appendGuardedChange(this.change, 8)
+      ).to.be.rejectedWith('Invalid guarded history change')
+      sinon.assert.notCalled(this.FetchUtils.fetchJsonWithResponse)
     })
   })
 
@@ -507,6 +636,102 @@ describe('HistoryStoreManager', function () {
         new RequestFailedError('', {}, { status: 404 })
       )
       this.FetchUtils.fetchStream.resolves(this.fileStream)
+    })
+
+    it('replays a conversion outbox until both exact removals and additions are durable', async function () {
+      const owner = {
+        projectId: this.projectId,
+        docId: '123456789012345678901235',
+        operationId: 'ea9500de-35a2-42c6-996e-bddf8db68bba',
+        version: 4,
+      }
+      const historyId = '123456789012345678901236'
+      const replacement = {
+        fileId: '123456789012345678901237',
+        sourceCommit: 'a'.repeat(40),
+        hash: 'b'.repeat(40),
+        name: 'paper.tex',
+        created: '2026-01-01T00:00:00.000Z',
+      }
+      const retirement = {
+        ...owner,
+        userId: '123456789012345678901238',
+        path: '/folder/paper.tex',
+        deletedAt: '2026-01-01T00:00:01.000Z',
+        committedStructureVersion: 21,
+        replacement,
+      }
+      let durableEntries = 0
+      const lookup = sinon.spy(async ({ entryOrdinal }) =>
+        entryOrdinal < durableEntries
+          ? { status: 'committed', historyVersion: 31 + entryOrdinal }
+          : { status: 'pending' }
+      )
+      const enqueue = sinon.stub().resolves('buffered')
+      const reconcile = () =>
+        reconcileRetirementPublication(
+          {
+            getDocumentRetirement: async () => ({
+              status: 'committed',
+              retirement,
+            }),
+            getFreshHistoryId: async () => historyId,
+            lookup,
+            enqueue,
+          },
+          owner
+        )
+
+      expect(await reconcile()).to.equal('pending')
+      const [outbox] = enqueue.firstCall.args
+      expect(outbox.entries).to.have.length(2)
+      const [remove, add] = outbox.entries.map(parseHistoryUpdate)
+      expect(remove.version).to.equal('21.0')
+      expect(add.version).to.equal('21.1')
+      expect(add.pathname).to.equal(remove.pathname)
+
+      const createBlob = () =>
+        this.HistoryStoreManager.promises.createBlobForUpdate(
+          this.projectId,
+          historyId,
+          add
+        )
+      await expect(createBlob()).to.be.rejectedWith('does not match')
+      this.FetchUtils.fetchStream.rejects(
+        new RequestFailedError('', {}, { status: 404 })
+      )
+      await expect(createBlob()).to.be.rejected
+      expect(this.LocalFileWriter.bufferOnDisk.calledOnce).to.equal(true)
+
+      this.FetchUtils.fetchStream.resolves(this.fileStream)
+      this.LocalFileWriter.bufferOnDisk.callsArgWith(4, null, replacement.hash)
+      const blobHashes = await createBlob()
+      expect(this.FetchUtils.fetchStream.lastCall.args[0]).to.equal(
+        `${this.settings.apis.filestore.url}/project/${this.projectId}/file/${replacement.fileId}`
+      )
+      const changes = convertToChanges(this.projectId, [
+        { update: remove },
+        { update: add, blobHashes },
+      ])
+      expect(
+        changes.map(change => change.toStorageRaw().projectVersion)
+      ).to.deep.equal(['21.0', '21.1'])
+      expect(changes[1].toStorageRaw().operations).to.deep.equal([
+        { pathname: 'folder/paper.tex', file: { hash: replacement.hash } },
+      ])
+
+      durableEntries = 1
+      enqueue.resolves('replayed')
+      expect(await reconcile()).to.equal('pending')
+      expect(enqueue.secondCall.args).to.deep.equal([
+        { ...outbox, requireExisting: true },
+      ])
+      durableEntries = 2
+      expect(await reconcile()).to.equal('durable')
+      expect(lookup.args.slice(-2)).to.deep.equal(
+        changes.map(change => [change.toStorageRaw().historyPublication])
+      )
+      sinon.assert.calledTwice(enqueue)
     })
 
     describe('for a file update with any filestore location', function () {

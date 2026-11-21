@@ -25,6 +25,21 @@ export function initialize(app) {
 
   app.post('/project/:project_id/flush', HttpController.flushProject)
 
+  app.post(
+    '/project/:project_id/history-publication/reconcile',
+    HttpController.reconcileHistoryPublication
+  )
+
+  app.post(
+    '/project/:project_id/retirement/:operation_id/reconcile',
+    HttpController.reconcileRetirementHistory
+  )
+
+  app.get(
+    '/project/:project_id/retirement-ready',
+    HttpController.getRetirementReadiness
+  )
+
   app.get(
     '/project/:project_id/resync-pending',
     HttpController.getResyncPending

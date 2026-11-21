@@ -87,8 +87,32 @@ async function _determineFileType(path, fsPath, existingFileType) {
 }
 
 /** @typedef {{docId: string, version: number}} ExpectedDocument */
+/** @typedef {ExpectedDocument & {operationId: string, sourceCommit: string, blobHash: string}} ExpectedDocumentReplacement */
 /** @typedef {{fileId: string, rev: number | undefined}} ExpectedFile */
-/** @typedef {ExpectedDocument | ExpectedFile | null} ExpectedEntity */
+/** @typedef {ExpectedDocument | ExpectedDocumentReplacement | ExpectedFile | null} ExpectedEntity */
+/** @typedef {(ExpectedDocument & {operationId?: string}) | ExpectedFile} ExpectedDeletion */
+
+/**
+ * @param {ExpectedDocument | ExpectedDocumentReplacement} target
+ * @returns {target is ExpectedDocumentReplacement}
+ */
+function hasGuardedBinaryReplacement(target) {
+  const guard = Settings.documentupdater
+  return (
+    guard?.enableRetirementBinaryConversion === true &&
+    guard.enableRetirementQueue === true &&
+    guard.enableRetirementWriterSeal === true &&
+    'operationId' in target &&
+    typeof target.operationId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      target.operationId
+    ) &&
+    typeof target.sourceCommit === 'string' &&
+    /^[0-9a-f]{40}$/.test(target.sourceCommit) &&
+    typeof target.blobHash === 'string' &&
+    /^[0-9a-f]{40}$/.test(target.blobHash)
+  )
+}
 
 /**
  * @param {string} userId
@@ -118,7 +142,13 @@ async function _mergeUpdate(
   const fileType = await _determineFileType(path, fsPath, existingFileType)
 
   if (fileType === 'file') {
-    if (expectedDocument) {
+    const replacement =
+      expectedDocument &&
+      source === 'github' &&
+      hasGuardedBinaryReplacement(expectedEntity)
+        ? expectedEntity
+        : null
+    if (expectedDocument && !replacement) {
       throw new OError(
         'GitHub sync cannot replace a guarded editable document with a binary file.',
         {
@@ -134,12 +164,21 @@ async function _mergeUpdate(
       userId,
       expectedEntity
     )
+    if (replacement && file.hash !== replacement.blobHash) {
+      throw new OError(
+        'The binary replacement did not match the GitHub blob.',
+        {
+          status: 409,
+        }
+      )
+    }
     return {
       projectId,
       entityType: 'file',
       entityId: file._id,
       rev: file.rev,
       folderId: folder._id,
+      ...(replacement ? { contentHash: file.hash } : {}),
     }
   } else if (fileType === 'doc') {
     const { doc, folder, contentHash } = await _processDoc(
@@ -148,7 +187,9 @@ async function _mergeUpdate(
       fsPath,
       path,
       source,
-      expectedEntity
+      expectedDocument
+        ? { docId: expectedEntity.docId, version: expectedEntity.version }
+        : expectedEntity
     )
     return {
       projectId,
@@ -168,7 +209,7 @@ async function _mergeUpdate(
  * @param {string} projectId
  * @param {string} path
  * @param {string} source
- * @param {NonNullable<ExpectedEntity>} [expectedEntity]
+ * @param {ExpectedDeletion} [expectedEntity]
  */
 async function deleteUpdate(userId, projectId, path, source, expectedEntity) {
   try {

@@ -2,6 +2,7 @@
 'use strict'
 
 const { z, zz } = require('@overleaf/validation-tools')
+const { isHistoryPublication } = require('./history_publication')
 
 const rawTrackingProps = z.strictObject({
   type: z.enum(['insert', 'delete']),
@@ -139,10 +140,9 @@ const rawLinkedFileData = z.discriminatedUnion('provider', [
     // default this to 'bibtex' (ZoteroAgent `_getFormat`)
     format: z.enum(['bibtex', 'biblatex']).optional(),
     group_id: zz.routeSegment().nullish(),
-    collection_key: z.union([
-      z.literal('publications'),
-      z.string().regex(/^[A-Za-z0-9]{8}$/),
-    ]).optional(),
+    collection_key: z
+      .union([z.literal('publications'), z.string().regex(/^[A-Za-z0-9]{8}$/)])
+      .optional(),
     importer_id: z.string().optional(),
     importer_name: z.string().optional(),
     v1_importer_id: z.number().optional(),
@@ -352,6 +352,15 @@ const rawChange = z.strictObject({
   v2DocVersions: rawV2DocVersions.optional(),
 })
 
+// This tag is internal storage metadata. Import and history API responses use
+// rawChange, which deliberately excludes it.
+/** @type {z.ZodType<import('./types').HistoryPublication>} */
+const rawHistoryPublication = z.custom(isHistoryPublication)
+
+const rawStorageChange = rawChange.extend({
+  historyPublication: rawHistoryPublication.optional(),
+})
+
 module.exports = {
   rawTrackingProps,
   rawClearTrackingProps,
@@ -394,4 +403,6 @@ module.exports = {
   rawNoOperation,
   rawOperation,
   rawChange,
+  rawHistoryPublication,
+  rawStorageChange,
 }

@@ -128,4 +128,10 @@ router.get(
   projectsController.getChanges
 )
 
+router.post(
+  '/projects/:project_id/activation-receipts/lookup',
+  handleBasicAuth,
+  projectsController.lookupActivationReceipt
+)
+
 module.exports = router

@@ -7,6 +7,8 @@ import { URL } from 'node:url'
 import OError from '@overleaf/o-error'
 import Settings from '@overleaf/settings'
 import {
+  fetchJson,
+  fetchJsonWithResponse,
   fetchStream,
   fetchString,
   fetchNothing,
@@ -19,8 +21,22 @@ import * as HashManager from './HashManager.js'
 import * as HistoryBlobTranslator from './HistoryBlobTranslator.js'
 import { callbackify, promisifyMultiResult } from '@overleaf/promise-utils'
 import { BlobStoreBase } from 'overleaf-editor-core'
+import historyPublication from 'overleaf-editor-core/lib/history_publication.js'
+import { z } from '@overleaf/validation-tools'
+import {
+  getHistoryPublication,
+  isRetirementFileAddition,
+} from './HistoryPublicationEnvelope.js'
 
 const HTTP_REQUEST_TIMEOUT = Settings.overleaf.history.requestTimeout
+const activationReceiptSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('pending') }),
+  z.strictObject({ status: z.literal('conflict') }),
+  z.strictObject({
+    status: z.literal('committed'),
+    historyVersion: z.number().int().positive(),
+  }),
+])
 
 /**
  * Container for functions that need to be mocked in tests
@@ -278,6 +294,86 @@ export function sendChanges(
   )
 }
 
+const activationReadinessSchema = z.discriminatedUnion('ready', [
+  z.strictObject({ ready: z.literal(false) }),
+  z.strictObject({
+    ready: z.literal(true),
+    historyId: z.string().regex(/^[a-f0-9]{24}$/),
+  }),
+])
+
+/** @param {string} historyId */
+export async function isGuardedAppendReady(historyId) {
+  const reply = activationReadinessSchema.parse(
+    await fetchJson(
+      _buildUrl({
+        path: `projects/${historyId}/activation-receipts/readiness`,
+      }),
+      { ...getHistoryFetchOptions(), method: 'GET' }
+    )
+  )
+  return reply.ready && reply.historyId === historyId
+}
+
+/** @param {import('overleaf-editor-core/lib/types.js').HistoryPublication} publication */
+export async function lookupActivationReceipt(publication) {
+  if (!historyPublication.isHistoryPublication(publication)) {
+    throw new TypeError('Invalid history publication metadata')
+  }
+
+  const response = await fetchJson(
+    _buildUrl({
+      path: `projects/${publication.historyId}/activation-receipts/lookup`,
+    }),
+    {
+      ...getHistoryFetchOptions(),
+      method: 'POST',
+      json: publication,
+    }
+  )
+  return activationReceiptSchema.parse(response)
+}
+
+/**
+ * @param {import('overleaf-editor-core/lib/types.js').RawStorageChange} change
+ * @param {number} endVersion
+ */
+export async function appendGuardedChange(change, endVersion) {
+  const { historyPublication: publication } = change
+  if (
+    !historyPublication.isHistoryPublication(publication) ||
+    !Number.isSafeInteger(endVersion) ||
+    endVersion < 0
+  ) {
+    throw new TypeError('Invalid guarded history change')
+  }
+
+  try {
+    const { json, response } = await fetchJsonWithResponse(
+      _buildUrl({
+        path: `projects/${publication.historyId}/activation-receipts/append`,
+        qs: { end_version: endVersion },
+      }),
+      { ...getHistoryFetchOptions(), method: 'POST', json: change }
+    )
+    const result = activationReceiptSchema.parse(json)
+    if (response.status !== (result.status === 'pending' ? 202 : 200)) {
+      throw new Error('Unexpected guarded history append response')
+    }
+    return result
+  } catch (error) {
+    if (error instanceof RequestFailedError) {
+      if (error.response.status === 409) {
+        return { status: /** @type {const} */ ('version-conflict') }
+      }
+      if (error.response.status === 503) {
+        return { status: /** @type {const} */ ('unavailable') }
+      }
+    }
+    throw error
+  }
+}
+
 function createBlobFromString(historyId, data, fileId, callback) {
   const stringStream = new StringStream()
   stringStream.push(data)
@@ -339,6 +435,9 @@ function _rewriteFilestoreUrl(url, projectId, callback) {
 
 export function createBlobForUpdate(projectId, historyId, update, callback) {
   callback = _.once(callback)
+  const retirementFile = Boolean(
+    getHistoryPublication(update) && isRetirementFileAddition(update)
+  )
 
   if (update.doc != null && update.docLines != null) {
     let ranges
@@ -379,13 +478,21 @@ export function createBlobForUpdate(projectId, historyId, update, callback) {
     )
   } else if (
     update.file != null &&
-    (update.url != null || update.createdBlob)
+    (update.url != null || update.createdBlob || retirementFile)
   ) {
-    const { fileId, filestoreURL } = _rewriteFilestoreUrl(
-      update.url,
-      projectId,
-      callback
-    )
+    if (retirementFile && !/^[a-f0-9]{24}$/.test(projectId)) {
+      return callback(
+        new OError('invalid project for retirement blob creation')
+      )
+    }
+    // The guarded descriptor only carries the exact file ID. Resolve it to
+    // this worker's filestore address without adding transport data to its receipt.
+    const { fileId, filestoreURL } = retirementFile
+      ? {
+          fileId: update.file,
+          filestoreURL: `${Settings.apis.filestore.url}/project/${projectId}/file/${update.file}`,
+        }
+      : _rewriteFilestoreUrl(update.url, projectId, callback)
     _checkBlobExists(historyId, update.hash, (err, blobExists) => {
       if (err) {
         return callback(
@@ -433,6 +540,13 @@ export function createBlobForUpdate(projectId, historyId, update, callback) {
                 return callback(OError.tag(err))
               }
               if (update.hash && update.hash !== fileHash) {
+                if (retirementFile) {
+                  return callback(
+                    new OError(
+                      'Retirement replacement blob does not match the committed hash'
+                    )
+                  )
+                }
                 logger.warn(
                   { projectId, fileId, webHash: update.hash, fileHash },
                   'hash mismatch between web and project-history'
@@ -445,6 +559,7 @@ export function createBlobForUpdate(projectId, historyId, update, callback) {
         })
         .catch(err => {
           if (
+            !retirementFile &&
             err instanceof RequestFailedError &&
             err.response.status === 404
           ) {

@@ -5,6 +5,16 @@ import Settings from '@overleaf/settings'
 import redis from '@overleaf/redis-wrapper'
 import metrics from '@overleaf/metrics'
 import OError from '@overleaf/o-error'
+import {
+  clearHistoryQueueTimestamp,
+  enqueueHistoryPublication,
+  removeHistoryQueueEntries,
+  resetHistoryQueue,
+} from './HistoryPublicationBuffer.js'
+import {
+  getHistoryPublication,
+  parseHistoryUpdate,
+} from './HistoryPublicationEnvelope.js'
 
 /**
  * Maximum size taken from the redis queue, to prevent project history
@@ -38,6 +48,11 @@ const CACHE_TTL_IN_SECONDS = 3600
 
 const Keys = Settings.redis.project_history.key_schema
 const rclient = redis.createClient(Settings.redis.project_history)
+
+/** @param {import('./HistoryPublication.js').BufferRequest} request */
+export function bufferHistoryPublication(request) {
+  return enqueueHistoryPublication(rclient, Keys, request)
+}
 
 async function countUnprocessedUpdates(projectId) {
   const key = Keys.projectHistoryOps({ project_id: projectId })
@@ -96,7 +111,7 @@ async function getRawUpdatesBatch(projectId, batchSize) {
 }
 
 export function parseDocUpdates(jsonUpdates) {
-  return jsonUpdates.map(update => JSON.parse(update))
+  return jsonUpdates.map(parseHistoryUpdate)
 }
 
 async function getUpdatesInBatches(projectId, batchSize, runner) {
@@ -110,17 +125,31 @@ async function getUpdatesInBatches(projectId, batchSize, runner) {
 
     const rawUpdates = []
     const updates = []
+    let publicationBatch = false
     let totalOpLength = 0
     let totalDocContentCount = 0
     for (const rawUpdate of redisBatch.rawUpdates) {
       let update
       try {
-        update = JSON.parse(rawUpdate)
+        update = parseHistoryUpdate(rawUpdate)
       } catch (error) {
         throw OError.tag(error, 'failed to parse update', {
           projectId,
           update,
         })
+      }
+
+      if (getHistoryPublication(update)) {
+        if (updates.length > 0) {
+          moreBatches = true
+          break
+        }
+        // A publication is committed and acknowledged as one exact entry.
+        publicationBatch = true
+        moreBatches ||= redisBatch.rawUpdates.length > 1
+        rawUpdates.push(rawUpdate)
+        updates.push(update)
+        break
       }
 
       totalOpLength += update?.op?.length || 1
@@ -145,7 +174,11 @@ async function getUpdatesInBatches(projectId, batchSize, runner) {
     }
 
     await runner(updates)
-    await deleteAppliedDocUpdates(projectId, rawUpdates)
+    if (publicationBatch) {
+      await removeAppliedUpdates(projectId, rawUpdates, 'publication')
+    } else {
+      await deleteAppliedDocUpdates(projectId, rawUpdates)
+    }
 
     if (batchSize === 1) {
       // Special case for single stepping, don't process more batches
@@ -160,50 +193,24 @@ async function getUpdatesInBatches(projectId, batchSize, runner) {
  * @return {Promise<void>}
  */
 async function deleteAppliedDocUpdate(projectId, update) {
-  const raw = update._raw
-  // Delete the first occurrence of the update with LREM KEY COUNT
-  // VALUE by setting COUNT to 1 which 'removes COUNT elements equal to
-  // value moving from head to tail.'
-  //
-  // If COUNT is 0 the entire list would be searched which would block
-  // redis since it would be an O(N) operation where N is the length of
-  // the queue, in a multi of the batch size.
-  metrics.summary('redis.projectHistoryOps', raw.length, {
-    status: 'lrem',
-  })
-  await rclient.lrem(Keys.projectHistoryOps({ project_id: projectId }), 1, raw)
+  await removeAppliedUpdates(projectId, [update._raw], 'resync')
 }
 
 async function deleteAppliedDocUpdates(projectId, updates) {
-  const multi = rclient.multi()
-  // Delete all the updates which have been applied (exact match)
+  await removeAppliedUpdates(projectId, updates, 'legacy')
+}
+
+async function removeAppliedUpdates(projectId, updates, kind) {
   for (const update of updates) {
-    // Delete the first occurrence of the update with LREM KEY COUNT
-    // VALUE by setting COUNT to 1 which 'removes COUNT elements equal to
-    // value moving from head to tail.'
-    //
-    // If COUNT is 0 the entire list would be searched which would block
-    // redis since it would be an O(N) operation where N is the length of
-    // the queue, in a multi of the batch size.
     metrics.summary('redis.projectHistoryOps', update.length, {
       status: 'lrem',
     })
-    multi.lrem(Keys.projectHistoryOps({ project_id: projectId }), 1, update)
   }
-  if (updates.length > 0) {
-    multi.del(Keys.projectHistoryFirstOpTimestamp({ project_id: projectId }))
-  }
-  await multi.exec()
+  await removeHistoryQueueEntries(rclient, Keys, projectId, updates, kind)
 }
 
-/**
- * Deletes the entire queue - use with caution
- */
 async function destroyDocUpdatesQueue(projectId) {
-  await rclient.del(
-    Keys.projectHistoryOps({ project_id: projectId }),
-    Keys.projectHistoryFirstOpTimestamp({ project_id: projectId })
-  )
+  await resetHistoryQueue(rclient, Keys, projectId)
 }
 
 /**
@@ -319,8 +326,7 @@ async function getFirstOpTimestamps(projectIds) {
 }
 
 async function clearFirstOpTimestamp(projectId) {
-  const key = Keys.projectHistoryFirstOpTimestamp({ project_id: projectId })
-  await rclient.del(key)
+  await clearHistoryQueueTimestamp(rclient, Keys, projectId, false)
 }
 
 async function getProjectIdsWithFirstOpTimestamps(limit) {
@@ -333,20 +339,7 @@ async function getProjectIdsWithFirstOpTimestamps(limit) {
 }
 
 async function clearDanglingFirstOpTimestamp(projectId) {
-  const count = await rclient.exists(
-    Keys.projectHistoryFirstOpTimestamp({ project_id: projectId }),
-    Keys.projectHistoryOps({ project_id: projectId })
-  )
-  if (count === 2 || count === 0) {
-    // both (or neither) keys are present, so don't delete the timestamp
-    return 0
-  }
-  // only one key is present, which makes this a dangling record,
-  // so delete the timestamp
-  const cleared = await rclient.del(
-    Keys.projectHistoryFirstOpTimestamp({ project_id: projectId })
-  )
-  return cleared
+  return await clearHistoryQueueTimestamp(rclient, Keys, projectId, true)
 }
 
 async function getCachedHistoryId(projectId) {

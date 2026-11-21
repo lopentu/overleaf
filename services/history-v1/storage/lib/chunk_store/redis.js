@@ -195,7 +195,7 @@ async function queueChanges(
       persistTime.toString(),
       expireTime.toString(),
       onlyIfExists.toString(), // Only queue changes if the snapshot already exists
-      ...changes.map(change => JSON.stringify(change.toRaw())), // Serialize changes
+      ...changes.map(change => JSON.stringify(change.toStorageRaw())), // Serialize changes
     ]
 
     const status = await rclient.queue_changes(keys, args)
@@ -368,7 +368,7 @@ async function getChangesSinceVersion(projectId, version) {
             .map(rawChange =>
               typeof rawChange === 'string' ? JSON.parse(rawChange) : rawChange
             )
-            .map(Change.fromRaw)
+            .map(Change.fromStorageRaw)
         : []
 
       metrics.inc('chunk_store.redis.get_changes_since_version', 1, {
@@ -480,7 +480,7 @@ async function getNonPersistedChanges(projectId, baseVersion, opts = {}) {
   })
 
   if (status === 'ok') {
-    return result[1].map(json => Change.fromRaw(JSON.parse(json)))
+    return result[1].map(json => Change.fromStorageRaw(JSON.parse(json)))
   } else if (status === 'not_found') {
     return []
   } else if (status === 'out_of_bounds') {

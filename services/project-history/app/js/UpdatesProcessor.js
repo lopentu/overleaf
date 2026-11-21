@@ -1,4 +1,4 @@
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 import logger from '@overleaf/logger'
 import async from 'async'
 import metrics from '@overleaf/metrics'
@@ -18,6 +18,11 @@ import * as Errors from './Errors.js'
 import * as Metrics from './Metrics.js'
 import * as RetryManager from './RetryManager.js'
 import { Profiler } from './Profiler.js'
+import {
+  getHistoryPublication,
+  isRetirementFileAddition,
+  isRetirementStructureUpdate,
+} from './HistoryPublicationEnvelope.js'
 
 const keys = Settings.redis.lock.key_schema
 
@@ -72,18 +77,23 @@ export function startResyncAndProcessUpdatesUnderLock(
   LockManager.runWithLock(
     keys.projectHistoryLock({ project_id: projectId }),
     (extendLock, releaseLock) => {
-      SyncManager.startResyncWithoutLock(projectId, opts, err => {
-        if (err) return callback(OError.tag(err))
-        extendLock(err => {
-          if (err) return callback(OError.tag(err))
-          _countAndProcessUpdates(
-            projectId,
-            extendLock,
-            REDIS_READ_BATCH_SIZE,
-            releaseLock
-          )
-        })
-      })
+      SyncManager.startResyncWithoutLock(
+        projectId,
+        opts,
+        promisify(extendLock),
+        err => {
+          if (err) return releaseLock(OError.tag(err))
+          extendLock(err => {
+            if (err) return releaseLock(OError.tag(err))
+            _countAndProcessUpdates(
+              projectId,
+              extendLock,
+              REDIS_READ_BATCH_SIZE,
+              releaseLock
+            )
+          })
+        }
+      )
     },
     (flushError, { queueSize } = {}) => {
       if (flushError) {
@@ -164,6 +174,13 @@ function _processUpdatesForProjectWithLock(
       }
     },
     (flushError, { queueSize, resyncNeeded } = {}) => {
+      if (
+        flushError instanceof Errors.HistoryPublicationTransportUnavailableError
+      ) {
+        // Pending publication must stay queued. Recording it as a history
+        // failure would eventually trigger a destructive hard resync.
+        return callback(flushError)
+      }
       if (flushError) {
         OError.tag(flushError)
         ErrorRecorder.record(
@@ -508,23 +525,45 @@ function _processUpdatesBatch(projectId, updates, extendLock, callback) {
 
 export function _getHistoryId(projectId, updates, callback) {
   let idFromUpdates = null
+  let hasPublication = false
 
   // check that all updates have the same history id
   for (const update of updates) {
-    if (update.projectHistoryId != null) {
+    const publication = getHistoryPublication(update)
+    hasPublication ||= publication !== undefined
+    const historyId =
+      publication?.historyId ?? update.projectHistoryId?.toString()
+    if (historyId != null) {
       if (idFromUpdates == null) {
-        idFromUpdates = update.projectHistoryId.toString()
-      } else if (idFromUpdates !== update.projectHistoryId.toString()) {
+        idFromUpdates = historyId
+      } else if (idFromUpdates !== historyId) {
         metrics.inc('updates.batches.project-history-id.inconsistent-update')
         return callback(
           new OError('inconsistent project history id between updates', {
             projectId,
             idFromUpdates,
-            currentId: update.projectHistoryId,
+            currentId: historyId,
           })
         )
       }
     }
+  }
+
+  if (hasPublication) {
+    WebApiManager.getFreshHistoryId(projectId).then(
+      idFromWeb => {
+        if (idFromWeb !== idFromUpdates) {
+          return callback(
+            new OError(
+              'private history publication does not match project history'
+            )
+          )
+        }
+        callback(null, idFromWeb)
+      },
+      error => callback(OError.tag(error))
+    )
+    return
   }
 
   WebApiManager.getHistoryId(projectId, (error, idFromWeb) => {
@@ -612,6 +651,73 @@ function _getMostRecentVersionWithDebug(projectId, projectHistoryId, callback) {
   )
 }
 
+async function processGuardedHistoryUpdate(
+  projectId,
+  historyId,
+  update,
+  extendLock
+) {
+  const publication = getHistoryPublication(update)
+  if (!publication || publication.historyId !== historyId) {
+    throw new Error('Invalid history publication scope')
+  }
+
+  const existing =
+    await HistoryStoreManager.lookupActivationReceipt(publication)
+  if (existing.status === 'committed') return { resyncNeeded: false }
+  if (existing.status === 'conflict') {
+    throw new Error('Conflicting history publication receipt')
+  }
+
+  const resync = await SyncManager.promises.getResyncState(projectId)
+  if (resync.isSyncOngoing()) {
+    throw new Error('History publication is waiting for resync')
+  }
+
+  const { version, projectStructureAndDocVersions } =
+    await HistoryStoreManager.promises.getMostRecentVersion(
+      projectId,
+      historyId
+    )
+  const retirement = isRetirementStructureUpdate(update)
+  const previousVersion = retirement
+    ? projectStructureAndDocVersions?.project
+    : projectStructureAndDocVersions?.docs?.[update.doc]?.v
+  const sourceVersion = retirement ? update.version : update.v
+  if (previousVersion != null && Versions.gte(previousVersion, sourceVersion)) {
+    // The watermark may advance after a repair or an ambiguous append. Only
+    // the exact receipt can establish that this entry was committed.
+    const kind = retirement ? 'project structure' : 'document'
+    throw new Error(
+      `History ${kind} version advanced without the exact receipt`
+    )
+  }
+
+  const updatesWithBlobs = isRetirementFileAddition(update)
+    ? await promisify(BlobManager.createBlobsForUpdates)(
+        projectId,
+        historyId,
+        [update],
+        extendLock
+      )
+    : [{ update }]
+  const changes = UpdateTranslator.convertToChanges(projectId, updatesWithBlobs)
+  const change = changes[0]?.toStorageRaw()
+  if (
+    changes.length !== 1 ||
+    !isDeepStrictEqual(change?.historyPublication, publication)
+  ) {
+    throw new Error('History translation changed the publication identity')
+  }
+
+  await promisify(extendLock)()
+  const result = await HistoryStoreManager.appendGuardedChange(change, version)
+  if (result.status !== 'committed') {
+    throw new Error(`History publication is unresolved (${result.status})`)
+  }
+  return { resyncNeeded: false }
+}
+
 export function _processUpdates(
   projectId,
   projectHistoryId,
@@ -619,6 +725,33 @@ export function _processUpdates(
   extendLock,
   callback
 ) {
+  if (updates.some(getHistoryPublication)) {
+    if (
+      Settings.documentupdater?.enableRetirementQueue !== true ||
+      updates.length !== 1
+    ) {
+      return callback(
+        new Errors.HistoryPublicationTransportUnavailableError(
+          'private history publication transport is unavailable'
+        )
+      )
+    }
+    processGuardedHistoryUpdate(
+      projectId,
+      projectHistoryId,
+      updates[0],
+      extendLock
+    ).then(
+      result => callback(null, result),
+      error =>
+        callback(
+          new Errors.HistoryPublicationTransportUnavailableError(
+            error.message
+          ).withCause(error)
+        )
+    )
+    return
+  }
   const profile = new Profiler('_processUpdates', {
     project_id: projectId,
     projectHistoryId,

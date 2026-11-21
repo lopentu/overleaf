@@ -7,7 +7,7 @@ const Change = require('./change')
 const Snapshot = require('./snapshot')
 
 /**
- * @import { BlobStore, ReadonlyBlobStore } from "./types"
+ * @import { BlobStore, RawStorageHistory, ReadonlyBlobStore } from "./types"
  */
 
 class History {
@@ -34,6 +34,22 @@ class History {
       Snapshot.fromRaw(raw.snapshot),
       raw.changes.map(Change.fromRaw)
     )
+  }
+
+  /** @param {RawStorageHistory} raw */
+  static fromStorageRaw(raw) {
+    return new History(
+      Snapshot.fromRaw(raw.snapshot),
+      raw.changes.map(Change.fromStorageRaw)
+    )
+  }
+
+  /** @returns {RawStorageHistory} */
+  toStorageRaw() {
+    return {
+      snapshot: this.snapshot.toRaw(),
+      changes: this.changes.map(change => change.toStorageRaw()),
+    }
   }
 
   toRaw() {
@@ -109,7 +125,7 @@ class History {
    * @param {BlobStore} blobStore
    * @param {number} [concurrency] applies separately to files, changes and
    *                               operations
-   * @return {Promise<import('overleaf-editor-core/lib/types').RawHistory>}
+   * @return {Promise<RawStorageHistory>}
    */
   async store(blobStore, concurrency) {
     assert.maybe.number(concurrency, 'bad concurrency')

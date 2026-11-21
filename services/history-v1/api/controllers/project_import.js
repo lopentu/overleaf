@@ -30,10 +30,15 @@ const buildSetContentChange = storage.buildSetContentChange
 const InvalidChangeError = storage.InvalidChangeError
 
 const render = require('./render')
-const { parseReq } = require('@overleaf/validation-tools')
+const {
+  InvalidParamsError,
+  InvalidRequestError,
+  parseReq,
+} = require('@overleaf/validation-tools')
 const schemas = require('../schema')
 const Rollout = require('../app/rollout')
 const redisBackend = require('../../storage/lib/chunk_store/redis')
+const mongoChunkStore = require('../../storage/lib/chunk_store/mongo')
 
 const rollout = new Rollout(config)
 rollout.report(logger) // display the rollout configuration in the logs
@@ -78,6 +83,41 @@ function getPersistLimits() {
   }
 }
 
+/**
+ * @param {InstanceType<typeof BlobStore>} blobStore
+ * @param {InstanceType<typeof Change>[]} changes
+ */
+async function loadChangeFiles(blobStore, changes) {
+  const batchBlobStore = new BatchBlobStore(blobStore)
+  const blobHashes = new Set()
+  for (const change of changes) {
+    change.findBlobHashes(blobHashes)
+  }
+
+  await batchBlobStore.preload(Array.from(blobHashes))
+
+  /** @type {import('overleaf-editor-core/lib/types').ReadonlyBlobStore & Pick<InstanceType<typeof BlobStore>, 'getBlob'>} */
+  const cachedBlobStore = {
+    getBlob: hash => batchBlobStore.getBlob(hash),
+    getString: hash => blobStore.getString(hash),
+    getObject: hash => blobStore.getObject(hash),
+  }
+  for (const change of changes) {
+    await change.loadFiles('lazy', cachedBlobStore)
+  }
+}
+
+/** @param {unknown} err */
+function isInvalidChange(err) {
+  return (
+    err instanceof TextOperation.UnprocessableError ||
+    err instanceof File.NotEditableError ||
+    err instanceof FileMap.PathnameError ||
+    err instanceof Snapshot.EditMissingFileError ||
+    err instanceof InvalidChangeError
+  )
+}
+
 async function importChanges(req, res, next) {
   const { params, query, body } = parseReq(req, schemas.importChanges, {
     fallbackSchema: schemas.importChangesFallbackSchema,
@@ -98,22 +138,7 @@ async function importChanges(req, res, next) {
   const limits = getPersistLimits()
 
   const blobStore = new BlobStore(projectId)
-  const batchBlobStore = new BatchBlobStore(blobStore)
   const hashCheckBlobStore = new HashCheckBlobStore(blobStore)
-
-  async function loadFiles() {
-    const blobHashes = new Set()
-    for (const change of changes) {
-      // This populates the set blobHashes with blobs referred to in the change
-      change.findBlobHashes(blobHashes)
-    }
-
-    await batchBlobStore.preload(Array.from(blobHashes))
-
-    for (const change of changes) {
-      await change.loadFiles('lazy', batchBlobStore)
-    }
-  }
 
   async function buildResultSnapshot(resultChunk) {
     const chunk =
@@ -125,7 +150,7 @@ async function importChanges(req, res, next) {
     return rawSnapshot
   }
 
-  await loadFiles()
+  await loadChangeFiles(blobStore, changes)
 
   let result
   try {
@@ -138,12 +163,8 @@ async function importChanges(req, res, next) {
   } catch (err) {
     if (
       err instanceof Chunk.ConflictingEndVersion ||
-      err instanceof TextOperation.UnprocessableError ||
-      err instanceof File.NotEditableError ||
-      err instanceof FileMap.PathnameError ||
-      err instanceof Snapshot.EditMissingFileError ||
       err instanceof chunkStore.ChunkVersionConflictError ||
-      err instanceof InvalidChangeError
+      isInvalidChange(err)
     ) {
       // If we failed to apply operations, that's probably because they were
       // invalid.
@@ -165,6 +186,177 @@ async function importChanges(req, res, next) {
     const rawSnapshot = await buildResultSnapshot(result && result.currentChunk)
     res.status(HTTPStatus.CREATED).json(rawSnapshot)
   }
+}
+
+function supportsDirectActivation(historyId) {
+  const { historyBufferLevel, forcePersistBuffer } =
+    rollout.getHistoryBufferLevelOptions(historyId)
+  return historyBufferLevel === 0 && forcePersistBuffer === false
+}
+
+async function getActivationReadiness(req, res) {
+  const {
+    params: { project_id: historyId },
+  } = parseReq(req, schemas.activationReadiness)
+  res.set('Cache-Control', 'no-store')
+  if (!supportsDirectActivation(historyId)) {
+    return res.json({ ready: false })
+  }
+
+  try {
+    const { id, startVersion, endVersion } =
+      await chunkStore.getLatestChunkMetadata(historyId)
+    if (
+      typeof id !== 'string' ||
+      id.length === 0 ||
+      !Number.isSafeInteger(startVersion) ||
+      startVersion < 0 ||
+      !Number.isSafeInteger(endVersion) ||
+      endVersion < startVersion ||
+      endVersion >= Number.MAX_SAFE_INTEGER
+    ) {
+      return res.json({ ready: false })
+    }
+    // The reader includes a Redis tail, but the guarded append checks a
+    // persisted end version. A leftover tail from a prior rollout is unready.
+    const pending = await chunkStore.getChunkExtension(historyId, endVersion, {
+      maxChanges: 1,
+    })
+    if (pending.length !== 0) return res.json({ ready: false })
+  } catch {
+    logger.warn({ historyId }, 'history activation metadata is unavailable')
+    return res.status(HTTPStatus.SERVICE_UNAVAILABLE).json({ ready: false })
+  }
+  return res.json({ ready: true, historyId })
+}
+
+async function appendActivationChange(req, res) {
+  res.set('Cache-Control', 'no-store')
+  let parsed
+  try {
+    parsed = parseReq(req, schemas.appendActivationChange)
+  } catch (err) {
+    if (
+      err instanceof InvalidParamsError ||
+      err instanceof InvalidRequestError
+    ) {
+      return render.badRequest(
+        res,
+        'Expected one tagged history change and its end version'
+      )
+    }
+    throw err
+  }
+
+  const {
+    params: { project_id: historyId },
+    query: { end_version: endVersion },
+    body,
+  } = parsed
+  const publication = body.historyPublication
+  if (publication.historyId !== historyId) {
+    return render.badRequest(res, 'Expected a change for this Mongo history')
+  }
+
+  let existing
+  try {
+    existing = await mongoChunkStore.lookupHistoryActivationReceipt(
+      historyId,
+      publication
+    )
+  } catch {
+    logger.warn(
+      { historyId },
+      'tagged history receipt is temporarily unavailable'
+    )
+    return res
+      .status(HTTPStatus.SERVICE_UNAVAILABLE)
+      .json({ status: 'unavailable' })
+  }
+  if (existing.status !== 'pending') {
+    return res.status(HTTPStatus.OK).json(existing)
+  }
+
+  if (!supportsDirectActivation(historyId)) {
+    // A buffered writer needs an atomic reservation for the publication identity.
+    return res
+      .status(HTTPStatus.SERVICE_UNAVAILABLE)
+      .json({ status: 'unavailable' })
+  }
+
+  let change
+  try {
+    change = Change.fromStorageRaw(body)
+  } catch {
+    return render.unprocessableEntity(res, 'Invalid tagged history change')
+  }
+  try {
+    await loadChangeFiles(new BlobStore(historyId), [change])
+  } catch (err) {
+    if (
+      err instanceof core.Blob.NotFoundError ||
+      err instanceof storage.BlobNotFoundError
+    ) {
+      return render.unprocessableEntity(
+        res,
+        'Tagged history change references a missing blob'
+      )
+    }
+    logger.warn(
+      { historyId },
+      'tagged history change blob loading is temporarily unavailable'
+    )
+    return res
+      .status(HTTPStatus.SERVICE_UNAVAILABLE)
+      .json({ status: 'unavailable' })
+  }
+
+  let commitError
+  try {
+    await commitChanges(
+      historyId,
+      [change],
+      {
+        minChangeTimestamp: Infinity,
+        maxChangeTimestamp: Infinity,
+        maxChanges: 0,
+      },
+      endVersion,
+      { historyBufferLevel: 0 }
+    )
+  } catch (err) {
+    commitError = err
+  }
+
+  let receipt
+  try {
+    receipt = await mongoChunkStore.lookupHistoryActivationReceipt(
+      historyId,
+      publication
+    )
+  } catch {
+    logger.warn({ historyId }, 'tagged history activation outcome is unknown')
+    return res.status(HTTPStatus.ACCEPTED).json({ status: 'pending' })
+  }
+  if (receipt.status !== 'pending') {
+    return res.status(HTTPStatus.OK).json(receipt)
+  }
+  if (
+    commitError instanceof Chunk.ConflictingEndVersion ||
+    commitError instanceof chunkStore.ChunkVersionConflictError
+  ) {
+    return res.status(HTTPStatus.CONFLICT).json({ status: 'version-conflict' })
+  }
+  if (isInvalidChange(commitError)) {
+    return render.unprocessableEntity(res, 'Invalid tagged history change')
+  }
+  if (commitError instanceof Chunk.NotFoundError) {
+    return render.notFound(res)
+  }
+  if (commitError) {
+    logger.warn({ historyId }, 'tagged history activation outcome is unknown')
+  }
+  return res.status(HTTPStatus.ACCEPTED).json(receipt)
 }
 
 async function setContent(req, res) {
@@ -252,6 +444,8 @@ async function expireProject(req, res, next) {
 
 exports.importSnapshot = expressify(importSnapshot)
 exports.importChanges = expressify(importChanges)
+exports.appendActivationChange = expressify(appendActivationChange)
+exports.getActivationReadiness = expressify(getActivationReadiness)
 exports.setContent = expressify(setContent)
 exports.flushChanges = expressify(flushChanges)
 exports.expireProject = expressify(expireProject)

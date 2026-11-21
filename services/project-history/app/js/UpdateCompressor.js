@@ -10,6 +10,7 @@ import Stream from 'node:stream'
 import logger from '@overleaf/logger'
 import { callbackify } from '@overleaf/promise-utils'
 import Settings from '@overleaf/settings'
+import { getHistoryPublication } from './HistoryPublicationEnvelope.js'
 
 /**
  * @import { DeleteOp, InsertOp, Op, Update } from './types'
@@ -250,6 +251,22 @@ function compressRawUpdatesWithProfile(rawUpdates, projectId, profile) {
 }
 
 export function compressRawUpdates(rawUpdates) {
+  const updates = []
+  let start = 0
+  for (const [index, update] of rawUpdates.entries()) {
+    if (!getHistoryPublication(update)) continue
+
+    // Keep the original grouping of one receipt entry. Splitting, combining,
+    // or removing a tagged update would change the history it acknowledges.
+    updates.push(...compressOrdinaryUpdates(rawUpdates.slice(start, index)))
+    updates.push(update)
+    start = index + 1
+  }
+  if (start === 0) return compressOrdinaryUpdates(rawUpdates)
+  return updates.concat(compressOrdinaryUpdates(rawUpdates.slice(start)))
+}
+
+function compressOrdinaryUpdates(rawUpdates) {
   let updates = convertToSingleOpUpdates(rawUpdates)
   updates = compressUpdates(updates)
   updates = filterBlankUpdates(updates)

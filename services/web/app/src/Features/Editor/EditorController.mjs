@@ -2,6 +2,7 @@ import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
 import Metrics from '@overleaf/metrics'
 import ProjectEntityUpdateHandler from '../Project/ProjectEntityUpdateHandler.mjs'
+import { retirementEnabled } from '../Project/ProjectDocumentRetirementCoordinator.mjs'
 import ProjectOptionsHandler from '../Project/ProjectOptionsHandler.mjs'
 import ProjectDetailsHandler from '../Project/ProjectDetailsHandler.mjs'
 import ProjectDeleter from '../Project/ProjectDeleter.mjs'
@@ -280,6 +281,9 @@ const EditorController = {
         if (err) {
           return callback(err)
         }
+        if (expectedFile && 'docId' in expectedFile && retirementEnabled()) {
+          return callback(null, { file: newFile, folder: lastFolder })
+        }
         EditorController._notifyProjectUsersOfNewFolders(
           projectId,
           newFolders,
@@ -429,6 +433,13 @@ const EditorController = {
       function (err, entityId) {
         if (err) {
           return callback(err)
+        }
+        if (
+          expectedEntity &&
+          'docId' in expectedEntity &&
+          retirementEnabled()
+        ) {
+          return callback(null, entityId)
         }
         EditorRealTimeController.emitToRoom(
           projectId,

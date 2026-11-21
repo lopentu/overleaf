@@ -107,6 +107,11 @@ module.exports = {
 
   maxFileSizeInBytes: 100 * 1024 * 1024, // 100 megabytes
 
+  documentupdater: {
+    enableRetirementQueue:
+      process.env.OVERLEAF_ENABLE_GUARDED_DOCUMENT_RETIREMENT === 'true',
+  },
+
   shortHistoryQueues: (process.env.SHORT_HISTORY_QUEUES || '')
     .split(',')
     .filter(s => !!s),

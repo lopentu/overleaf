@@ -2,8 +2,10 @@ import fsPromises from 'node:fs/promises'
 import { normalize } from 'node:path/posix'
 import pLimit from 'p-limit'
 import { randomUUID } from 'node:crypto'
+import { v5 as uuidv5 } from 'uuid'
 import { blobHashFromString } from 'overleaf-editor-core/lib/blob_utils.js'
 import logger from '@overleaf/logger'
+import Settings from '@overleaf/settings'
 import OError from '@overleaf/o-error'
 import SyncStateManager from './SyncStateManager.mjs'
 import api from './GitHubApiClient.mjs'
@@ -12,6 +14,7 @@ import { GitConflictError, GitNotLinkedError } from './GitSyncErrors.mjs'
 import TokenManager from './TokenManager.mjs'
 import LockManager from '../../../../app/src/infrastructure/LockManager.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
+import ProjectEntityUpdateHandler from '../../../../app/src/Features/Project/ProjectEntityUpdateHandler.mjs'
 import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 
@@ -55,6 +58,10 @@ async function doGitMergeWithoutLock(
 
   const token = await TokenManager.getUserToken(userId)
 
+  // Finishing a retirement can change the history version used to plan import.
+  await ProjectEntityUpdateHandler.promises.resumeActiveDocumentRetirement(
+    projectId
+  )
   await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
 
   const currentVersion = await HistoryManager.latestVersion(projectId)
@@ -676,16 +683,41 @@ async function applyGitSnapshotToProject({
     if (updates.length === 0 && deletions.length === 0) return expectedVersion
 
     const localLimit = pLimit(5)
+    const operationSource = {
+      projectId: String(projectId),
+      repoFullName: repoFullName.toLowerCase(),
+      commit: lastSyncCommit.toLowerCase(),
+    }
     await settleUpdates(
       [...stagedFiles].map(([path, fsPath]) =>
         localLimit(async () => {
+          const projectPath = '/' + path
+          const target = importTargets.get(projectPath) ?? null
+          const expectedEntity =
+            Settings.documentupdater?.enableRetirementBinaryConversion ===
+              true &&
+            target &&
+            'docId' in target
+              ? {
+                  ...target,
+                  operationId: gitHubDocumentOperationId(
+                    operationSource,
+                    'replacement',
+                    projectPath,
+                    target,
+                    blobMap[path]
+                  ),
+                  sourceCommit: operationSource.commit,
+                  blobHash: blobMap[path],
+                }
+              : target
           const { contentHash } = await UpdateMerger.promises._mergeUpdate(
             userId,
             projectId,
-            '/' + path,
+            projectPath,
             fsPath,
             'github',
-            importTargets.get('/' + path) ?? null
+            expectedEntity
           )
           importedHashes.set(path, contentHash ?? blobMap[path])
         })
@@ -694,15 +726,30 @@ async function applyGitSnapshotToProject({
     await settleUpdates(
       deletions.map(path =>
         localLimit(async () => {
-          const target = importTargets.get('/' + path)
+          const projectPath = '/' + path
+          const target = importTargets.get(projectPath)
           // No captured identity means there is nothing eligible to remove.
           if (!target) return
+          // A retry of the same snapshot and editor target uses the same
+          // operation, regardless of which collaborator retries the sync.
+          const expectedEntity =
+            'docId' in target
+              ? {
+                  ...target,
+                  operationId: gitHubDocumentOperationId(
+                    operationSource,
+                    'retirement',
+                    projectPath,
+                    target
+                  ),
+                }
+              : target
           await UpdateMerger.promises.deleteUpdate(
             userId,
             projectId,
-            '/' + path,
+            projectPath,
             'github',
-            target
+            expectedEntity
           )
         })
       )
@@ -754,6 +801,29 @@ async function applyGitSnapshotToProject({
     }
   }
   return resultVersion
+}
+
+/**
+ * @param {{projectId: string, repoFullName: string, commit: string}} source
+ * @param {'retirement' | 'replacement'} action
+ * @param {string} path
+ * @param {{docId: string, version: number}} target
+ * @param {string} [blobHash]
+ */
+function gitHubDocumentOperationId(source, action, path, target, blobHash) {
+  return uuidv5(
+    JSON.stringify([
+      `overleaf/github/document-${action}/v1`,
+      source.projectId,
+      source.repoFullName,
+      source.commit,
+      path,
+      target.docId,
+      target.version,
+      ...(blobHash === undefined ? [] : [blobHash]),
+    ]),
+    uuidv5.URL
+  )
 }
 
 /**

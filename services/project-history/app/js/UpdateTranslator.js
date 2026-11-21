@@ -4,6 +4,10 @@ import _ from 'lodash'
 import Core from 'overleaf-editor-core'
 import * as Errors from './Errors.js'
 import * as OperationsCompressor from './OperationsCompressor.js'
+import {
+  getHistoryPublication,
+  isRetirementFileAddition,
+} from './HistoryPublicationEnvelope.js'
 import { isInsert, isRetain, isDelete, isComment } from './Utils.js'
 
 /**
@@ -145,9 +149,14 @@ function _convertToChange(projectId, updateWithBlob) {
   const change = Core.Change.fromRaw(rawChange)
 
   if (change != null) {
-    change.operations = OperationsCompressor.compressOperations(
-      change.operations
-    )
+    const publication = getHistoryPublication(update)
+    if (publication) {
+      change.setHistoryPublication(publication)
+    } else {
+      change.operations = OperationsCompressor.compressOperations(
+        change.operations
+      )
+    }
   }
 
   return change
@@ -183,7 +192,9 @@ function _isAddFileUpdate(update) {
     'file' in update &&
     update.file != null &&
     (('createdBlob' in update && update.createdBlob) ||
-      ('url' in update && update.url != null))
+      ('url' in update && update.url != null) ||
+      (getHistoryPublication(update) != null &&
+        isRetirementFileAddition(update)))
   )
 }
 

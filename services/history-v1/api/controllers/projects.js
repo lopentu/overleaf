@@ -32,6 +32,7 @@ const StreamSizeLimit = require('./stream_size_limit')
 const { getProjectBlobsBatch } = require('../../storage/lib/blob_store')
 const assert = require('../../storage/lib/assert')
 const { getChunkMetadataForVersion } = require('../../storage/lib/chunk_store')
+const mongoChunkStore = require('../../storage/lib/chunk_store/mongo')
 const { IncrementalResponse } = require('@overleaf/stream-utils')
 
 const pipeline = promisify(Stream.pipeline)
@@ -123,6 +124,22 @@ async function getLatestContent(req, res, next) {
   snapshot.applyAll(chunk.getChanges())
   await snapshot.loadFiles('eager', blobStore)
   res.json(snapshot.toRaw())
+}
+
+async function lookupActivationReceipt(req, res) {
+  const {
+    params: { project_id: historyId },
+    body: publication,
+  } = parseReq(req, schemas.lookupActivationReceipt)
+  if (publication.historyId !== historyId) {
+    return render.badRequest(res, 'Expected a receipt for this Mongo history')
+  }
+
+  const status = await mongoChunkStore.lookupHistoryActivationReceipt(
+    historyId,
+    publication
+  )
+  res.set('Cache-Control', 'no-store').json(status)
 }
 
 async function getContentAtVersion(req, res, next) {
@@ -653,6 +670,7 @@ async function getProjectBlobsStats(req, res) {
 module.exports = {
   initializeProject: expressify(initializeProject),
   cloneProject: expressify(cloneProject),
+  lookupActivationReceipt: expressify(lookupActivationReceipt),
   getLatestContent: expressify(getLatestContent),
   getContentAtVersion: expressify(getContentAtVersion),
   getLatestHashedContent: expressify(getLatestHashedContent),

@@ -11,10 +11,42 @@ import logger from '@overleaf/logger'
 import { callbackifyAll } from '@overleaf/promise-utils'
 import ProjectGetter from '../Project/ProjectGetter.mjs'
 import Modules from '../../infrastructure/Modules.mjs'
+import { z } from '../../infrastructure/Validation.mjs'
 
 const REQUEST_TIMEOUT_MS = 30 * 1000
 const RESYNC_TIMEOUT_MS = 6 * 60 * 1000
 const BASE_URL = settings.apis.documentupdater.url
+
+const retirementResult = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('prepared'),
+    persisted: z.strictObject({
+      version: z.number().int().nonnegative(),
+      rev: z.number().int().nonnegative(),
+    }),
+  }),
+  z.strictObject({
+    status: z.enum(['pending', 'conflict', 'committed', 'aborted']),
+  }),
+])
+
+/** @param {import('../Project/ProjectDocumentRetirement.mjs').RetirementOwner} owner */
+async function reconcileDocumentRetirement({
+  projectId,
+  docId,
+  operationId,
+  version,
+}) {
+  const result = await fetchJson(
+    `${BASE_URL}/project/${projectId}/doc/${docId}/retirement/${operationId}`,
+    {
+      method: 'POST',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      json: { version },
+    }
+  )
+  return retirementResult.parse(result)
+}
 
 async function getProjectLastUpdatedAt(projectId) {
   const body = await fetchJson(
@@ -516,6 +548,7 @@ function buildFileMetadataForHistory(file) {
 
 const DocumentUpdaterHandler = {
   flushProjectToMongo,
+  reconcileDocumentRetirement,
   flushMultipleProjectsToMongo,
   flushProjectToMongoAndDelete,
   flushDocToMongo,

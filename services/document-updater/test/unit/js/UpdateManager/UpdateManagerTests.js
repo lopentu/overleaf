@@ -14,6 +14,7 @@ describe('UpdateManager', function () {
     this.doc_id = 'document-id-123'
     this.projectLockValue = 'mock-project-lock-value'
     this.pathname = '/a/b/c.tex'
+    this.Settings = { documentupdater: {} }
 
     this.Metrics = {
       inc: sinon.stub(),
@@ -43,6 +44,7 @@ describe('UpdateManager', function () {
 
     this.RealTimeRedisManager = {
       sendData: sinon.stub(),
+      guardedProjectQueue: {},
       promises: {
         getProjectUpdatesLength: sinon.stub().resolves(0),
         getPendingProjectUpdates: sinon.stub().resolves([]),
@@ -62,6 +64,7 @@ describe('UpdateManager', function () {
 
     this.HistoryManager = {
       recordAndFlushHistoryOps: sinon.stub(),
+      promises: { ensureQueuedHistoryDurable: sinon.stub() },
     }
 
     this.DocumentManager = {
@@ -97,6 +100,7 @@ describe('UpdateManager', function () {
     this.buildSparseChangePreviews = sinon.stub().returns([])
     this.UpdateManager = SandboxedModule.require(MODULE_PATH, {
       requires: {
+        '@overleaf/settings': this.Settings,
         './ProjectLockManager': this.ProjectLockManager,
         './RedisManager': this.RedisManager,
         './RealTimeRedisManager': this.RealTimeRedisManager,
@@ -958,6 +962,77 @@ describe('UpdateManager', function () {
       this.methodResult = 'method result'
       this.method = sinon.stub().resolves(this.methodResult)
       this.arg1 = 'argument 1'
+    })
+
+    describe('for a protected queue', function () {
+      beforeEach(function () {
+        this.Settings.documentupdater.enableRetirementQueue = true
+        this.Settings.documentupdater.enableRetirementWriterSeal = true
+        this.RealTimeRedisManager.promises.getPendingProjectUpdates.rejects(
+          new Errors.ProjectUpdateQueueGuardedError('guarded queue')
+        )
+        this.UpdateManager.promises.continueProcessingUpdatesWithLock = sinon
+          .stub()
+          .resolves()
+        this.drainGuarded = sinon.stub()
+        this.UpdateManager.promises.processGuardedQueuedBatchUnderLock =
+          this.drainGuarded
+        this.run = () =>
+          this.UpdateManager.promises.lockUpdatesAndDo(
+            this.method,
+            this.project_id,
+            this.doc_id,
+            this.arg1
+          )
+      })
+
+      it('requires an empty guarded queue before calling the document operation', async function () {
+        this.drainGuarded.onFirstCall().resolves('acknowledged')
+        this.drainGuarded.onSecondCall().resolves('empty')
+
+        expect(await this.run()).to.equal(this.methodResult)
+        sinon.assert.calledTwice(this.drainGuarded)
+        sinon.assert.calledWithExactly(
+          this.drainGuarded,
+          this.project_id,
+          this.projectLockValue,
+          {
+            queue: this.RealTimeRedisManager.guardedProjectQueue,
+            ensureHistoryDurable:
+              this.HistoryManager.promises.ensureQueuedHistoryDurable,
+          }
+        )
+        expect(
+          this.drainGuarded.secondCall.calledBefore(this.method.firstCall)
+        ).to.equal(true)
+        sinon.assert.callOrder(
+          this.method,
+          this.ProjectLockManager.promises.releaseLock
+        )
+        sinon.assert.notCalled(
+          this.UpdateManager.promises.continueProcessingUpdatesWithLock
+        )
+      })
+
+      it('releases the lock and retains the operation when guarded history is pending', async function () {
+        this.drainGuarded.resolves('waiting-history')
+
+        await expect(this.run()).to.be.rejectedWith(
+          Errors.ProjectStateChangedError
+        )
+        sinon.assert.notCalled(this.method)
+        sinon.assert.calledOnce(this.ProjectLockManager.promises.releaseLock)
+      })
+
+      it('leaves the queue protected when this worker has guarded mode disabled', async function () {
+        this.Settings.documentupdater.enableRetirementQueue = false
+
+        await expect(this.run()).to.be.rejectedWith(
+          Errors.ProjectStateChangedError
+        )
+        sinon.assert.notCalled(this.drainGuarded)
+        sinon.assert.notCalled(this.method)
+      })
     })
 
     describe('successfully', function () {

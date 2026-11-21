@@ -1,6 +1,3 @@
-/* eslint-disable
-    mocha/no-nested-tests,
-*/
 const { expect } = require('chai')
 const SandboxedModule = require('sandboxed-module')
 const sinon = require('sinon')
@@ -12,8 +9,10 @@ const modulePath = require('node:path').join(
 describe('HistoryManager', function () {
   beforeEach(function () {
     this.HistoryManager = SandboxedModule.require(modulePath, {
+      globals: { AbortSignal },
       requires: {
         '@overleaf/fetch-utils': (this.fetchUtils = {
+          fetchJson: sinon.stub(),
           fetchNothing: sinon.stub().resolves(),
         }),
         '@overleaf/settings': (this.Settings = {
@@ -39,6 +38,58 @@ describe('HistoryManager', function () {
       },
     })
     this.project_id = 'mock-project-id'
+  })
+
+  describe('ensureQueuedHistoryDurable', function () {
+    beforeEach(function () {
+      this.identity = { batchId: 'batch-id', ordinal: 1 }
+      this.receipt = { previousVersion: 3, version: 4, historyEntries: ['op'] }
+      this.reconcile = () =>
+        this.HistoryManager.promises.ensureQueuedHistoryDurable(
+          this.project_id,
+          this.identity,
+          this.receipt
+        )
+    })
+
+    it('returns pending without waiting for the history flush', async function () {
+      this.fetchUtils.fetchJson.resolves({ status: 'pending' })
+      this.fetchUtils.fetchNothing.returns(new Promise(() => {}))
+
+      expect(await this.reconcile()).to.equal('pending')
+      sinon.assert.calledOnceWithExactly(
+        this.fetchUtils.fetchJson,
+        new URL(
+          `${this.Settings.apis.project_history.url}/project/${this.project_id}/history-publication/reconcile`
+        ),
+        sinon.match({
+          method: 'POST',
+          json: { ...this.identity, historyEntries: ['op'] },
+        })
+      )
+      sinon.assert.calledOnce(this.fetchUtils.fetchNothing)
+    })
+
+    it('releases a receipt only when exact history proof is durable', async function () {
+      this.fetchUtils.fetchJson.resolves({ status: 'durable' })
+
+      expect(await this.reconcile()).to.equal('durable')
+      sinon.assert.notCalled(this.fetchUtils.fetchNothing)
+    })
+
+    it('leaves the receipt unresolved on malformed proof', async function () {
+      this.fetchUtils.fetchJson.resolves({ status: 'queued' })
+
+      await expect(this.reconcile()).to.be.rejected
+      sinon.assert.notCalled(this.fetchUtils.fetchNothing)
+    })
+
+    it('does not contact history when there are no effects to publish', async function () {
+      this.receipt.historyEntries = []
+
+      expect(await this.reconcile()).to.equal('durable')
+      sinon.assert.notCalled(this.fetchUtils.fetchJson)
+    })
   })
 
   describe('flushProjectChangesAsync', function () {

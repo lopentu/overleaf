@@ -955,6 +955,79 @@ describe('RedisManager', function () {
     })
   })
 
+  it('retries sealed index cleanup after the project transaction reply is lost', async function () {
+    this.settings.documentupdater.enableRetirementWriterSeal = true
+    const defaults = require('../../../../config/settings.defaults')
+    Object.assign(
+      this.settings.redis.documentupdater.key_schema,
+      defaults.redis.documentupdater.key_schema
+    )
+    const { docId, project_id: projectId } = this
+    const owner = { docId, projectId, operationId: 'retirement-1', version: 7 }
+    const indexes = new Set([
+      'project-membership',
+      'project-state',
+      'history-ranges',
+    ])
+    this.rclient.eval = sinon.spy(async (_script, keyCount, ...args) => {
+      expect(
+        args.slice(0, keyCount).every(key => key.includes(`{${docId}}`))
+      ).to.equal(true)
+      const [command, project, operation, version] = args.slice(keyCount)
+      expect([command, project, version]).to.deep.equal([
+        'evict',
+        projectId,
+        '7',
+      ])
+      return operation === owner.operationId ? 'evicted' : 'conflict'
+    })
+    this.multi.srem = sinon.stub()
+    this.multi.del = sinon.stub()
+    this.multi.exec.callsFake(async () => {
+      sinon.assert.calledWithExactly(
+        this.multi.srem,
+        `DocsIn:{${projectId}}`,
+        docId
+      )
+      sinon.assert.calledWithExactly(
+        this.multi.del,
+        `ProjectState:{${projectId}}`
+      )
+      indexes.delete('project-membership')
+      indexes.delete('project-state')
+      if (this.multi.exec.callCount === 1) throw new Error('redis reply lost')
+    })
+    this.rclient.srem.callsFake(async (key, member) => {
+      expect([key, member]).to.deep.equal(['HistoryRangesSupport', docId])
+      indexes.delete('history-ranges')
+    })
+
+    await expect(
+      this.RedisManager.promises.evictSealedDocumentCache(owner)
+    ).to.be.rejectedWith('redis reply lost')
+    expect([...indexes]).to.deep.equal(['history-ranges'])
+    expect(
+      await this.RedisManager.promises.evictSealedDocumentCache({
+        ...owner,
+        operationId: 'stale-owner',
+      })
+    ).to.equal('conflict')
+    expect(this.multi.exec.callCount).to.equal(1)
+    expect(this.rclient.srem.called).to.equal(false)
+
+    expect(
+      await this.RedisManager.promises.evictSealedDocumentCache(owner)
+    ).to.equal('evicted')
+    expect([...indexes]).to.deep.equal([])
+    expect(this.multi.exec.callCount).to.equal(2)
+    expect(this.rclient.eval.callCount).to.equal(3)
+    sinon.assert.callOrder(
+      this.rclient.eval,
+      this.multi.exec,
+      this.rclient.srem
+    )
+  })
+
   describe('removeDocFromMemory', function () {
     beforeEach(async function () {
       this.multi.strlen = sinon.stub()

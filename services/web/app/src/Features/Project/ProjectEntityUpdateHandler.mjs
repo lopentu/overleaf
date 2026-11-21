@@ -24,6 +24,12 @@ import FileWriter from '../../infrastructure/FileWriter.mjs'
 import EditorRealTimeController from '../Editor/EditorRealTimeController.mjs'
 import { callbackifyMultiResult, callbackify } from '@overleaf/promise-utils'
 import { iterablePaths } from './IterablePath.mjs'
+import { requireCurrent as requireHistoryResyncReservation } from '../History/HistoryResyncReservation.mjs'
+import {
+  retirementEnabled,
+  retireGitHubDocument,
+  settleActiveRetirement,
+} from './ProjectDocumentRetirementCoordinator.mjs'
 
 const LOCK_NAMESPACE = 'sequentialProjectStructureUpdateLock'
 const VALID_ROOT_DOC_EXTENSIONS = Settings.validRootDocExtensions
@@ -32,14 +38,37 @@ const VALID_ROOT_DOC_REGEXP = new RegExp(
   'i'
 )
 
-function wrapWithLock(methodWithoutLock, lockManager = LockManager) {
+async function settleProjectRetirement(projectId, options) {
+  await settleActiveRetirement(projectId, options)
+}
+
+async function resumeActiveDocumentRetirement(projectId) {
+  if (!retirementEnabled()) return
+  await LockManager.promises.runWithLock(LOCK_NAMESPACE, projectId, () =>
+    settleProjectRetirement(projectId)
+  )
+}
+
+function wrapWithLock(
+  methodWithoutLock,
+  lockManager = LockManager,
+  retirementOperationId
+) {
   // This lock is used to make sure that the project structure updates are made
   // sequentially. In particular the updates must be made in mongo and sent to
   // the doc-updater in the same order.
   if (typeof methodWithoutLock === 'function') {
     const methodWithLock = async (projectId, ...rest) => {
-      return lockManager.promises.runWithLock(LOCK_NAMESPACE, projectId, () =>
-        methodWithoutLock(projectId, ...rest)
+      return lockManager.promises.runWithLock(
+        LOCK_NAMESPACE,
+        projectId,
+        async () => {
+          if (retirementEnabled())
+            await settleProjectRetirement(projectId, {
+              operationId: retirementOperationId?.(rest),
+            })
+          return methodWithoutLock(projectId, ...rest)
+        }
       )
     }
     methodWithLock.withoutLock = methodWithoutLock
@@ -49,8 +78,16 @@ function wrapWithLock(methodWithoutLock, lockManager = LockManager) {
     const mainTask = methodWithoutLock.withLock
     const methodWithLock = async (projectId, ...rest) => {
       const arg = await methodWithoutLock.beforeLock(projectId, ...rest)
-      return lockManager.promises.runWithLock(LOCK_NAMESPACE, projectId, () =>
-        mainTask(arg)
+      return lockManager.promises.runWithLock(
+        LOCK_NAMESPACE,
+        projectId,
+        async () => {
+          if (retirementEnabled())
+            await settleProjectRetirement(projectId, {
+              operationId: methodWithoutLock.retirementOperationId?.(arg),
+            })
+          return mainTask(arg)
+        }
       )
     }
     methodWithLock.withoutLock = async (...args) => {
@@ -202,21 +239,36 @@ async function updateDocLines(
   return { rev, modified }
 }
 
+async function getDocumentPointerFilter(projectId) {
+  if (!retirementEnabled()) return { _id: projectId }
+  const project = await ProjectGetter.promises.getProject(projectId, {
+    version: true,
+  })
+  if (!project) throw new Errors.NotFoundError('project not found')
+  return {
+    _id: projectId,
+    version: project.version ?? { $exists: false },
+    activeDocumentRetirement: { $exists: false },
+  }
+}
+
 async function setRootDoc(projectId, rootDocId) {
   logger.debug({ projectId, rootDocId }, 'setting root doc')
   if (projectId == null || rootDocId == null) {
     throw new Errors.InvalidError('missing arguments (project or doc)')
   }
+  const filter = await getDocumentPointerFilter(projectId)
   const rootResourcePath =
     await ProjectEntityHandler.promises.getDocPathByProjectIdAndDocId(
       projectId,
       rootDocId
     )
   if (ProjectEntityUpdateHandler.isPathValidForRootDoc(rootResourcePath)) {
-    await Project.updateOne(
-      { _id: projectId },
-      { rootDoc_id: rootDocId }
-    ).exec()
+    const result = await Project.updateOne(filter, {
+      rootDoc_id: rootDocId,
+    }).exec()
+    if (retirementEnabled() && result.matchedCount !== 1)
+      throw githubDocumentChanged()
   } else {
     throw new Errors.UnsupportedFileTypeError(
       'invalid file extension for root doc'
@@ -810,6 +862,18 @@ async function findGitHubImportTarget(projectId, elementPath) {
   }
 }
 
+async function locateCommittedReplacement(receipt) {
+  const located = await findGitHubImportTarget(receipt.projectId, receipt.path)
+  if (
+    located?.type !== 'file' ||
+    located.element._id.toString() !== receipt.replacement?.fileId ||
+    !located.folder
+  ) {
+    throw githubFileChanged()
+  }
+  return located
+}
+
 function getImportFolder(projectId, path, userId, exactCase) {
   const { mkdirp, mkdirpWithExactCase } = ProjectEntityUpdateHandler.promises
   return (exactCase ? mkdirpWithExactCase : mkdirp).withoutLock(
@@ -840,6 +904,9 @@ function assertGitHubFileMatches(located, expectedFile) {
 }
 
 const upsertFileWithPath = wrapWithLock({
+  retirementOperationId({ expectedFile }) {
+    return expectedFile?.operationId
+  },
   async beforeLock(
     projectId,
     elementPath,
@@ -893,6 +960,38 @@ const upsertFileWithPath = wrapWithLock({
     source,
     expectedFile,
   }) {
+    if (expectedFile && 'docId' in expectedFile) {
+      const { docId, version, operationId, sourceCommit, blobHash } =
+        expectedFile
+      if (
+        !retirementEnabled() ||
+        Settings.documentupdater?.enableRetirementBinaryConversion !== true ||
+        source !== 'github' ||
+        fileRef.hash !== blobHash
+      ) {
+        throw githubDocumentChanged()
+      }
+      const receipt = await retireGitHubDocument(
+        { projectId, docId, version, operationId },
+        elementPath,
+        userId,
+        {
+          sourceCommit,
+          fileId: fileRef._id.toString(),
+          hash: blobHash,
+          name: fileRef.name,
+          created: fileRef.created,
+        }
+      )
+      const { element, folder } = await locateCommittedReplacement(receipt)
+      return {
+        fileRef: element,
+        isNew: false,
+        oldFileRef: { _id: docId },
+        newFolders: [],
+        folder,
+      }
+    }
     let located
     if (expectedFile !== undefined) {
       located = await findGitHubImportTarget(projectId, elementPath)
@@ -981,6 +1080,16 @@ const deleteEntity = wrapWithLock(
 
 const deleteEntityWithPath = wrapWithLock(
   async (projectId, path, userId, source, expectedEntity) => {
+    if (retirementEnabled() && expectedEntity && 'docId' in expectedEntity) {
+      const { docId, version, operationId } = expectedEntity
+      if (!operationId) throw githubDocumentChanged()
+      const result = await retireGitHubDocument(
+        { projectId, docId, version, operationId },
+        path,
+        userId
+      )
+      return result.docId
+    }
     const located =
       expectedEntity === undefined
         ? await ProjectLocator.promises.findElementByPath({
@@ -1016,7 +1125,9 @@ const deleteEntityWithPath = wrapWithLock(
       userId,
       source
     )
-  }
+  },
+  LockManager,
+  ([, , , expectedEntity]) => expectedEntity?.operationId
 )
 
 const mkdirp = wrapWithLock(async function (projectId, path, userId) {
@@ -1180,6 +1291,10 @@ const renameEntity = wrapWithLock(
 // to prevent anything else being queued before the resync update
 const resyncProjectHistory = wrapWithLock(
   async (projectId, opts) => {
+    const { resyncReservationToken, ...resyncOptions } = opts
+    if (retirementEnabled()) {
+      await requireHistoryResyncReservation(projectId, resyncReservationToken)
+    }
     const project = await ProjectGetter.promises.getProject(projectId, {
       rootFolder: true,
       overleaf: true,
@@ -1206,7 +1321,7 @@ const resyncProjectHistory = wrapWithLock(
       projectHistoryId,
       docs,
       files,
-      opts
+      resyncOptions
     )
     if (opts.historyRangesMigration) {
       return await ProjectOptionsHandler.promises.setHistoryRangesSupport(
@@ -1318,16 +1433,18 @@ async function setMainBibliographyDoc(projectId, newBibliographyDocId) {
   if (projectId == null || newBibliographyDocId == null) {
     throw new Errors.InvalidError('missing arguments (project or doc)')
   }
+  const filter = await getDocumentPointerFilter(projectId)
   const docPath =
     await ProjectEntityHandler.promises.getDocPathByProjectIdAndDocId(
       projectId,
       newBibliographyDocId
     )
   if (ProjectEntityUpdateHandler.isPathValidForMainBibliographyDoc(docPath)) {
-    await Project.updateOne(
-      { _id: projectId },
-      { mainBibliographyDoc_id: newBibliographyDocId }
-    ).exec()
+    const result = await Project.updateOne(filter, {
+      mainBibliographyDoc_id: newBibliographyDocId,
+    }).exec()
+    if (retirementEnabled() && result.matchedCount !== 1)
+      throw githubDocumentChanged()
   } else {
     throw new Errors.UnsupportedFileTypeError(
       'invalid file extension for main bibliography doc'
@@ -1418,6 +1535,7 @@ const ProjectEntityUpdateHandler = {
     convertDocToFile,
     deleteEntity,
     deleteEntityWithPath,
+    resumeActiveDocumentRetirement,
     mkdirp,
     mkdirpWithExactCase,
     moveEntity,

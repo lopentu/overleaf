@@ -1,3 +1,5 @@
+// @ts-check
+
 /* eslint-disable
     no-unused-vars,
 */
@@ -12,18 +14,148 @@
  * DS207: Consider shorter variations of null checks
  * Full docs: https://github.com/decaffeinate/decaffeinate/blob/master/docs/suggestions.md
  */
-let DispatchManager
 const Settings = require('@overleaf/settings')
 const logger = require('@overleaf/logger')
 const redis = require('@overleaf/redis-wrapper')
+const ProjectDispatchHandoff = require('@overleaf/redis-wrapper/ProjectDispatchHandoff.js')
+const ProjectUpdateQueue = require('@overleaf/redis-wrapper/ProjectUpdateQueue.js')
+const { randomUUID } = require('node:crypto')
+const { setTimeout: delay } = require('node:timers/promises')
 const Errors = require('./Errors')
 const _ = require('lodash')
 
-const UpdateManager = require('./UpdateManager')
+/** @typedef {(projectId: string, callback: (error: Error | null) => void) => void} ProcessLegacyUpdates */
+// UpdateManager creates the legacy callback export with callbackifyAll.
+const UpdateManager =
+  /** @type {typeof import('./UpdateManager') & {processOutstandingUpdatesWithLock: ProcessLegacyUpdates}} */ (
+    require('./UpdateManager')
+  )
 const Metrics = require('./Metrics')
 const RateLimitManager = require('./RateLimitManager')
 
-module.exports = DispatchManager = {
+/** @typedef {import('./QueuedProjectUpdates').Dependencies['ensureHistoryDurable']} EnsureHistoryDurable */
+/** @typedef {import('@overleaf/redis-wrapper/ProjectDispatchHandoff.js').DispatchMarker} DispatchMarker */
+
+const reclaimIdleMs = 30_000
+const waitForMarkerMs = 1_000
+
+/**
+ * @param {ProjectDispatchHandoff} handoff
+ * @param {DispatchMarker[]} markers
+ * @param {ProjectUpdateQueue} queue
+ * @param {EnsureHistoryDurable} ensureHistoryDurable
+ */
+async function processDispatchMarkers(
+  handoff,
+  markers,
+  queue,
+  ensureHistoryDurable
+) {
+  for (const marker of markers) {
+    if (Settings.shuttingDown) return
+    const { projectId, shard, markerId } = marker
+    try {
+      const status = await handoff.admit(marker)
+      // A receipt can expire while its admitted update is still queued.
+      if (
+        status !== 'admitted' &&
+        status !== 'document_fenced' &&
+        status !== 'missing'
+      ) {
+        logger.error(
+          { projectId, shard, markerId, status },
+          'could not reconcile dispatch ticket'
+        )
+        continue
+      }
+      const result =
+        await UpdateManager.promises.processGuardedQueuedBatchWithLock(
+          projectId,
+          { queue, ensureHistoryDurable }
+        )
+      if (result === 'empty' || result === 'acknowledged') {
+        await handoff.acknowledgeTerminal(marker)
+      }
+    } catch {
+      // Redis and apply errors can include serialized edits. Keep the marker
+      // pending and log just the identifiers needed to locate it.
+      logger.error(
+        { projectId, shard, markerId },
+        'guarded dispatch marker remains pending after an error'
+      )
+    }
+  }
+}
+
+/**
+ * @param {number} shard
+ * @param {number} shardCount
+ * @param {ProjectUpdateQueue} queue
+ * @param {EnsureHistoryDurable} ensureHistoryDurable
+ */
+async function runGuardedDispatcher(
+  shard,
+  shardCount,
+  queue,
+  ensureHistoryDurable
+) {
+  // Keep blocking stream reads off the connection used for project queues.
+  const client = redis.createClient(Settings.redis.documentupdater)
+  const handoff = new ProjectDispatchHandoff(client, queue, shardCount)
+  const consumer = randomUUID()
+  let cursor = '0-0'
+  let open = false
+  try {
+    while (!Settings.shuttingDown) {
+      try {
+        if (!open) {
+          await handoff.openShard(shard)
+          open = true
+        }
+        const reclaimed = await handoff
+          .reclaim(shard, consumer, reclaimIdleMs, cursor)
+          .catch(() => {
+            logger.error(
+              { shard },
+              'could not reclaim pending dispatch markers'
+            )
+          })
+        if (reclaimed) {
+          cursor = reclaimed.cursor
+          await processDispatchMarkers(
+            handoff,
+            reclaimed.markers,
+            queue,
+            ensureHistoryDurable
+          )
+        }
+        if (Settings.shuttingDown) break
+        const timer = new Metrics.Timer('worker.waiting')
+        const markers = await handoff
+          .read(
+            shard,
+            consumer,
+            reclaimed?.markers.length ? 0 : waitForMarkerMs
+          )
+          .finally(() => timer.done())
+        await processDispatchMarkers(
+          handoff,
+          markers,
+          queue,
+          ensureHistoryDurable
+        )
+      } catch {
+        open = false
+        logger.error({ shard }, 'error reading guarded dispatch stream')
+        await delay(waitForMarkerMs)
+      }
+    }
+  } finally {
+    client.disconnect()
+  }
+}
+
+const DispatchManager = {
   createDispatcher(RateLimiter, queueShardNumber) {
     let pendingListKey
     if (queueShardNumber === 0) {
@@ -98,10 +230,39 @@ module.exports = DispatchManager = {
     return worker
   },
 
-  createAndStartDispatchers(number) {
+  /**
+   * @param {number} number
+   * @param {EnsureHistoryDurable} [ensureHistoryDurable]
+   */
+  createAndStartDispatchers(number, ensureHistoryDurable) {
+    if (Settings.documentupdater?.enableRetirementQueue === true) {
+      if (typeof ensureHistoryDurable !== 'function') {
+        throw new Error('Guarded dispatch requires durable history proof')
+      }
+      if (Settings.documentupdater.enableRetirementWriterSeal !== true) {
+        throw new Error('Guarded dispatch requires the retirement writer seal')
+      }
+      if (!Number.isSafeInteger(number) || number <= 0) {
+        throw new Error('Invalid guarded dispatch shard count')
+      }
+      const config = Settings.redis.documentupdater
+      const commands = redis.createClient(config)
+      const queue = new ProjectUpdateQueue(
+        commands,
+        config.key_schema.pendingProjectUpdates
+      )
+      return Promise.all(
+        _.times(number, shard =>
+          runGuardedDispatcher(shard, number, queue, ensureHistoryDurable)
+        )
+      ).finally(() => commands.disconnect())
+    }
+
     const RateLimiter = new RateLimitManager(number)
     _.times(number, function (shardNumber) {
       return DispatchManager.createDispatcher(RateLimiter, shardNumber).run()
     })
   },
 }
+
+module.exports = DispatchManager

@@ -12,6 +12,8 @@
  */
 const Settings = require('@overleaf/settings')
 const { promisifyAll } = require('@overleaf/promise-utils')
+const { callbackify } = require('node:util')
+const ProjectUpdateQueue = require('@overleaf/redis-wrapper/ProjectUpdateQueue.js')
 const rclient = require('@overleaf/redis-wrapper').createClient(
   Settings.redis.documentupdater
 )
@@ -19,63 +21,44 @@ const pubsubClient = require('@overleaf/redis-wrapper').createClient(
   Settings.redis.pubsub
 )
 const Keys = Settings.redis.documentupdater.key_schema
+const projectUpdates = new ProjectUpdateQueue(
+  rclient,
+  Keys.pendingProjectUpdates
+)
 const logger = require('@overleaf/logger')
 const os = require('node:os')
 const crypto = require('node:crypto')
 const metrics = require('./Metrics')
+const { ProjectUpdateQueueGuardedError } = require('./Errors')
 
 const HOST = os.hostname()
 const RND = crypto.randomBytes(4).toString('hex') // generate a random key for this process
 let COUNT = 0
 
-const MAX_OPS_PER_ITERATION = 8 // process a limited number of ops for safety
-
-/**
- * Drain a batch of updates from a pending-updates list.
- *
- * The MULTI only operates on the single passed key (which has an id in curly
- * braces), so all of its operations run on the same node in a cluster
- * environment.
- *
- * @param {string} key - the redis key of the queue
- * @param {function(Error, Array<Object>=): void} callback
- */
-function getPendingUpdatesFromQueue(key, callback) {
-  const multi = rclient.multi()
-  multi.llen(key)
-  multi.lrange(key, 0, MAX_OPS_PER_ITERATION - 1)
-  multi.ltrim(key, MAX_OPS_PER_ITERATION, -1)
-  multi.exec(function (error, replys) {
-    if (error != null) {
-      return callback(error)
-    }
-    const [llen, jsonUpdates, _trimResult] = replys
-    metrics.histogram(
-      'redis.pendingUpdates.llen',
-      llen,
-      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 50, 75, 100],
-      { path: 'project' }
+// Refusal is an error because synchronous callers must not treat a protected
+// queue as drained. The Lua check and destructive pop run on one project slot.
+const getPendingUpdatesFromQueue = callbackify(async projectId => {
+  const result = await projectUpdates.popLegacyBatch(projectId)
+  if (result.status === 'guarded') {
+    throw new ProjectUpdateQueueGuardedError(
+      'legacy drain refused for guarded project',
+      { projectId }
     )
-    for (const jsonUpdate of jsonUpdates) {
-      // record metric for each update removed from queue
-      metrics.summary('redis.pendingUpdates', jsonUpdate.length, {
-        status: 'pop',
-        path: 'project',
-      })
-    }
-    const updates = []
-    for (const jsonUpdate of jsonUpdates) {
-      let update
-      try {
-        update = JSON.parse(jsonUpdate)
-      } catch (e) {
-        return callback(e)
-      }
-      updates.push(update)
-    }
-    return callback(error, updates)
-  })
-}
+  }
+  metrics.histogram(
+    'redis.pendingUpdates.llen',
+    result.length,
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 50, 75, 100],
+    { path: 'project' }
+  )
+  for (const jsonUpdate of result.entries) {
+    metrics.summary('redis.pendingUpdates', jsonUpdate.length, {
+      status: 'pop',
+      path: 'project',
+    })
+  }
+  return result.entries.map(entry => JSON.parse(entry))
+})
 
 const RealTimeRedisManager = {
   /**
@@ -87,10 +70,7 @@ const RealTimeRedisManager = {
    * @param {function(Error, Array<Object>=): void} callback
    */
   getPendingProjectUpdates(projectId, callback) {
-    getPendingUpdatesFromQueue(
-      Keys.pendingProjectUpdates({ project_id: projectId }),
-      callback
-    )
+    getPendingUpdatesFromQueue(projectId, callback)
   },
 
   /**
@@ -148,3 +128,4 @@ module.exports = RealTimeRedisManager
 module.exports.promises = promisifyAll(RealTimeRedisManager, {
   without: ['sendData'],
 })
+module.exports.guardedProjectQueue = projectUpdates

@@ -24,6 +24,27 @@ const docParamsSchema = z.strictObject({
   doc_id: zz.objectId(),
 })
 
+const retirementSchema = z.object({
+  params: docParamsSchema.extend({ operation_id: z.uuid() }),
+  body: z.strictObject({ version: z.number().int().nonnegative() }),
+})
+
+async function reconcileDocumentRetirement(req, res) {
+  const EditableDocumentRetirement = require('./EditableDocumentRetirement')
+  if (!EditableDocumentRetirement.isEnabled()) return res.sendStatus(404)
+  const {
+    params: { project_id: projectId, doc_id: docId, operation_id: operationId },
+    body: { version },
+  } = parseReq(req, retirementSchema)
+  const result = await EditableDocumentRetirement.reconcileRetirement({
+    projectId,
+    docId,
+    operationId,
+    version,
+  })
+  res.set('Cache-Control', 'no-store').json(result)
+}
+
 const commentParamsSchema = z.strictObject({
   project_id: zz.objectId(),
   doc_id: zz.objectId(),
@@ -898,6 +919,7 @@ module.exports = {
   setDocIfVersion: expressify(setDocIfVersion),
   flushDocIfLoaded: expressify(flushDocIfLoaded),
   deleteDoc: expressify(deleteDoc),
+  reconcileDocumentRetirement: expressify(reconcileDocumentRetirement),
   flushProject: expressify(flushProject),
   deleteProject: expressify(deleteProject),
   deleteMultipleProjects: expressify(deleteMultipleProjects),

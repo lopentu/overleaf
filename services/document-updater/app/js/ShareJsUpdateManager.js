@@ -53,7 +53,9 @@ const ShareJsUpdateManager = {
     // This adds a small but hopefully acceptable overhead (~12ms per 1000 updates on
     // my 2009 MBP).
     const model = this.getNewShareJsModel(projectId, docId, lines, version)
-    this._listenForOps(model)
+    const deferAck =
+      Settings.documentupdater?.enableRetirementWriterSeal === true
+    if (!deferAck) this._listenForOps(model)
     const docKey = Keys.combineProjectIdAndDocId(projectId, docId)
     return model.applyOp(docKey, update, function (error) {
       if (error != null) {
@@ -64,7 +66,7 @@ const ShareJsUpdateManager = {
             'op has already been submitted'
           )
           update.dup = true
-          ShareJsUpdateManager._sendOp(projectId, docId, update)
+          if (!deferAck) ShareJsUpdateManager._sendOp(projectId, docId, update)
         } else if (/^Delete component/.test(error)) {
           metrics.inc('sharejs.delete-mismatch')
           logger.debug(
@@ -120,6 +122,11 @@ const ShareJsUpdateManager = {
     })
   },
 
+  publishPersistedOps(projectId, docId, update, appliedOps) {
+    const broadcasts = update.dup ? [update] : appliedOps
+    for (const op of broadcasts) this._sendOp(projectId, docId, op)
+  },
+
   _listenForOps(model) {
     return model.on('applyOp', function (docKey, opData) {
       const [projectId, docId] = Array.from(Keys.splitProjectIdAndDocId(docKey))
@@ -146,7 +153,13 @@ const ShareJsUpdateManager = {
 
 module.exports = ShareJsUpdateManager
 module.exports.promises = promisifyAll(ShareJsUpdateManager, {
-  without: ['getNewShareJsModel', '_listenForOps', '_sendOp', '_computeHash'],
+  without: [
+    'getNewShareJsModel',
+    'publishPersistedOps',
+    '_listenForOps',
+    '_sendOp',
+    '_computeHash',
+  ],
   multiResult: {
     applyUpdate: ['updatedDocLines', 'version', 'appliedOps'],
   },

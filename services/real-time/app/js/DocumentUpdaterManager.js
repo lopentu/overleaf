@@ -1,9 +1,13 @@
+// @ts-check
+
 import _ from 'lodash'
 import OError from '@overleaf/o-error'
 import logger from '@overleaf/logger'
 import settings from '@overleaf/settings'
 import metrics from '@overleaf/metrics'
 import RedisWrapper from '@overleaf/redis-wrapper'
+import ProjectDispatchHandoff from '@overleaf/redis-wrapper/ProjectDispatchHandoff.js'
+import ProjectUpdateQueue from '@overleaf/redis-wrapper/ProjectUpdateQueue.js'
 import Errors from './Errors.js'
 import {
   fetchJson,
@@ -11,16 +15,24 @@ import {
   RequestFailedError,
 } from '@overleaf/fetch-utils'
 import { callbackify } from 'node:util'
+import { randomUUID } from 'node:crypto'
 
 const {
   ClientRequestedMissingOpsError,
+  DocumentRetirementFencedError,
   DocumentUpdaterRequestFailedError,
   NullBytesInOpError,
+  UnexpectedArgumentsError,
   UpdateTooLargeError,
 } = Errors
 
 const rclient = RedisWrapper.createClient(settings.redis.documentupdater)
 const Keys = settings.redis.documentupdater.key_schema
+const projectUpdates = new ProjectUpdateQueue(
+  rclient,
+  Keys.pendingProjectUpdates
+)
+const dispatchTicketLifetimeMs = 60_000
 
 /**
  * Fetch a doc's lines, version, ranges and recent ops from the
@@ -56,7 +68,7 @@ async function getDocument(projectId, docId, fromVersion) {
       const { response, body } = err
       let parsedErrBody = null
       try {
-        parsedErrBody = JSON.parse(body)
+        parsedErrBody = JSON.parse(body ?? '')
       } catch (error) {
         // ignore parse error
       }
@@ -109,12 +121,21 @@ async function flushProjectToMongoAndDelete(projectId) {
 }
 
 /**
- * Pick a random shard of the document-updater dispatch list.
+ * Pick a random shard of the document-updater dispatch queue.
+ *
+ * @return {number}
+ */
+function getPendingUpdateShard() {
+  return _.random(0, settings.pendingUpdateListShardCount - 1)
+}
+
+/**
+ * Pick a random shard of the legacy document-updater dispatch list.
  *
  * @return {string}
  */
 function _getPendingUpdateListKey() {
-  const shard = _.random(0, settings.pendingUpdateListShardCount - 1)
+  const shard = getPendingUpdateShard()
   if (shard === 0) {
     return 'pending-updates-list'
   } else {
@@ -123,9 +144,52 @@ function _getPendingUpdateListKey() {
 }
 
 /**
- * Queue an update for processing by the document-updater: push the payload
- * (tagged with its doc id) onto the project queue, then put a bare
- * `project_id` marker onto pending-updates-list.
+ * Publish a durable dispatch marker before admitting the update.
+ *
+ * @param {string} projectId
+ * @param {string} docId
+ * @param {string} payload
+ */
+async function queueGuardedChange(projectId, docId, payload) {
+  const handoff = new ProjectDispatchHandoff(
+    rclient,
+    projectUpdates,
+    settings.pendingUpdateListShardCount
+  )
+  // Reuse the same ticket on a transport retry. A browser resend starts a new
+  // queueChange call and has no immutable request ID in its envelope.
+  const request = {
+    projectId,
+    docId,
+    payload,
+    shard: getPendingUpdateShard(),
+    ticketId: randomUUID(),
+    deadline: Date.now() + dispatchTicketLifetimeMs,
+  }
+  const result = await handoff
+    .enqueue(request)
+    .catch(() => handoff.enqueue(request))
+    .catch(() => {
+      // A Redis transport error can contain the serialized update arguments.
+      throw new OError('unable to confirm guarded document update', {
+        ticketId: request.ticketId,
+      })
+    })
+  if (result.status === 'admitted') return
+  if (result.status === 'document_fenced') {
+    throw new DocumentRetirementFencedError()
+  }
+  if (result.status === 'invalid_update') {
+    throw new UnexpectedArgumentsError()
+  }
+  throw new OError('unable to confirm guarded document update', {
+    ticketId: request.ticketId,
+    status: result.status,
+  })
+}
+
+/**
+ * Queue an update for processing by the document-updater.
  *
  * @param {string} projectId
  * @param {string} docId
@@ -150,6 +214,10 @@ async function queueChange(projectId, docId, change) {
     status: 'push',
     path: 'project',
   })
+
+  if (settings.documentupdater?.enableRetirementQueue === true) {
+    return queueGuardedChange(projectId, docId, jsonChange)
+  }
 
   // Push onto the project queue first, because once the doc updater gets an
   // entry on pending-updates-list, it starts processing.

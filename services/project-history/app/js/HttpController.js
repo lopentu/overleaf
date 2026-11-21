@@ -1,5 +1,7 @@
 import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
+import Settings from '@overleaf/settings'
+import { expressify } from '@overleaf/promise-utils'
 import * as UpdatesProcessor from './UpdatesProcessor.js'
 import * as SummarizedUpdatesManager from './SummarizedUpdatesManager.js'
 import * as DiffManager from './DiffManager.js'
@@ -14,6 +16,10 @@ import * as LabelsManager from './LabelsManager.js'
 import * as HistoryApiManager from './HistoryApiManager.js'
 import * as RetryManager from './RetryManager.js'
 import * as FlushManager from './FlushManager.js'
+import {
+  reconcilePublication,
+  reconcileRetirementPublication,
+} from './HistoryPublication.js'
 import Stream, { pipeline } from 'node:stream'
 import { fetchNothing, RequestFailedError } from '@overleaf/fetch-utils'
 import { z, zz, parseReq } from '@overleaf/validation-tools'
@@ -246,6 +252,103 @@ const flushProjectSchema = z.object({
     // flushes in logs/metrics upstream.
     background: z.stringbool().optional(),
   }),
+})
+
+const reconcileHistoryPublicationSchema = z.object({
+  params: z.strictObject({ project_id: zz.objectId() }),
+  body: z.strictObject({
+    batchId: z.uuid(),
+    ordinal: z.number().int().nonnegative(),
+    historyEntries: z.array(z.string()),
+  }),
+})
+
+export const reconcileHistoryPublication = expressify(async (req, res) => {
+  if (Settings.documentupdater?.enableRetirementQueue !== true) {
+    return res.sendStatus(404)
+  }
+  const {
+    params: { project_id: projectId },
+    body,
+  } = parseReq(req, reconcileHistoryPublicationSchema)
+  const historyId = await WebApiManager.getFreshHistoryId(projectId)
+  if (typeof historyId !== 'string' || !/^[a-f0-9]{24}$/.test(historyId)) {
+    return res.sendStatus(409)
+  }
+
+  const status = await reconcilePublication(
+    {
+      lookup: HistoryStoreManager.lookupActivationReceipt,
+      enqueue: RedisManager.bufferHistoryPublication,
+    },
+    { ...body, projectId, historyId }
+  )
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ status })
+})
+
+const retirementReadinessSchema = z.object({
+  params: z.strictObject({ project_id: zz.objectId() }),
+})
+
+export const getRetirementReadiness = expressify(async (req, res) => {
+  const {
+    params: { project_id: projectId },
+  } = parseReq(req, retirementReadinessSchema)
+  res.setHeader('Cache-Control', 'no-store')
+  if (Settings.documentupdater?.enableRetirementQueue !== true) {
+    return res.json({ ready: false })
+  }
+
+  try {
+    const historyId = await WebApiManager.getFreshHistoryId(projectId)
+    if (typeof historyId !== 'string' || !/^[a-f0-9]{24}$/.test(historyId)) {
+      return res.json({ ready: false })
+    }
+    const syncState = await SyncManager.promises.getResyncState(projectId)
+    if (
+      syncState.isSyncOngoing() ||
+      !(await HistoryStoreManager.isGuardedAppendReady(historyId))
+    ) {
+      return res.json({ ready: false })
+    }
+    return res.json({ ready: true, historyId })
+  } catch {
+    // Mixed versions and unavailable dependencies must look unready to Web.
+    return res.json({ ready: false })
+  }
+})
+
+const reconcileRetirementHistorySchema = z.object({
+  params: z.strictObject({
+    project_id: zz.objectId(),
+    operation_id: z.uuid(),
+  }),
+  body: z.strictObject({
+    docId: zz.objectId(),
+    version: z.number().int().nonnegative(),
+  }),
+})
+
+export const reconcileRetirementHistory = expressify(async (req, res) => {
+  if (Settings.documentupdater?.enableRetirementQueue !== true) {
+    return res.sendStatus(404)
+  }
+  const {
+    params: { project_id: projectId, operation_id: operationId },
+    body: { docId, version },
+  } = parseReq(req, reconcileRetirementHistorySchema)
+  const status = await reconcileRetirementPublication(
+    {
+      getDocumentRetirement: WebApiManager.getDocumentRetirement,
+      getFreshHistoryId: WebApiManager.getFreshHistoryId,
+      lookup: HistoryStoreManager.lookupActivationReceipt,
+      enqueue: RedisManager.bufferHistoryPublication,
+    },
+    { projectId, docId, operationId, version }
+  )
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ status })
 })
 
 // Rollout-temporary fallback (pre-refinement schema from main); delete

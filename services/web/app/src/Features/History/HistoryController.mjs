@@ -32,6 +32,7 @@ import RestoreManager from './RestoreManager.mjs'
 import { prepareZipAttachment } from '../../infrastructure/Response.mjs'
 import Features from '../../infrastructure/Features.mjs'
 import { z, zz, parseReq } from '../../infrastructure/Validation.mjs'
+import * as HistoryResyncReservation from './HistoryResyncReservation.mjs'
 /** @type {any} */
 import ProjectAuditLogHandler from '../Project/ProjectAuditLogHandler.mjs'
 
@@ -241,6 +242,7 @@ const resyncProjectHistorySchema = z.object({
   body: z.strictObject({
     historyRangesMigration: z.enum(['forwards', 'backwards']).optional(),
     resyncProjectStructureOnly: z.boolean().default(false),
+    resyncReservationToken: z.uuid().optional(),
   }),
 })
 
@@ -253,6 +255,7 @@ const resyncProjectHistoryFallbackSchema = z.object({
   body: z.object({
     historyRangesMigration: z.enum(['forwards', 'backwards']).optional(),
     resyncProjectStructureOnly: z.boolean().default(false),
+    resyncReservationToken: z.uuid().optional(),
   }),
 })
 
@@ -271,6 +274,9 @@ async function resyncProjectHistory(req, res, next) {
   const opts = {
     historyRangesMigration: body.historyRangesMigration,
     resyncProjectStructureOnly: body.resyncProjectStructureOnly,
+    ...(body.resyncReservationToken && {
+      resyncReservationToken: body.resyncReservationToken,
+    }),
   }
 
   try {
@@ -287,6 +293,36 @@ async function resyncProjectHistory(req, res, next) {
   }
 
   res.sendStatus(204)
+}
+
+const resyncReservationParams = z.strictObject({ Project_id: zz.objectId() })
+const claimResyncReservationSchema = z.object({
+  params: resyncReservationParams,
+  body: z.strictObject({ token: z.uuid(), expectedToken: z.uuid().optional() }),
+})
+const releaseResyncReservationSchema = z.object({
+  params: resyncReservationParams,
+  body: z.strictObject({ token: z.uuid() }),
+})
+
+/** @param {Request} req @param {Response} res */
+async function claimResyncReservation(req, res) {
+  const { params, body } = parseReq(req, claimResyncReservationSchema)
+  res.json(
+    await HistoryResyncReservation.claim(
+      params.Project_id,
+      body.token,
+      body.expectedToken
+    )
+  )
+}
+
+/** @param {Request} req @param {Response} res */
+async function releaseResyncReservation(req, res) {
+  const { params, body } = parseReq(req, releaseResyncReservationSchema)
+  res.json(
+    await HistoryResyncReservation.release(params.Project_id, body.token)
+  )
 }
 
 const restoreFileFromV2Schema = z.object({
@@ -925,6 +961,8 @@ export default {
     proxyToHistoryApiAndInjectUserDetails
   ),
   resyncProjectHistory: expressify(resyncProjectHistory),
+  claimResyncReservation: expressify(claimResyncReservation),
+  releaseResyncReservation: expressify(releaseResyncReservation),
   restoreFileFromV2: expressify(restoreFileFromV2),
   revertFile: expressify(revertFile),
   revertProject: expressify(revertProject),

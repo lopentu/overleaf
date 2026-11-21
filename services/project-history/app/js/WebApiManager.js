@@ -8,6 +8,7 @@ import {
   fetchJson,
   RequestFailedError,
 } from '@overleaf/fetch-utils'
+import { z } from '@overleaf/validation-tools'
 import * as Errors from './Errors.js'
 import * as RedisManager from './RedisManager.js'
 
@@ -21,16 +22,75 @@ async function getHistoryId(projectId) {
     Metrics.inc('history_id_cache_hits_total')
     return cachedHistoryId
   } else {
-    const project = await _getProjectDetails(projectId)
-    const historyId =
-      project.overleaf &&
-      project.overleaf.history &&
-      project.overleaf.history.id
+    const historyId = await getFreshHistoryId(projectId)
     if (historyId != null) {
       await RedisManager.promises.setCachedHistoryId(projectId, historyId)
     }
     return historyId
   }
+}
+
+export async function getFreshHistoryId(projectId) {
+  const project = await _getProjectDetails(projectId)
+  return project.overleaf?.history?.id
+}
+
+export async function getDocumentRetirement({
+  projectId,
+  docId,
+  operationId,
+  version,
+}) {
+  return await fetchJson(
+    `${Settings.apis.web.url}/project/${projectId}/doc/${docId}/retirement/${operationId}/lookup`,
+    {
+      method: 'POST',
+      json: { version },
+      basicAuth: {
+        user: Settings.apis.web.user,
+        password: Settings.apis.web.pass,
+      },
+      signal: AbortSignal.timeout(5000),
+    }
+  )
+}
+
+const resyncReservationClaim = z.discriminatedUnion('status', [
+  z.object({ status: z.enum(['claimed', 'blocked']) }),
+  z.object({ status: z.literal('held'), token: z.uuid() }),
+])
+const resyncReservationRelease = z.object({
+  status: z.enum(['released', 'missing', 'conflict']),
+})
+
+async function claimResyncReservation(projectId, token, expectedToken) {
+  return resyncReservationClaim.parse(
+    await requestResyncReservation(projectId, 'claim', {
+      token,
+      ...(expectedToken === undefined ? {} : { expectedToken }),
+    })
+  )
+}
+
+async function releaseResyncReservation(projectId, token) {
+  return resyncReservationRelease.parse(
+    await requestResyncReservation(projectId, 'release', { token })
+  )
+}
+
+async function requestResyncReservation(projectId, action, json) {
+  return await fetchJson(
+    `${Settings.apis.web.url}/project/${projectId}/history/resync-reservation/${action}`,
+    {
+      method: 'POST',
+      json,
+      signal: AbortSignal.timeout(5000),
+      basicAuth: {
+        user: Settings.apis.web.user,
+        password: Settings.apis.web.pass,
+      },
+    }
+  )
 }
 
 async function requestResync(projectId, opts = {}) {
@@ -42,11 +102,16 @@ async function requestResync(projectId, opts = {}) {
     if (opts.resyncProjectStructureOnly) {
       body.resyncProjectStructureOnly = opts.resyncProjectStructureOnly
     }
+    if (opts.resyncReservationToken) {
+      body.resyncReservationToken = opts.resyncReservationToken
+    }
     await fetchNothing(
       `${Settings.apis.web.url}/project/${projectId}/history/resync`,
       {
         method: 'POST',
-        signal: AbortSignal.timeout(6 * 60000),
+        signal: AbortSignal.timeout(
+          (opts.resyncReservationToken ? 5 : 6) * 60_000
+        ),
         basicAuth: {
           user: Settings.apis.web.user,
           password: Settings.apis.web.pass,
@@ -109,4 +174,6 @@ export { getHistoryIdCb as getHistoryId, requestResyncCb as requestResync }
 export const promises = {
   getHistoryId,
   requestResync,
+  claimResyncReservation,
+  releaseResyncReservation,
 }

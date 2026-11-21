@@ -4,7 +4,10 @@ import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
 import * as UpdatesProcessor from './UpdatesProcessor.js'
 import * as SyncManager from './SyncManager.js'
-import { SYNC_ONGOING_ERROR_MESSAGE } from './Errors.js'
+import {
+  HistoryPublicationTransportUnavailableError,
+  SYNC_ONGOING_ERROR_MESSAGE,
+} from './Errors.js'
 import * as WebApiManager from './WebApiManager.js'
 import * as RedisManager from './RedisManager.js'
 import * as ErrorRecorder from './ErrorRecorder.js'
@@ -59,12 +62,14 @@ export const retryFailures = callbackify(promises.retryFailures)
 
 function softErrorSelector(failure) {
   return (
+    isPublicationFailure(failure) ||
     (isTemporaryFailure(failure) && !isRepeatedFailure(failure)) ||
     (isFirstFailure(failure) && !isHardFailure(failure))
   )
 }
 
 function hardErrorSelector(failure) {
+  if (isPublicationFailure(failure)) return false
   // Ongoing-sync failures are always retried via soft resync.
   // SyncManager's stuck detection handles the retry limit (stuckClearCount).
   if (isOngoingSyncFailure(failure)) return true
@@ -73,6 +78,14 @@ function hardErrorSelector(failure) {
   return (
     (isHardFailure(failure) || isRepeatedFailure(failure)) &&
     !isStuckFailure(failure)
+  )
+}
+
+function isPublicationFailure(failure) {
+  return (
+    failure.error?.startsWith(
+      `${HistoryPublicationTransportUnavailableError.name}:`
+    ) ?? false
   )
 }
 

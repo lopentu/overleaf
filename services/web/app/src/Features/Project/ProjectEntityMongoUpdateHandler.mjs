@@ -15,6 +15,13 @@ import ProjectLocator from './ProjectLocator.mjs'
 import FolderStructureBuilder from './FolderStructureBuilder.mjs'
 import SafePath from './SafePath.mjs'
 import { iterablePaths } from './IterablePath.mjs'
+import {
+  prepareDocumentRetirement,
+  readDocumentRetirement,
+  commitDocumentRetirement,
+  commitDocumentReplacement,
+  abortDocumentRetirement,
+} from './ProjectDocumentRetirement.mjs'
 
 const { ObjectId } = mongodb
 
@@ -84,6 +91,11 @@ export default {
     mkdirp: wrapWithLock(mkdirp),
     moveEntity: wrapWithLock(moveEntity),
     deleteEntity: wrapWithLock(deleteEntity),
+    prepareDocumentRetirement,
+    readDocumentRetirement,
+    commitDocumentRetirement,
+    commitDocumentReplacement,
+    abortDocumentRetirement,
     renameEntity: wrapWithLock(renameEntity),
     createNewFolderStructure: wrapWithLock(createNewFolderStructure),
     _putElement,

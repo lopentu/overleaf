@@ -10,10 +10,11 @@ const Origin = require('./origin')
 const Snapshot = require('./snapshot')
 const FileMap = require('./file_map')
 const V2DocVersions = require('./v2_doc_versions')
+const { isHistoryPublication } = require('./history_publication')
 
 /**
  * @import Author from "./author"
- * @import { BlobStore, RawChange, ReadonlyBlobStore } from "./types"
+ * @import { BlobStore, HistoryPublication, RawChange, RawStorageChange, ReadonlyBlobStore } from "./types"
  */
 
 /**
@@ -23,6 +24,9 @@ const V2DocVersions = require('./v2_doc_versions')
 class Change {
   static PROJECT_VERSION_RX_STRING = '^[0-9]+\\.[0-9]+$'
   static PROJECT_VERSION_RX = new RegExp(Change.PROJECT_VERSION_RX_STRING)
+
+  /** @type {Readonly<HistoryPublication> | undefined} */
+  #historyPublication
 
   /**
    * @param {Array.<Operation>} operations
@@ -70,6 +74,41 @@ class Change {
     if (this.projectVersion) raw.projectVersion = this.projectVersion
     if (this.v2DocVersions) raw.v2DocVersions = this.v2DocVersions.toRaw()
     return raw
+  }
+
+  /** @returns {RawStorageChange} */
+  toStorageRaw() {
+    const raw = this.toRaw()
+    return this.#historyPublication
+      ? { ...raw, historyPublication: { ...this.#historyPublication } }
+      : raw
+  }
+
+  /** @param {RawStorageChange} raw */
+  static fromStorageRaw(raw) {
+    const change = Change.mustFromRaw(raw)
+    if (raw.historyPublication !== undefined) {
+      change.setHistoryPublication(raw.historyPublication)
+    }
+    return change
+  }
+
+  getHistoryPublication() {
+    return this.#historyPublication
+  }
+
+  /** @param {HistoryPublication} publication */
+  setHistoryPublication(publication) {
+    if (!isHistoryPublication(publication)) {
+      throw new TypeError('Invalid history publication metadata')
+    }
+    if (this.#historyPublication) {
+      if (!_.isEqual(this.#historyPublication, publication)) {
+        throw new Error('History publication identity is already set')
+      }
+      return
+    }
+    this.#historyPublication = Object.freeze({ ...publication })
   }
 
   static fromRaw(raw) {
@@ -330,13 +369,13 @@ class Change {
   }
 
   clone() {
-    return Change.fromRaw(this.toRaw())
+    return Change.fromStorageRaw(this.toStorageRaw())
   }
 
   async store(blobStore, concurrency) {
     assert.maybe.number(concurrency, 'bad concurrency')
 
-    const raw = this.toRaw()
+    const raw = this.toStorageRaw()
     raw.authors = _.uniq(raw.authors)
 
     const rawOperations = await pMap(

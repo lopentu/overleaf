@@ -1,5 +1,9 @@
 import sinon from 'sinon'
+import { expect } from 'chai'
+import { parseHistoryUpdate } from '../../../../app/js/HistoryPublicationEnvelope.js'
+import { convertToChanges } from '../../../../app/js/UpdateTranslator.js'
 import { strict as esmock } from 'esmock'
+import { randomUUID } from 'node:crypto'
 import mongodb from 'mongodb-legacy'
 const { ObjectId } = mongodb
 
@@ -22,6 +26,8 @@ describe('HttpController', function () {
       getMostRecentVersion: sinon.stub(),
       getProjectBlobStream: sinon.stub(),
       initializeProject: sinon.stub(),
+      lookupActivationReceipt: sinon.stub(),
+      isGuardedAppendReady: sinon.stub(),
     }
     this.SnapshotManager = {
       getFileSnapshotStream: sinon.stub(),
@@ -31,14 +37,18 @@ describe('HttpController', function () {
     this.SyncManager = {
       clearResyncState: sinon.stub().yields(),
       startResync: sinon.stub().yields(),
+      promises: { getResyncState: sinon.stub() },
     }
     this.WebApiManager = {
       getHistoryId: sinon.stub(),
+      getFreshHistoryId: sinon.stub(),
+      getDocumentRetirement: sinon.stub(),
     }
     this.RedisManager = {
       destroyDocUpdatesQueue: sinon.stub().yields(),
       clearFirstOpTimestamp: sinon.stub().yields(),
       clearCachedHistoryId: sinon.stub().yields(),
+      bufferHistoryPublication: sinon.stub().resolves('buffered'),
     }
     this.ErrorRecorder = {
       clearError: sinon.stub().yields(),
@@ -54,8 +64,10 @@ describe('HttpController', function () {
     }
     this.RetryManager = {}
     this.FlushManager = {}
+    this.settings = { documentupdater: { enableRetirementQueue: false } }
     this.pipeline = sinon.stub()
     this.HttpController = await esmock(MODULE_PATH, {
+      '@overleaf/settings': this.settings,
       stream: { pipeline: this.pipeline },
       '../../../../app/js/UpdatesProcessor.js': this.UpdatesProcessor,
       '../../../../app/js/SummarizedUpdatesManager.js':
@@ -85,6 +97,219 @@ describe('HttpController', function () {
       sendStatus: sinon.stub(),
       setHeader: sinon.stub(),
     }
+  })
+
+  describe('reconcileHistoryPublication', function () {
+    beforeEach(function () {
+      this.historyId = new ObjectId().toString()
+      this.WebApiManager.getFreshHistoryId.resolves(this.historyId)
+      this.HistoryStoreManager.lookupActivationReceipt.resolves({
+        status: 'pending',
+      })
+      this.req = {
+        params: { project_id: this.projectId },
+        body: {
+          batchId: randomUUID(),
+          ordinal: 0,
+          historyEntries: [
+            JSON.stringify({
+              doc: 'doc-a',
+              op: [{ p: 0, i: 'a' }],
+              v: 0,
+              meta: { pathname: 'main.tex', ts: 1, doc_length: 0 },
+            }),
+          ],
+        },
+      }
+      this.reconcile = () =>
+        this.HttpController.reconcileHistoryPublication(
+          this.req,
+          this.res,
+          this.next
+        )
+    })
+
+    it('is disabled by default', async function () {
+      await this.reconcile()
+
+      sinon.assert.calledOnceWithExactly(this.res.sendStatus, 404)
+      sinon.assert.notCalled(this.WebApiManager.getFreshHistoryId)
+    })
+
+    it('checks the current project binding and returns pending after buffering', async function () {
+      this.settings.documentupdater.enableRetirementQueue = true
+      await this.reconcile()
+
+      sinon.assert.notCalled(this.next)
+      sinon.assert.calledOnceWithExactly(
+        this.WebApiManager.getFreshHistoryId,
+        this.projectId
+      )
+      sinon.assert.calledOnceWithExactly(
+        this.HistoryStoreManager.lookupActivationReceipt,
+        sinon.match({
+          historyId: this.historyId,
+        })
+      )
+      sinon.assert.calledOnce(this.RedisManager.bufferHistoryPublication)
+      sinon.assert.calledOnceWithExactly(this.res.json, { status: 'pending' })
+      sinon.assert.notCalled(this.UpdatesProcessor.processUpdatesForProject)
+    })
+
+    it('rejects a project with legacy numeric history', async function () {
+      this.settings.documentupdater.enableRetirementQueue = true
+      this.WebApiManager.getFreshHistoryId.resolves('42')
+      await this.reconcile()
+
+      sinon.assert.calledOnceWithExactly(this.res.sendStatus, 409)
+      sinon.assert.notCalled(this.RedisManager.bufferHistoryPublication)
+    })
+  })
+
+  it('only publishes an exact committed retirement and reports durability from its receipt', async function () {
+    this.settings.documentupdater.enableRetirementQueue = true
+    const projectId = this.projectId
+    const docId = new ObjectId().toString()
+    const operationId = randomUUID()
+    const version = 6
+    const historyId = new ObjectId().toString()
+    const owner = { projectId, docId, operationId, version }
+    const retirement = {
+      ...owner,
+      path: '/folder/report.tex',
+      userId: this.userId,
+      committedStructureVersion: 19,
+      deletedAt: '2025-01-01T00:00:00.000Z',
+    }
+    const req = {
+      params: { project_id: projectId, operation_id: operationId },
+      body: { docId, version },
+    }
+    const reconcile = () =>
+      this.HttpController.reconcileRetirementHistory(req, this.res, this.next)
+    const lookup = this.HistoryStoreManager.lookupActivationReceipt
+    const buffer = this.RedisManager.bufferHistoryPublication
+    this.WebApiManager.getFreshHistoryId.resolves(historyId)
+    this.WebApiManager.getDocumentRetirement.resolves({ status: 'prepared' })
+
+    await reconcile()
+    sinon.assert.calledWithExactly(this.res.json, { status: 'pending' })
+    sinon.assert.notCalled(buffer)
+
+    this.WebApiManager.getDocumentRetirement.resolves({
+      status: 'committed',
+      retirement: { ...retirement, version: version + 1 },
+    })
+    await reconcile()
+    sinon.assert.calledOnce(this.next)
+    sinon.assert.notCalled(buffer)
+    this.next.resetHistory()
+
+    lookup.resolves({ status: 'pending' })
+    this.WebApiManager.getDocumentRetirement.resolves({
+      status: 'committed',
+      retirement,
+    })
+    await reconcile()
+    buffer.resolves('replayed')
+    await reconcile()
+    expect(buffer.firstCall.args).to.deep.equal(buffer.secondCall.args)
+    sinon.assert.calledWithExactly(
+      this.WebApiManager.getDocumentRetirement,
+      owner
+    )
+    const [
+      {
+        entries: [raw],
+        batchId,
+        ordinal,
+      },
+    ] = buffer.firstCall.args
+    expect([batchId, ordinal]).to.deep.equal([operationId, 0])
+    const translated = convertToChanges(projectId, [
+      { update: parseHistoryUpdate(raw) },
+    ])[0].toStorageRaw()
+    expect(translated).to.include({
+      projectVersion: '19.0',
+      timestamp: retirement.deletedAt,
+    })
+    expect(translated.operations).to.deep.equal([
+      { pathname: 'folder/report.tex', newPathname: '' },
+    ])
+    expect(translated.historyPublication).to.deep.equal(lookup.lastCall.args[0])
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ status: 'pending' })
+
+    lookup.resolves({ status: 'committed', historyVersion: 21 })
+    await reconcile()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ status: 'durable' })
+    sinon.assert.calledTwice(buffer)
+    sinon.assert.notCalled(this.next)
+    sinon.assert.notCalled(this.UpdatesProcessor.processUpdatesForProject)
+
+    await this.HttpController.reconcileHistoryPublication(
+      {
+        params: { project_id: projectId },
+        body: {
+          batchId: operationId,
+          ordinal: 0,
+          historyEntries: [JSON.parse(raw).source],
+        },
+      },
+      this.res,
+      this.next
+    )
+    sinon.assert.calledOnce(this.next)
+    sinon.assert.calledTwice(buffer)
+  })
+
+  it('only reports retirement readiness after checking the exact history backend', async function () {
+    const historyId = new ObjectId().toString()
+    const req = { params: { project_id: this.projectId } }
+    const check = () =>
+      this.HttpController.getRetirementReadiness(req, this.res, this.next)
+    const fresh = this.WebApiManager.getFreshHistoryId
+    const resync = this.SyncManager.promises.getResyncState
+    const backend = this.HistoryStoreManager.isGuardedAppendReady
+
+    await check()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ ready: false })
+    sinon.assert.notCalled(fresh)
+    sinon.assert.notCalled(backend)
+
+    this.settings.documentupdater.enableRetirementQueue = true
+    fresh.resolves('12345') // legacy history ID
+    await check()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ ready: false })
+    sinon.assert.notCalled(backend)
+
+    fresh.resolves(historyId)
+    resync.resolves({ isSyncOngoing: () => true })
+    await check()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ ready: false })
+    sinon.assert.notCalled(backend)
+
+    resync.resolves({ isSyncOngoing: () => false })
+    backend.resolves(false)
+    await check()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ ready: false })
+    sinon.assert.calledOnceWithExactly(backend, historyId)
+
+    backend.rejects(new Error('older backend lacks the readiness route'))
+    await check()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({ ready: false })
+
+    backend.resolves(true)
+    await check()
+    expect(this.res.json.lastCall.args[0]).to.deep.equal({
+      ready: true,
+      historyId,
+    })
+    sinon.assert.calledWithExactly(
+      this.res.setHeader,
+      'Cache-Control',
+      'no-store'
+    )
+    sinon.assert.notCalled(this.next)
   })
 
   describe('getProjectBlob', function () {

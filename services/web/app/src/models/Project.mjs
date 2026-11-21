@@ -13,6 +13,39 @@ const DeletedDocSchema = new Schema({
   deletedAt: { type: Date },
 })
 
+const RetirementReplacementSchema = new Schema(
+  {
+    sourceCommit: { type: String, required: true },
+    fileId: { type: ObjectId, required: true },
+    hash: { type: String, required: true },
+    name: { type: String, required: true },
+    created: { type: Date, required: true },
+  },
+  { _id: false }
+)
+
+const DocumentRetirementSchema = new Schema(
+  {
+    docId: { type: ObjectId, required: true },
+    folderId: { type: ObjectId, required: true },
+    userId: { type: ObjectId, required: true },
+    path: { type: String, required: true },
+    editorVersion: { type: Number, required: true },
+    baseStructureVersion: { type: Number },
+    phase: {
+      type: String,
+      enum: ['prepared', 'committed', 'aborted'],
+      required: true,
+    },
+    committedStructureVersion: { type: Number },
+    docstoreRev: { type: Number },
+    deletedAt: { type: Date },
+    completedAt: { type: Date },
+    replacement: RetirementReplacementSchema,
+  },
+  { _id: false }
+)
+
 export const ProjectSchema = new Schema(
   {
     name: { type: String, default: 'new project' },
@@ -43,6 +76,13 @@ export const ProjectSchema = new Schema(
     rootFolder: [FolderSchema],
     mainBibliographyDoc_id: { type: ObjectId },
     version: { type: Number }, // incremented for every change in the project structure (folders and filenames)
+    documentRetirements: {
+      type: Map,
+      of: DocumentRetirementSchema,
+      select: false,
+    },
+    activeDocumentRetirement: { type: String, select: false },
+    historyResyncReservation: { type: String, select: false },
     publicAccesLevel: { type: String, default: 'private' },
     compiler: { type: String, default: settings.defaultLatexCompiler },
     spellCheckLanguage: { type: String, default: 'en' },
@@ -125,7 +165,6 @@ ProjectSchema.statics.getProject = function (projectOrId, fields, callback) {
     callback(null, projectOrId)
   } else {
     try {
-      // eslint-disable-next-line no-new
       new ConcreteObjectId(projectOrId.toString())
     } catch (e) {
       return callback(new Errors.NotFoundError(e.message))

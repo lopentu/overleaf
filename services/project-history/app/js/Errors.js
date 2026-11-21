@@ -13,3 +13,4 @@ export class UnexpectedOpTypeError extends OError {}
 export class TooManyRequestsError extends OError {}
 export class NeedFullProjectStructureResyncError extends OError {}
 export class FileContentEmptyError extends OError {}
+export class HistoryPublicationTransportUnavailableError extends OError {}

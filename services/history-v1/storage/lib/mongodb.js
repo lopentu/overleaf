@@ -10,6 +10,8 @@ const client = new MongoClient(config.mongo.uri)
 const db = client.db()
 
 const chunks = db.collection('projectHistoryChunks')
+/** @type {import('mongodb').Collection<import('./chunk_store/mongo_activation_receipts').ReceiptRow>} */
+const activationReceipts = db.collection('projectHistoryActivationReceipts')
 const blobs = db.collection('projectHistoryBlobs')
 const globalBlobs = db.collection('projectHistoryGlobalBlobs')
 const shardedBlobs = db.collection('projectHistoryShardedBlobs')
@@ -30,6 +32,7 @@ module.exports = {
   client,
   db,
   chunks,
+  activationReceipts,
   blobs,
   globalBlobs,
   projects,

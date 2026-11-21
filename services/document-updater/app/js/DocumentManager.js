@@ -1,3 +1,4 @@
+const { createHash } = require('node:crypto')
 const { callbackifyAll } = require('@overleaf/promise-utils')
 const RedisManager = require('./RedisManager')
 const ProjectHistoryRedisManager = require('./ProjectHistoryRedisManager')
@@ -47,52 +48,62 @@ const DocumentManager = {
         { projectId, docId },
         'doc not in redis so getting from persistence API'
       )
-      const {
-        lines,
-        version,
-        ranges,
-        resolvedCommentIds,
-        pathname,
-        projectHistoryId,
-        historyRangesSupport,
-      } = await PersistenceManager.promises.getDoc(projectId, docId)
-      logger.debug(
-        {
-          projectId,
-          docId,
+      const load = async reservationId => {
+        const {
           lines,
+          version,
           ranges,
           resolvedCommentIds,
-          version,
           pathname,
           projectHistoryId,
           historyRangesSupport,
-        },
-        'got doc from persistence API'
-      )
-      await RedisManager.promises.putDocInMemory(
-        projectId,
-        docId,
-        lines,
-        version,
-        ranges,
-        resolvedCommentIds,
-        pathname,
-        projectHistoryId,
-        historyRangesSupport
-      )
-      return {
-        lines,
-        version,
-        ranges: ranges || {},
-        resolvedCommentIds,
-        pathname,
-        projectHistoryId,
-        unflushedTime: null,
-        alreadyLoaded: false,
-        historyRangesSupport,
-        type: Array.isArray(lines) ? 'sharejs-text-ot' : 'history-ot',
+        } = await PersistenceManager.promises.getDoc(projectId, docId)
+        logger.debug(
+          {
+            projectId,
+            docId,
+            lines,
+            ranges,
+            resolvedCommentIds,
+            version,
+            pathname,
+            projectHistoryId,
+            historyRangesSupport,
+          },
+          'got doc from persistence API'
+        )
+        await RedisManager.promises.putDocInMemory(
+          projectId,
+          docId,
+          lines,
+          version,
+          ranges,
+          resolvedCommentIds,
+          pathname,
+          projectHistoryId,
+          historyRangesSupport,
+          ...(reservationId ? [reservationId] : [])
+        )
+        return {
+          lines,
+          version,
+          ranges: ranges || {},
+          resolvedCommentIds,
+          pathname,
+          projectHistoryId,
+          unflushedTime: null,
+          alreadyLoaded: false,
+          historyRangesSupport,
+          type: Array.isArray(lines) ? 'sharejs-text-ot' : 'history-ot',
+        }
       }
+      if (Settings.documentupdater?.enableRetirementWriterSeal === true) {
+        return await RedisManager.promises.withDocumentLoadReservation(
+          docId,
+          load
+        )
+      }
+      return await load()
     } else {
       return {
         lines,
@@ -338,6 +349,47 @@ const DocumentManager = {
     )
     await RedisManager.promises.clearUnflushedTime(docId)
     return result
+  },
+
+  /**
+   * Persist the exact cached editor revision held by this writer seal.
+   * A clean cache still needs a persistence acknowledgement for this operation.
+   *
+   * @param {import('./DocumentWriterSeal').SealOwner} owner
+   * @returns {Promise<{version: number, rev: number}>}
+   */
+  async flushSealedDocument({ projectId, docId, operationId, version }) {
+    return await RedisManager.promises.withSealedDocumentFlush(
+      { projectId, docId, operationId, version },
+      async ({ lines, ranges, lastUpdatedAt, lastUpdatedBy }) => {
+        if (!Array.isArray(lines)) {
+          // HistoryOT's converted tracked ranges have synthesized IDs. Reuse
+          // them for this editor revision so a lost reply can be retried.
+          ;({ lines, ranges } = HistoryConversions.fromHistoryOT(lines, index =>
+            createHash('sha256')
+              .update(JSON.stringify([projectId, docId, version, index]))
+              .digest('hex')
+              .slice(0, 24)
+          ))
+        }
+        const result = await PersistenceManager.promises.setDoc(
+          projectId,
+          docId,
+          lines,
+          version,
+          ranges,
+          lastUpdatedAt,
+          lastUpdatedBy || null
+        )
+        const rev = result?.rev
+        if (!Number.isSafeInteger(rev) || rev < 0) {
+          throw new Error(
+            'Invalid persistence response for sealed document flush'
+          )
+        }
+        return { version, rev }
+      }
+    )
   },
 
   async flushAndDeleteDoc(projectId, docId, options) {

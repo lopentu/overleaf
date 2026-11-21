@@ -6,6 +6,9 @@
   "files": [
     "index.js",
     "Errors.js",
+    "ProjectDispatchHandoff.js",
+    "ProjectUpdateQueue.js",
+    "ProjectUpdateQueue.lua",
     "RedisLocker.js",
     "RedisWebLocker.js"
   ],

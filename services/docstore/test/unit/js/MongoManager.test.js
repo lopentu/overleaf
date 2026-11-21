@@ -224,13 +224,73 @@ describe('MongoManager', () => {
   describe('upsertIntoDocCollection', () => {
     beforeEach(ctx => {
       ctx.oldRev = 77
+      ctx.previousRevision = { rev: ctx.oldRev, version: 12 }
+    })
+
+    it('rejects a delayed version-only flush after a newer flush keeps the same rev', async ctx => {
+      vi.doMock('../../../app/js/DocArchiveManager.js', () => ({ default: {} }))
+      const { default: DocManager } =
+        await import('../../../app/js/DocManager.js')
+      const persisted = {
+        _id: new ObjectId(ctx.docId),
+        lines: ctx.lines,
+        ranges: {},
+        rev: ctx.oldRev,
+        deleted: true,
+      }
+      const oldWriteReady = Promise.withResolvers()
+      const releaseOldWrite = Promise.withResolvers()
+      ctx.db.docs.findOne = sinon
+        .stub()
+        .callsFake(async () => ({ ...persisted }))
+      ctx.db.docs.updateOne.callsFake(async (predicate, pipeline) => {
+        const version = pipeline.find(stage => stage.$set?.version).$set.version
+          .$literal
+        if (version === 1) {
+          oldWriteReady.resolve(undefined)
+          await releaseOldWrite.promise
+        }
+        const matchesVersion =
+          !Object.hasOwn(predicate, 'version') ||
+          (predicate.version?.$exists === false
+            ? !Object.hasOwn(persisted, 'version')
+            : predicate.version === persisted.version)
+        if (predicate.rev !== persisted.rev || !matchesVersion)
+          return { matchedCount: 0 }
+        persisted.version = version
+        return { matchedCount: 1 }
+      })
+
+      const delayed = DocManager.updateDoc(
+        ctx.projectId,
+        ctx.docId,
+        ctx.lines,
+        1,
+        {}
+      ).catch(error => error)
+      await oldWriteReady.promise
+      try {
+        const newest = await DocManager.updateDoc(
+          ctx.projectId,
+          ctx.docId,
+          ctx.lines,
+          2,
+          {}
+        )
+        assert.deepEqual(newest, { modified: true, rev: ctx.oldRev })
+      } finally {
+        releaseOldWrite.resolve(undefined)
+      }
+      assert.instanceOf(await delayed, Errors.DocVersionDecrementedError)
+      assert.equal(persisted.version, 2)
+      assert.equal(persisted.deleted, true)
     })
 
     it('should upsert the document', async ctx => {
       await ctx.MongoManager.upsertIntoDocCollection(
         ctx.projectId,
         ctx.docId,
-        ctx.oldRev,
+        ctx.previousRevision,
         { lines: ctx.lines }
       )
 
@@ -239,6 +299,8 @@ describe('MongoManager', () => {
         _id: new ObjectId(ctx.docId),
         project_id: new ObjectId(ctx.projectId),
         rev: ctx.oldRev,
+        version: 12,
+        retired: { $ne: true },
       })
       assert.equal(args[1][0].$set.lines.$literal, ctx.lines)
       assert.equal(args[1][1].$set.rev.$literal, ctx.oldRev + 1)
@@ -250,7 +312,7 @@ describe('MongoManager', () => {
         ctx.MongoManager.upsertIntoDocCollection(
           ctx.projectId,
           ctx.docId,
-          ctx.rev,
+          ctx.previousRevision,
           {
             lines: ctx.lines,
           }

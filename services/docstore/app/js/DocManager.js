@@ -18,10 +18,11 @@ const DocManager = {
    * @param {string} projectId
    * @param {string} docId
    * @param {{inS3: boolean}} filter
+   * @param {{rawVersion?: boolean}} [options]
    * @returns {Promise<WithId<Document>>}
    * @private
    */
-  async _getDoc(projectId, docId, filter) {
+  async _getDoc(projectId, docId, filter, options) {
     if (filter == null) {
       filter = {}
     }
@@ -29,7 +30,13 @@ const DocManager = {
       throw new Error('must include inS3 when getting doc')
     }
 
-    const doc = await MongoManager.findDoc(projectId, docId, filter)
+    const doc = await MongoManager.findDoc(
+      projectId,
+      docId,
+      filter,
+      false,
+      options
+    )
 
     if (doc == null) {
       throw new Errors.NotFoundError(
@@ -39,7 +46,7 @@ const DocManager = {
 
     if (doc.inS3) {
       await DocArchive.unarchiveDoc(projectId, docId)
-      return await DocManager._getDoc(projectId, docId, filter)
+      return await DocManager._getDoc(projectId, docId, filter, options)
     }
 
     if (filter.ranges) {
@@ -256,13 +263,19 @@ const DocManager = {
 
     let doc
     try {
-      doc = await DocManager._getDoc(projectId, docId, {
-        version: true,
-        rev: true,
-        lines: true,
-        ranges: true,
-        inS3: true,
-      })
+      doc = await DocManager._getDoc(
+        projectId,
+        docId,
+        {
+          version: true,
+          rev: true,
+          lines: true,
+          ranges: true,
+          inS3: true,
+          retired: true,
+        },
+        { rawVersion: true }
+      )
     } catch (err) {
       if (err instanceof Errors.NotFoundError) {
         doc = null
@@ -271,6 +284,9 @@ const DocManager = {
       }
     }
 
+    if (doc?.retired === true) {
+      throw new Errors.DocModifiedError('Document has been retired')
+    }
     ranges = RangeManager.jsonRangesToMongo(ranges)
 
     let updateLines, updateRanges, updateVersion
@@ -280,12 +296,13 @@ const DocManager = {
       updateVersion = true
       updateRanges = true
     } else {
-      if (doc.version > version) {
+      const persistedVersion = doc.version ?? 0
+      if (persistedVersion > version) {
         // Reject update when the version was decremented.
         // Potential reasons: racing flush, broken history.
         throw new Errors.DocVersionDecrementedError('rejecting stale update', {
           updateVersion: version,
-          flushedVersion: doc.version,
+          flushedVersion: persistedVersion,
         })
       }
       updateLines = !_.isEqual(doc.lines, lines)
@@ -333,7 +350,7 @@ const DocManager = {
       await MongoManager.upsertIntoDocCollection(
         projectId,
         docId,
-        doc?.rev,
+        doc == null ? null : { rev: doc.rev, version: doc.version },
         update
       )
     } else {
@@ -343,7 +360,8 @@ const DocManager = {
     return { modified, rev }
   },
 
-  async patchDoc(projectId, docId, meta) {
+  /** @param {{version: number, rev: number}} [expectedRevision] */
+  async patchDoc(projectId, docId, meta, expectedRevision) {
     const projection = { _id: 1, deleted: true }
     const doc = await MongoManager.findDoc(projectId, docId, projection)
     if (!doc) {
@@ -352,7 +370,23 @@ const DocManager = {
       )
     }
 
-    if (meta.deleted && Settings.docstore.archiveOnSoftDelete) {
+    if (expectedRevision) {
+      const result = await MongoManager.patchDoc(
+        projectId,
+        docId,
+        meta,
+        expectedRevision
+      )
+      if (result.matchedCount !== 1) {
+        throw new Errors.DocModifiedError('Document changed before retirement')
+      }
+    }
+
+    if (
+      meta.deleted &&
+      Settings.docstore.archiveOnSoftDelete &&
+      (!expectedRevision || !doc.deleted)
+    ) {
       // The user will not read this doc anytime soon. Flush it out of mongo.
       DocArchive.archiveDoc(projectId, docId).catch(err => {
         logger.warn(
@@ -362,7 +396,7 @@ const DocManager = {
       })
     }
 
-    await MongoManager.patchDoc(projectId, docId, meta)
+    if (!expectedRevision) await MongoManager.patchDoc(projectId, docId, meta)
   },
 }
 

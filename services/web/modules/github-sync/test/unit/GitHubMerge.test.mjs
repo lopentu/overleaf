@@ -35,6 +35,14 @@ const conflict = {
 let test
 
 async function setup() {
+  const settings = {
+    documentupdater: {
+      enableRetirementQueue: true,
+      enableRetirementWriterSeal: true,
+      enableRetirementBinaryConversion: false,
+    },
+  }
+  vi.doMock('@overleaf/settings', () => ({ default: settings }))
   const store = {
     getProjectState: vi.fn().mockResolvedValue(state),
     updateProjectState: vi.fn().mockResolvedValue(undefined),
@@ -121,6 +129,11 @@ async function setup() {
     '../../../../app/src/Features/Project/ProjectEntityHandler.mjs',
     () => ({ default: { promises: entities } })
   )
+  const resumeActiveDocumentRetirement = vi.fn().mockResolvedValue(undefined)
+  vi.doMock(
+    '../../../../app/src/Features/Project/ProjectEntityUpdateHandler.mjs',
+    () => ({ default: { promises: { resumeActiveDocumentRetirement } } })
+  )
   vi.doMock(
     '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs',
     () => ({ default: { promises: editor } })
@@ -129,12 +142,14 @@ async function setup() {
   const { GitConflictError, ProviderRequestError } =
     await import('../../app/src/GitSyncErrors.mjs')
   return {
+    settings,
     store,
     provider,
     history,
     editor,
     docUpdater,
     entities,
+    resumeActiveDocumentRetirement,
     localBlob,
     unlink,
     doGitMerge,
@@ -379,6 +394,46 @@ describe('GitHub merge and recovery', () => {
     expect(test.store.updateProjectState).not.toHaveBeenCalled()
   })
 
+  it('recovers terminal retirement before planning and reuses the editable deletion identity on retry', async () => {
+    test.store.getProjectState.mockResolvedValue(conflict)
+    test.provider.isCommitIncluded.mockResolvedValue(true)
+    test.provider.listBlobsAtCommit.mockResolvedValue([])
+    test.entities.getAllEntities.mockResolvedValue({
+      docs: [{ path: '/main.tex', doc: { _id: docId } }],
+      files: [],
+    })
+
+    for (const [commit, version] of /** @type {const} */ ([
+      [integrated, 4],
+      [integrated, 4],
+      [remote, 4],
+      [integrated, 5],
+    ])) {
+      test.provider.getBranchHead.mockResolvedValue(commit)
+      test.docUpdater.getDocument.mockResolvedValue({ version })
+      await assert.rejects(test.doGitMerge(userId, projectId, '', true), {
+        name: 'GitConflictError',
+        message: 'GitHub deletions were not applied. Retry the sync.',
+      })
+    }
+
+    const targets = test.editor.deleteUpdate.mock.calls.map(call => call[4])
+    expect(targets[0]).toEqual({
+      docId,
+      version: 4,
+      operationId: expect.stringMatching(
+        /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+      ),
+    })
+    expect(targets[1].operationId).toBe(targets[0].operationId)
+    expect(new Set(targets.map(target => target.operationId)).size).toBe(3)
+    expect(test.resumeActiveDocumentRetirement).toHaveBeenCalledTimes(4)
+    expect(test.resumeActiveDocumentRetirement).toHaveBeenCalledWith(projectId)
+    expect(
+      test.resumeActiveDocumentRetirement.mock.invocationCallOrder[0]
+    ).toBeLessThan(test.history.latestVersion.mock.invocationCallOrder[0])
+  })
+
   it('does not mark an unrelated edit during import as published to GitHub', async () => {
     test.store.getProjectState.mockResolvedValue(conflict)
     test.provider.getBranchHead.mockResolvedValue(integrated)
@@ -497,6 +552,79 @@ describe('GitHub merge and recovery', () => {
       'github',
       { docId, version: 0 }
     )
+  })
+
+  it('forwards the immutable Git blob to guarded binary conversion and reuses the action on retry', async () => {
+    const blobHash = 'b'.repeat(40)
+    test.store.getProjectState.mockResolvedValue(conflict)
+    test.provider.getBranchHead.mockResolvedValue(integrated)
+    test.provider.isCommitIncluded.mockResolvedValue(true)
+    test.provider.listBlobsAtCommit.mockResolvedValue([
+      { path: 'main.tex', sha: blobHash },
+    ])
+    test.entities.getAllEntities.mockResolvedValue({
+      docs: [{ path: '/main.tex', doc: { _id: docId } }],
+      files: [],
+    })
+    const upsertFileWithPath = vi.fn().mockResolvedValue({
+      file: { _id: '507f1f77bcf86cd799439014', hash: blobHash, rev: 0 },
+      folder: { _id: '507f1f77bcf86cd799439015' },
+    })
+    vi.doMock(
+      '../../../../app/src/Features/Editor/EditorController.mjs',
+      () => ({
+        default: { promises: { upsertFileWithPath } },
+      })
+    )
+    vi.doMock(
+      '../../../../app/src/Features/Uploads/FileTypeManager.mjs',
+      () => ({
+        default: { promises: { getType: async () => ({ binary: true }) } },
+      })
+    )
+    const { default: merger } =
+      /** @type {typeof import('../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs')} */ (
+        await vi.importActual(
+          '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
+        )
+      )
+    /** @type {typeof merger.promises._mergeUpdate} */
+    const apply = async (...args) => {
+      const result = await merger.promises._mergeUpdate(...args)
+      test.history.getProjectSnapshot.mockResolvedValue({
+        'main.tex': { data: { hash: blobHash } },
+      })
+      return result
+    }
+    test.editor._mergeUpdate.mockImplementation(apply)
+
+    await assert.rejects(test.doGitMerge(userId, projectId, '', true), {
+      message:
+        'GitHub sync cannot replace a guarded editable document with a binary file.',
+    })
+    expect(upsertFileWithPath).not.toHaveBeenCalled()
+
+    test.settings.documentupdater.enableRetirementBinaryConversion = true
+    const lostReply = new Error('synthetic lost conversion reply')
+    upsertFileWithPath.mockRejectedValueOnce(lostReply)
+    await assert.rejects(
+      test.doGitMerge(userId, projectId, '', true),
+      error => error === lostReply
+    )
+    expect(
+      (await test.doGitMerge(userId, projectId, '', true)).mergeStatus
+    ).toBe('clean')
+
+    expect(upsertFileWithPath).toHaveBeenCalledTimes(2)
+    const action = upsertFileWithPath.mock.calls[0][6]
+    expect(action).toEqual({
+      docId,
+      version: 0,
+      sourceCommit: integrated,
+      blobHash,
+      operationId: expect.stringMatching(/^[a-f0-9-]{36}$/),
+    })
+    expect(upsertFileWithPath.mock.calls[1][6]).toEqual(action)
   })
 
   it('passes the captured identity and revision of an existing binary file', async () => {
