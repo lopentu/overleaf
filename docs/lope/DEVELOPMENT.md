@@ -75,12 +75,15 @@ Do not substitute that result for a successful production image build.
   a newly created file stream when its response has already been destroyed; it
   does not enable a global exception handler.
 - GitHub authentication: `services/web/tsconfig.github-auth.json` strictly checks
-  the token manager and new auth regression file through `@ts-check`. Their
+  the token manager, grant validator and auth regressions through `@ts-check`. Their
   imported legacy modules retain the existing backend type coverage; the full
   legacy controller is not claimed as strict checked JavaScript. Matching blocking
   hooks run these types and provider/credential regressions locally and in CI.
   Tests use synthetic tokens with mocked provider HTTP, storage and encryption;
-  no GitHub account, repository or real credentials are used.
+  no GitHub account, repository or real credentials are used. Tests cover
+  rotating a grant once across concurrent requests, legacy credential
+  compatibility, rejected and partial refresh responses, and disconnect
+  without renewal.
 - Zotero authentication: `services/web/tsconfig.zotero-auth.json` strictly checks
   the closed failure-metadata helper, OAuth module and focused regressions via
   `@ts-check`. The legacy API/controller graph retains existing backend coverage;
