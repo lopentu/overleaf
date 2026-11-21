@@ -1,7 +1,8 @@
 import fsPromises from 'node:fs/promises'
 import { normalize } from 'node:path/posix'
 import pLimit from 'p-limit'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
+import { blobHashFromString } from 'overleaf-editor-core/lib/blob_utils.js'
 import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
 import SyncStateManager from './SyncStateManager.mjs'
@@ -620,7 +621,7 @@ async function applyGitSnapshotToProject({
 
     blobPaths.add(path)
 
-    const hstSha = historySnapshot[path]?.data?.hash
+    const hstSha = getEntryHash(historySnapshot[path])
     // File at path is not changed, do not touch it
     if (hstSha === sha) continue
 
@@ -642,6 +643,8 @@ async function applyGitSnapshotToProject({
   const limit = pLimit(api.maxConcurrency)
   /** @type {Map<string, string>} */
   const stagedFiles = new Map()
+  /** @type {Map<string, string>} */
+  const importedHashes = new Map()
   try {
     await settleUpdates(
       updates.map(path =>
@@ -672,8 +675,8 @@ async function applyGitSnapshotToProject({
     const localLimit = pLimit(5)
     await settleUpdates(
       [...stagedFiles].map(([path, fsPath]) =>
-        localLimit(() =>
-          UpdateMerger.promises._mergeUpdate(
+        localLimit(async () => {
+          const { contentHash } = await UpdateMerger.promises._mergeUpdate(
             userId,
             projectId,
             '/' + path,
@@ -681,7 +684,8 @@ async function applyGitSnapshotToProject({
             'github',
             documentVersions.get('/' + path) ?? null
           )
-        )
+          importedHashes.set(path, contentHash ?? blobMap[path])
+        })
       )
     )
     await settleUpdates(
@@ -719,6 +723,12 @@ async function applyGitSnapshotToProject({
         status: 409,
       }
     )
+  }
+  // A coauthor can edit a successfully imported file before the final snapshot.
+  for (const [path, importedHash] of importedHashes) {
+    if (getEntryHash(result[path]) !== importedHash) {
+      throw projectChangedDuringSync()
+    }
   }
   const applied = new Set([...updates, ...deletions])
   const paths = new Set([
@@ -994,16 +1004,10 @@ async function getGitBlobMap(token, repoFullName, commit) {
 
 function getEntryHash(entry) {
   if (!entry?.data) return null
-  return entry.data.hash || gitBlobShaFromString(entry.data.content)
-}
-
-function gitBlobShaFromString(str) {
-  if (!str) return null
-  const content = Buffer.from(str, 'utf8')
-  const header = Buffer.from(`blob ${content.length}\0`, 'utf8')
-  const store = Buffer.concat([header, content])
-
-  return createHash('sha1').update(store).digest('hex')
+  const { hash, content } = entry.data
+  return (
+    hash ?? (typeof content === 'string' ? blobHashFromString(content) : null)
+  )
 }
 
 function validateFileName(name) {

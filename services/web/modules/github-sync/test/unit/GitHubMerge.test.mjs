@@ -73,7 +73,12 @@ async function setup() {
   const localBlob = '/tmp/synthetic-github-update'
   const unlink = vi.fn().mockResolvedValue(undefined)
   const editor = {
-    _mergeUpdate: vi.fn(),
+    _mergeUpdate: vi.fn().mockImplementation(async () => {
+      history.getProjectSnapshot.mockResolvedValue({
+        'main.tex': { data: { hash: 'merged-blob' } },
+      })
+      return { entityType: 'file' }
+    }),
     writeUpdateToDisk: vi.fn().mockResolvedValue(localBlob),
     deleteUpdate: vi.fn(),
   }
@@ -378,6 +383,7 @@ describe('GitHub merge and recovery', () => {
         'main.tex': { data: { hash: 'merged-blob' } },
         'unrelated.tex': { data: { hash: 'new-local-blob' } },
       })
+      return { entityType: 'file' }
     }
     test.editor._mergeUpdate.mockImplementation(write)
     await assert.rejects(test.doGitMerge(userId, projectId, '', true), {
@@ -385,6 +391,79 @@ describe('GitHub merge and recovery', () => {
       message: 'Overleaf changed during GitHub sync. Retry the sync.',
     })
     expect(test.store.updateProjectState).not.toHaveBeenCalled()
+  })
+
+  it('does not advance sync over an edit to a document that was just imported', async () => {
+    test.store.getProjectState.mockResolvedValue(conflict)
+    test.provider.getBranchHead.mockResolvedValue(integrated)
+    test.provider.isCommitIncluded.mockResolvedValue(true)
+    test.editor._mergeUpdate.mockImplementation(async () => {
+      test.history.latestVersion.mockResolvedValue(3)
+      test.history.getProjectSnapshot.mockResolvedValue({
+        'main.tex': {
+          data: { content: 'merged source plus an editor change' },
+        },
+      })
+      return {
+        entityType: 'doc',
+        contentHash: '624c80da096860220d6f7d2f9fa221805d9344cf',
+      }
+    })
+
+    await assert.rejects(test.doGitMerge(userId, projectId, '', true), {
+      name: 'GitConflictError',
+      message: 'Overleaf changed during GitHub sync. Retry the sync.',
+    })
+    expect(test.store.updateProjectState).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['café\nnext\n', '7c195403d8c23b25aee6cc4ac1348dbc9184b32b'],
+    ['', 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391'],
+  ])(
+    'accepts normalized editable contents %j',
+    async (content, contentHash) => {
+      test.store.getProjectState.mockResolvedValue(conflict)
+      test.provider.getBranchHead.mockResolvedValue(integrated)
+      test.provider.isCommitIncluded.mockResolvedValue(true)
+      test.editor._mergeUpdate.mockImplementation(async () => {
+        test.history.latestVersion.mockResolvedValue(3)
+        test.history.getProjectSnapshot.mockResolvedValue({
+          'main.tex': { data: { content } },
+        })
+        return { entityType: 'doc', contentHash }
+      })
+
+      await test.doGitMerge(userId, projectId, '', true)
+      expect(test.store.updateProjectState).toHaveBeenCalledWith(
+        projectId,
+        expect.objectContaining({
+          lastSyncVersion: 3,
+          lastSyncCommit: integrated,
+        })
+      )
+    }
+  )
+
+  it('does not stage text already identical to the GitHub blob', async () => {
+    const content = 'unchanged editable text'
+    test.store.getProjectState.mockResolvedValue(conflict)
+    test.provider.getBranchHead.mockResolvedValue(integrated)
+    test.provider.isCommitIncluded.mockResolvedValue(true)
+    test.history.getProjectSnapshot.mockResolvedValue({
+      'main.tex': { data: { content } },
+    })
+    test.provider.listBlobsAtCommit.mockResolvedValue([
+      { path: 'main.tex', sha: '8daf811db443a968194266dd534e80a86b3960b5' },
+    ])
+
+    await test.doGitMerge(userId, projectId, '', true)
+    expect(test.provider.getBlobStream).not.toHaveBeenCalled()
+    expect(test.editor._mergeUpdate).not.toHaveBeenCalled()
+    expect(test.store.updateProjectState).toHaveBeenCalledWith(
+      projectId,
+      expect.objectContaining({ lastSyncCommit: integrated })
+    )
   })
 
   it('captures the editable document version before the final history check', async () => {

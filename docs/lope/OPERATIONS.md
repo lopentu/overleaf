@@ -87,7 +87,13 @@ project structure lock and its version under the document updater lock. A
 newer version, a moved document, or a newly created editable document at the
 target of a planned text import stops the write. The user can retry sync.
 The conditional-write route makes a staged Web build reject replacements
-against an older document updater.
+against an older document updater. Before saving the sync position, the app
+checks the final history snapshot against the imported contents. This check
+uses the editor's normalized line endings for text and the Git blob hash for
+binary files. A later coauthor edit keeps the previous sync position so it
+remains visible on retry. Legacy ShareJS can rewrite supplementary Unicode
+characters such as emoji during a replacement. The history check rejects those
+results. Verify those imports with History OT before rollout.
 
 Imports can apply several files concurrently. Deletions and binary file
 writes still use their existing paths. GitHub sync stops if an incoming

@@ -4,6 +4,7 @@ import fsPromises from 'node:fs/promises'
 import fs from 'node:fs'
 import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
+import { blobHashFromString } from 'overleaf-editor-core/lib/blob_utils.js'
 import EditorController from '../Editor/EditorController.mjs'
 import FileTypeManager from '../Uploads/FileTypeManager.mjs'
 import ProjectEntityHandler from '../Project/ProjectEntityHandler.mjs'
@@ -133,7 +134,7 @@ async function _mergeUpdate(
       folderId: folder._id,
     }
   } else if (fileType === 'doc') {
-    const { doc, folder } = await _processDoc(
+    const { doc, folder, contentHash } = await _processDoc(
       projectId,
       userId,
       fsPath,
@@ -147,6 +148,7 @@ async function _mergeUpdate(
       entityId: doc._id,
       rev: doc.rev,
       folderId: folder._id,
+      ...(contentHash === undefined ? {} : { contentHash }),
     }
   } else {
     throw new Error('unrecognized file')
@@ -179,7 +181,7 @@ async function _processDoc(
 ) {
   const docLines = await _readFileIntoTextArray(fsPath)
   logger.debug({ docLines }, 'processing doc update from tpds')
-  const doc = await EditorController.promises.upsertDocWithPath(
+  const result = await EditorController.promises.upsertDocWithPath(
     projectId,
     path,
     docLines,
@@ -187,7 +189,8 @@ async function _processDoc(
     userId,
     ...(expectedDocument !== undefined ? [expectedDocument] : [])
   )
-  return doc
+  if (expectedDocument === undefined) return result
+  return { ...result, contentHash: blobHashFromString(docLines.join('\n')) }
 }
 
 async function _processFile(projectId, fsPath, path, source, userId) {

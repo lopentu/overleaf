@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 import { Writable } from 'node:stream'
 import mongodb from 'mongodb-legacy'
+import { blobHashFromString } from 'overleaf-editor-core/lib/blob_utils.js'
 
 const { ObjectId } = mongodb
 
@@ -161,6 +162,25 @@ describe('UpdateMerger :', function () {
         ctx.userId,
         expected
       )
+    })
+
+    it('returns the hash of normalized editable bytes for the GitHub comparison', async function (ctx) {
+      ctx.fsPromises.readFile.withArgs(ctx.fsPath).resolves('café\r\nnext\r')
+      ctx.FileTypeManager.promises.getType.resolves({
+        binary: false,
+        encoding: 'utf-8',
+      })
+
+      const result = await ctx.UpdateMerger.promises._mergeUpdate(
+        ctx.userId,
+        ctx.projectId,
+        ctx.docPath,
+        ctx.fsPath,
+        'github',
+        null
+      )
+
+      expect(result.contentHash).to.equal(blobHashFromString('café\nnext\n'))
     })
 
     it('keeps an editable document when the imported bytes are binary', async function (ctx) {
