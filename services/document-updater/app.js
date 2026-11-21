@@ -138,6 +138,10 @@ app.get(
 )
 app.post('/project/:project_id/clearState', HttpController.clearProjectState)
 app.post('/project/:project_id/doc/:doc_id', HttpController.setDoc)
+app.post(
+  '/project/:project_id/doc/:doc_id/set-if-version',
+  HttpController.setDocIfVersion
+)
 app.post('/project/:project_id/doc/:doc_id/append', HttpController.appendToDoc)
 app.post(
   '/project/:project_id/doc/:doc_id/flush',
@@ -228,7 +232,7 @@ const shutdownCleanly = signal => () => {
 
 const watchForEvent = eventName => {
   docUpdaterRedisClient.on(eventName, e => {
-    console.log(`redis event: ${eventName} ${e}`) // eslint-disable-line no-console
+    console.log(`redis event: ${eventName} ${e}`)
   })
 }
 

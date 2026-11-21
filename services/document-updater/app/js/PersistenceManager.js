@@ -106,7 +106,7 @@ async function getDocOnce(projectId, docId, options = {}) {
     Metrics.inc('getDoc', 1, { status })
     if (err instanceof RequestFailedError) {
       if (status === 404) {
-        throw new Errors.NotFoundError('doc not found', info)
+        throw new Errors.WebDocumentNotFoundError('doc not found', info)
       } else if (status === 413) {
         throw new Errors.FileTooLargeError('doc exceeds maximum size', info)
       } else {

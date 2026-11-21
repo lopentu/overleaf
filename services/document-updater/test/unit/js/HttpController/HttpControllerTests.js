@@ -2,6 +2,10 @@ const sinon = require('sinon')
 const modulePath = '../../../../app/js/HttpController.js'
 const SandboxedModule = require('sandboxed-module')
 const Errors = require('../../../../app/js/Errors.js')
+const {
+  InvalidRequestError,
+  setReqValidationModeForTests,
+} = require('@overleaf/validation-tools')
 
 describe('HttpController', function () {
   beforeEach(function () {
@@ -367,6 +371,63 @@ describe('HttpController', function () {
       it('should time the request', function () {
         this.Metrics.Timer.prototype.done.called.should.equal(true)
       })
+    })
+
+    describe('setDocIfVersion', function () {
+      it('passes version zero and the track changes flag to the locked update', async function () {
+        this.req.body.expectedVersion = 0
+        this.req.body.trackChanges = true
+        this.DocumentManager.promises.setDocWithLock.resolves({ rev: '123' })
+
+        await this.HttpController.setDocIfVersion(this.req, this.res, this.next)
+
+        this.DocumentManager.promises.setDocWithLock.should.have.been.calledWithExactly(
+          this.project_id,
+          this.doc_id,
+          this.lines,
+          this.source,
+          this.user_id,
+          this.undoing,
+          true,
+          true,
+          0
+        )
+      })
+
+      it('returns a bare 409 when the locked update detects a newer version', async function () {
+        this.req.body.expectedVersion = 42
+        this.DocumentManager.promises.setDocWithLock.rejects(
+          new Errors.DocumentVersionMismatchError('document version changed')
+        )
+
+        await this.HttpController.setDocIfVersion(this.req, this.res, this.next)
+
+        this.res.sendStatus.should.have.been.calledWithExactly(409)
+        this.res.json.should.not.have.been.called
+        this.next.should.not.have.been.called
+      })
+
+      for (const expectedVersion of [undefined, null, '0', -1, 0.5, 2 ** 53]) {
+        it(`rejects ${JSON.stringify(expectedVersion)} in validation log mode`, async function () {
+          this.req.body.expectedVersion = expectedVersion
+          setReqValidationModeForTests('log')
+          try {
+            await this.HttpController.setDocIfVersion(
+              this.req,
+              this.res,
+              this.next
+            )
+          } finally {
+            setReqValidationModeForTests(null)
+          }
+
+          this.next.should.have.been.calledWith(
+            sinon.match.instanceOf(InvalidRequestError)
+          )
+          this.DocumentManager.promises.setDocWithLock.should.not.have.been
+            .called
+        })
+      }
     })
 
     describe('when an errors occurs', function () {

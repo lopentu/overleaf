@@ -205,14 +205,20 @@ const EditorController = {
     docLines,
     source,
     userId,
+    expectedDocument,
     callback
   ) {
+    if (typeof expectedDocument === 'function') {
+      callback = expectedDocument
+      expectedDocument = undefined
+    }
     ProjectEntityUpdateHandler.upsertDocWithPath(
       projectId,
       elementPath,
       docLines,
       source,
       userId,
+      ...(expectedDocument !== undefined ? [expectedDocument] : []),
       function (err, doc, didAddNewDoc, newFolders, lastFolder) {
         if (err) {
           return callback(err)
@@ -248,8 +254,13 @@ const EditorController = {
     linkedFileData,
     source,
     userId,
+    expectedFile,
     callback
   ) {
+    if (typeof expectedFile === 'function') {
+      callback = expectedFile
+      expectedFile = undefined
+    }
     ProjectEntityUpdateHandler.upsertFileWithPath(
       projectId,
       elementPath,
@@ -257,6 +268,7 @@ const EditorController = {
       linkedFileData,
       userId,
       source,
+      ...(expectedFile !== undefined ? [expectedFile] : []),
       function (
         err,
         newFile,
@@ -396,12 +408,24 @@ const EditorController = {
     )
   },
 
-  deleteEntityWithPath(projectId, path, source, userId, callback) {
+  deleteEntityWithPath(
+    projectId,
+    path,
+    source,
+    userId,
+    expectedEntity,
+    callback
+  ) {
+    if (typeof expectedEntity === 'function') {
+      callback = expectedEntity
+      expectedEntity = undefined
+    }
     ProjectEntityUpdateHandler.deleteEntityWithPath(
       projectId,
       path,
       userId,
       source,
+      ...(expectedEntity !== undefined ? [expectedEntity] : []),
       function (err, entityId) {
         if (err) {
           return callback(err)

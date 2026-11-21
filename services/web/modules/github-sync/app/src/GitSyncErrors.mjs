@@ -6,6 +6,22 @@ class GitNotLinkedError extends OError {
   }
 }
 
+class GitHubExportIncompleteError extends OError {
+  /**
+   * @param {string} projectId
+   * @param {string} repoFullName
+   * @param {unknown} cause
+   */
+  constructor(projectId, repoFullName, cause) {
+    super(
+      `Export to GitHub could not be completed. Check the new repository ${repoFullName} on GitHub before retrying.`,
+      { projectId, repoFullName },
+      cause
+    )
+    this.repoFullName = repoFullName
+  }
+}
+
 class AlreadyExistsError extends OError {}
 class GitConflictError extends OError {}
 class InvalidTokenError extends OError {}
@@ -16,6 +32,7 @@ class ProviderRequestError extends OError {}
 
 export {
   AlreadyExistsError,
+  GitHubExportIncompleteError,
   GitNotLinkedError,
   GitConflictError,
   InvalidTokenError,

@@ -782,6 +782,100 @@ describe('DocumentManager', function () {
     })
   })
 
+  describe('setDocWithLock with an expected version', function () {
+    beforeEach(function () {
+      this.user_id = 'dddddddddddddddddddddddd'
+      this.currentDoc = {
+        lines: ['current'],
+        version: 0,
+        ranges: {},
+        resolvedCommentIds: [],
+        pathname: this.pathname,
+        projectHistoryId: this.projectHistoryId,
+        historyRangesSupport: this.historyRangesSupport,
+      }
+      this.RedisManager.promises.getDoc.callsFake(async () => this.currentDoc)
+      this.UpdateManager.promises.lockUpdatesAndDo = async (method, ...args) =>
+        await method(...args)
+      this.DocumentManager.promises.flushDocIfLoaded = sinon
+        .stub()
+        .resolves({ rev: '123' })
+      this.DiffCodec.diffAsShareJsOp.returns([{ i: ' text', p: 7 }])
+
+      this.setDoc = expectedVersion =>
+        this.DocumentManager.promises.setDocWithLock(
+          this.project_id,
+          this.doc_id,
+          ['current text'],
+          'github-sync',
+          this.user_id,
+          false,
+          true,
+          true,
+          expectedVersion
+        )
+    })
+
+    for (const type of ['sharejs-text-ot', 'history-ot']) {
+      describe(type, function () {
+        beforeEach(function () {
+          if (type === 'history-ot') {
+            this.currentDoc.lines = { content: 'current' }
+          }
+        })
+
+        it('rejects the write after an edit is applied under the project lock', async function () {
+          this.UpdateManager.promises.lockUpdatesAndDo = async (
+            method,
+            ...args
+          ) => {
+            this.currentDoc.version++
+            return await method(...args)
+          }
+
+          await expect(this.setDoc(0)).to.be.rejectedWith(
+            Errors.DocumentVersionMismatchError
+          )
+          expect(this.DiffCodec.diffAsShareJsOp).not.to.have.been.called
+          expect(this.UpdateManager.promises.applyUpdate).not.to.have.been
+            .called
+          expect(this.HistoryOTUpdateManager.applyUpdate).not.to.have.been
+            .called
+          expect(this.DocumentManager.promises.flushDocIfLoaded).not.to.have
+            .been.called
+          expect(this.RedisManager.promises.removeDocFromMemory).not.to.have
+            .been.called
+        })
+      })
+    }
+
+    it('applies a tracked ShareJS edit when the expected version is zero', async function () {
+      expect(await this.setDoc(0)).to.deep.equal({ rev: '123' })
+      expect(this.UpdateManager.promises.applyUpdate).to.have.been.calledWith(
+        this.project_id,
+        this.doc_id,
+        sinon.match({
+          v: 0,
+          meta: sinon.match({ tc: sinon.match(/^[0-9a-f]{18}$/) }),
+        })
+      )
+    })
+
+    it('evicts a document loaded solely to reject a stale write', async function () {
+      this.RedisManager.promises.getDoc.resolves({})
+      this.PersistenceManager.promises.getDoc.resolves(this.currentDoc)
+
+      await expect(this.setDoc(1)).to.be.rejectedWith(
+        Errors.DocumentVersionMismatchError
+      )
+      expect(this.RedisManager.promises.putDocInMemory).to.have.been.called
+      expect(
+        this.RedisManager.promises.removeDocFromMemory
+      ).to.have.been.calledWith(this.project_id, this.doc_id)
+      expect(this.PersistenceManager.promises.setDoc).not.to.have.been.called
+    })
+  })
+
   describe('acceptChanges', function () {
     beforeEach(function () {
       this.change_id = 'mock-change-id'

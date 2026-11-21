@@ -3,6 +3,7 @@
   "compilerOptions": { "checkJs": false },
   "include": [
     "modules/github-sync/app/src/TokenManager.mjs",
-    "modules/github-sync/test/unit/GitHubAuth.test.mjs"
+    "modules/github-sync/app/src/GitHubSyncHandler.mjs",
+    "modules/github-sync/test/unit/*.test.mjs"
   ]
 }

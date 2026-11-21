@@ -19,6 +19,33 @@ const projectSyncState = {
   unmergedBranchName: null,
 }
 
+async function submitExportWithError(body: {
+  key: string
+  repoFullName?: string
+  message?: string
+}) {
+  fetchMock.get('/user/github-sync/orgs', { user: 'owner', orgs: [] })
+  fetchMock.post('/project/project-id/github-sync/export', {
+    status: 500,
+    body,
+  })
+  sinon.stub(console, 'error')
+  render(
+    <ErrorBoundary fallback={<p>Export render failed</p>}>
+      <GitSyncExportModal
+        projectId="project-id"
+        projectName="repo"
+        handleHide={() => {}}
+        setModalStatus={() => {}}
+      />
+    </ErrorBoundary>
+  )
+  await screen.findByRole('option', { name: 'owner' })
+  fireEvent.click(
+    screen.getByRole('button', { name: t('create_project_in_github') })
+  )
+}
+
 describe('GitHub sync modal response handling', function () {
   afterEach(function () {
     cleanup()
@@ -27,32 +54,34 @@ describe('GitHub sync modal response handling', function () {
   })
 
   it('shows a translated export error', async function () {
-    fetchMock.get('/user/github-sync/orgs', { user: 'owner', orgs: [] })
-    fetchMock.post('/project/project-id/github-sync/export', {
-      status: 500,
-      body: { key: 'something_went_wrong_server' },
+    await submitExportWithError({ key: 'github_validation_check' })
+
+    await screen.findByText(t('github_validation_check'))
+    expect(screen.queryByText('Export render failed')).to.equal(null)
+  })
+
+  it('shows where to check for a GitHub repository when export did not finish', async function () {
+    await submitExportWithError({
+      key: 'github_export_incomplete',
+      repoFullName: 'owner/repo',
+      message: 'synthetic upstream error',
     })
-    sinon.stub(console, 'error')
-    render(
-      <ErrorBoundary fallback={<p>Export render failed</p>}>
-        <GitSyncExportModal
-          projectId="project-id"
-          projectName="repo"
-          handleHide={() => {}}
-          setModalStatus={() => {}}
-        />
-      </ErrorBoundary>
+
+    await screen.findByText(
+      'Export did not finish. Check the GitHub repository owner/repo before trying again.'
     )
-    await screen.findByRole('option', { name: 'owner' })
-    fireEvent.click(
-      screen.getByRole('button', { name: t('create_project_in_github') })
-    )
-    await waitFor(() => {
-      expect(screen.queryByText('Export render failed')).to.equal(null)
-      expect(screen.queryByText(t('something_went_wrong_server'))).not.to.equal(
-        null
-      )
+    expect(screen.queryByText('synthetic upstream error')).to.equal(null)
+  })
+
+  it('uses a generic error when an incomplete export names an invalid repository', async function () {
+    await submitExportWithError({
+      key: 'github_export_incomplete',
+      repoFullName: 'https://example.invalid/unexpected',
+      message: 'synthetic upstream error',
     })
+
+    await screen.findByText(t('something_went_wrong_server'))
+    expect(screen.queryByText('synthetic upstream error')).to.equal(null)
   })
 
   it('returns to loading when the merge overview has no project response', async function () {

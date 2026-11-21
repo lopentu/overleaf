@@ -8,6 +8,7 @@ import {
   fetchJsonWithResponse,
   fetchNothing,
   fetchStream,
+  fetchStringWithResponse,
   RequestFailedError,
 } from '@overleaf/fetch-utils'
 
@@ -29,7 +30,11 @@ const MAX_PER_PAGE = 100 // GitHub REST API limit
 const REQUEST_TIMEOUT_MS = 60 * 1000
 const REQUEST_LONG_TIMEOUT_MS = 600 * 1000
 
-const maxConcurrency = process.env.GITHUB_API_MAX_CONCURRENCY || 5
+const configuredConcurrency = Number(process.env.GITHUB_API_MAX_CONCURRENCY)
+const maxConcurrency =
+  Number.isSafeInteger(configuredConcurrency) && configuredConcurrency > 0
+    ? configuredConcurrency
+    : 5
 
 function buildHeaders(token) {
   return {
@@ -79,59 +84,60 @@ function isRepositoryAlreadyExistsError(err) {
   )
 }
 
+/**
+ * @param {unknown} err
+ * @param {string} operation
+ * @returns {never}
+ */
 function normalizeGitHubError(err, operation) {
   logger.error({ operation }, 'GitHub API request failed')
 
-  if (err.name === 'AbortError') {
-    throw new ProviderRequestError(
-      'GitHub request timed out',
-      { status: 504 },
-      err
-    )
+  if (err instanceof Error && err.name === 'AbortError') {
+    throw new ProviderRequestError('GitHub request timed out', { status: 504 })
   }
 
   if (!(err instanceof RequestFailedError)) {
-    throw new ProviderRequestError(
-      'Something wrong with GitHub request',
-      { status: 500 },
-      err
-    )
+    throw new ProviderRequestError('Something wrong with GitHub request', {
+      status: 500,
+    })
   }
 
+  // A fetch error can contain raw provider response text. Classify it here
+  // and pass only an operation-independent message and status to callers.
   const status = err.response?.status || 500
 
   if (status === 401) {
-    throw new InvalidTokenError('Invalid token', { status }, err)
+    throw new InvalidTokenError('Invalid token', { status })
   }
 
   if (status === 404) {
-    throw new NotFoundError('Not found', { status }, err)
+    throw new NotFoundError('Not found', { status })
   }
 
   if (status === 409) {
-    throw new GitConflictError()
+    throw new GitConflictError('GitHub reported a conflict', { status })
   }
 
   if (status === 403 || status === 429) {
     if (isRateLimitError(err.response))
-      throw new RateLimitError('Rate limit exeeded', { status: 429 }, err)
-    throw new PermissionDeniedError('Permission denied', { status: 403 }, err)
+      throw new RateLimitError('Rate limit exceeded', { status: 429 })
+    throw new PermissionDeniedError('Permission denied', { status: 403 })
   }
 
   if (status === 422) {
     if (isRepositoryAlreadyExistsError(err)) {
-      throw new AlreadyExistsError('Repository already exists', { status }, err)
+      throw new AlreadyExistsError('Repository already exists', { status })
     }
   }
 
-  throw new ProviderRequestError('GitHub request failed', { status }, err)
+  throw new ProviderRequestError('GitHub request failed', { status })
 }
 
 // wrappers
 function fetchGitHubJson(url, options, operation) {
   return fetchJson(url, withProviderHttpsAgent('github', url, options)).catch(
     err => {
-      normalizeGitHubError(err, operation)
+      return normalizeGitHubError(err, operation)
     }
   )
 }
@@ -141,7 +147,7 @@ function fetchGitHubJsonWithResponse(url, options, operation) {
     url,
     withProviderHttpsAgent('github', url, options)
   ).catch(err => {
-    normalizeGitHubError(err, operation)
+    return normalizeGitHubError(err, operation)
   })
 }
 
@@ -150,14 +156,14 @@ function fetchGitHubNothing(url, options, operation) {
     url,
     withProviderHttpsAgent('github', url, options)
   ).catch(err => {
-    normalizeGitHubError(err, operation)
+    return normalizeGitHubError(err, operation)
   })
 }
 
 function fetchGitHubStream(url, options, operation) {
   return fetchStream(url, withProviderHttpsAgent('github', url, options)).catch(
     err => {
-      normalizeGitHubError(err, operation)
+      return normalizeGitHubError(err, operation)
     }
   )
 }
@@ -351,6 +357,10 @@ function getPushPermission(token, repoFullName) {
 }
 
 // repos
+/**
+ * @param {string} token
+ * @param {{name: string, description?: string, isPublic?: boolean, org?: string}} options
+ */
 function createRepo(token, { name, description, isPublic, org }) {
   const url = org
     ? `${GITHUB_API_BASE}/orgs/${org}/repos`
@@ -363,7 +373,7 @@ function createRepo(token, { name, description, isPublic, org }) {
       json: {
         name,
         description,
-        private: !isPublic,
+        private: isPublic !== true,
         auto_init: true,
       },
       signal: AbortSignal.timeout(REQUEST_LONG_TIMEOUT_MS),
@@ -468,6 +478,11 @@ function createTree(token, repoFullName, entries, base_tree) {
   ).then(r => r.sha)
 }
 
+/**
+ * @param {string} token
+ * @param {string} repoFullName
+ * @param {{tree: string, message: string, parents?: string[]}} commit
+ */
 function createCommit(token, repoFullName, { tree, message, parents = [] }) {
   return fetchGitHubJson(
     `${GITHUB_API_BASE}/repos/${repoFullName}/git/commits`,
@@ -505,14 +520,19 @@ function listBlobsAtCommit(token, repoFullName, commit) {
       signal: AbortSignal.timeout(REQUEST_LONG_TIMEOUT_MS),
     },
     'listBlobsAtCommit'
-  ).then(r =>
-    (r.tree || [])
+  ).then(r => {
+    if (r.truncated || !Array.isArray(r.tree)) {
+      throw new ProviderRequestError(
+        'GitHub returned an incomplete file tree',
+        {
+          status: 502,
+        }
+      )
+    }
+    return r.tree
       .filter(entry => entry.type === 'blob')
-      .map(entry => ({
-        sha: entry.sha,
-        path: entry.path,
-      }))
-  )
+      .map(({ sha, path }) => ({ sha, path }))
+  })
 }
 
 async function listNewCommitsWithStatus(
@@ -598,17 +618,65 @@ function deleteBranch(token, repoFullName, branchName) {
 }
 
 // merge / compare
-function mergeBranch(token, repoFullName, base, head) {
-  return fetchGitHubJson(
-    `${GITHUB_API_BASE}/repos/${repoFullName}/merges`,
+/**
+ * @param {string} token
+ * @param {string} repoFullName
+ * @param {string} base
+ * @param {string} head Commit SHA to merge
+ */
+async function mergeBranch(token, repoFullName, base, head) {
+  const url = `${GITHUB_API_BASE}/repos/${repoFullName}/merges`
+  const options = {
+    method: 'POST',
+    headers: buildHeaders(token),
+    json: { base, head },
+    signal: AbortSignal.timeout(REQUEST_LONG_TIMEOUT_MS),
+  }
+  const { body, response } = await fetchStringWithResponse(
+    url,
+    withProviderHttpsAgent('github', url, options)
+  ).catch(err => normalizeGitHubError(err, 'mergeBranch'))
+
+  if (response.status === 204) {
+    const current = await getBranchHead(token, repoFullName, base)
+    if (await isCommitIncluded(token, repoFullName, head, current))
+      return current
+    throw new GitConflictError(
+      'GitHub moved the default branch during the merge'
+    )
+  }
+
+  if (response.status === 201) {
+    try {
+      const sha = JSON.parse(body)?.sha
+      if (typeof sha === 'string' && /^[a-f0-9]{40}$/.test(sha)) return sha
+    } catch {
+      // Keep malformed provider bodies out of user-facing errors and logs.
+    }
+  }
+  throw new ProviderRequestError('GitHub did not return a merge commit', {
+    status: 502,
+  })
+}
+
+/**
+ * Whether tip is a descendant of the required commit (or the same commit).
+ * @param {string} token
+ * @param {string} repoFullName
+ * @param {string} required
+ * @param {string} tip
+ */
+async function isCommitIncluded(token, repoFullName, required, tip) {
+  if (required === tip) return true
+  const result = await fetchGitHubJson(
+    `${GITHUB_API_BASE}/repos/${repoFullName}/compare/${encodeURIComponent(required)}...${encodeURIComponent(tip)}`,
     {
-      method: 'POST',
       headers: buildHeaders(token),
-      json: { base, head },
-      signal: AbortSignal.timeout(REQUEST_LONG_TIMEOUT_MS),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     },
-    'mergeBranch'
-  ).then(r => r.sha)
+    'isCommitIncluded'
+  )
+  return result.status === 'ahead' || result.status === 'identical'
 }
 
 function compareCommits(token, repoFullName, from, to) {
@@ -659,6 +727,7 @@ export default {
   updateBranch,
   deleteBranch,
   mergeBranch,
+  isCommitIncluded,
   compareCommits,
   getRepoZipball,
 }

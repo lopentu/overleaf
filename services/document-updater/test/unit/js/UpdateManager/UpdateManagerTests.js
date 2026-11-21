@@ -2,6 +2,8 @@ const { createHash } = require('node:crypto')
 const sinon = require('sinon')
 const { expect } = require('chai')
 const SandboxedModule = require('sandboxed-module')
+const { RequestFailedError } = require('@overleaf/fetch-utils')
+const Errors = require('../../../../app/js/Errors')
 
 const MODULE_PATH = '../../../../app/js/UpdateManager.js'
 
@@ -101,6 +103,7 @@ describe('UpdateManager', function () {
         './ShareJsUpdateManager': this.ShareJsUpdateManager,
         './HistoryManager': this.HistoryManager,
         './HistoryOTUpdateManager': this.HistoryOTUpdateManager,
+        './Errors': Errors,
         './Metrics': this.Metrics,
         './DocumentManager': this.DocumentManager,
         './RangesManager': this.RangesManager,
@@ -191,7 +194,90 @@ describe('UpdateManager', function () {
 
   describe('fetchAndApplyProjectUpdates', function () {
     beforeEach(function () {
+      this.applyUpdate = this.UpdateManager.promises.applyUpdate
       this.UpdateManager.promises.applyUpdate = sinon.stub().resolves()
+    })
+
+    it('applies a sibling edit after Web confirms that the preceding document is missing', async function () {
+      this.UpdateManager.promises.applyUpdate = this.applyUpdate
+      const missing = { doc: 'removed-doc', op: [{ p: 0, i: 'text' }] }
+      const sibling = { doc: 'sibling-doc', op: [{ textOperation: ['text'] }] }
+      const webUrl = 'http://web.invalid'
+      const missingDocUrl = new URL(
+        `/project/${this.project_id}/doc/${missing.doc}`,
+        webUrl
+      )
+      const fetchJson = sinon
+        .stub()
+        .rejects(
+          new RequestFailedError(
+            missingDocUrl,
+            { method: 'GET' },
+            new Response(null, { status: 404 }),
+            null
+          )
+        )
+      const persistence = SandboxedModule.require(
+        '../../../../app/js/PersistenceManager.js',
+        {
+          globals: { AbortSignal },
+          requires: {
+            '@overleaf/fetch-utils': { fetchJson, RequestFailedError },
+            '@overleaf/settings': { apis: { web: { url: webUrl } } },
+            './Errors': Errors,
+            './Metrics': this.Metrics,
+            './HistoryConversions': {},
+          },
+        }
+      )
+      this.DocumentManager.promises.getDoc
+        .withArgs(this.project_id, missing.doc)
+        .callsFake(persistence.promises.getDoc)
+      this.HistoryOTUpdateManager.isHistoryOTEditOperationUpdate
+        .withArgs(sibling)
+        .returns(true)
+      this.RealTimeRedisManager.promises.getPendingProjectUpdates.resolves([
+        missing,
+        sibling,
+      ])
+
+      await this.UpdateManager.promises.fetchAndApplyProjectUpdates(
+        this.project_id,
+        new this.Profiler()
+      )
+
+      expect(fetchJson).to.have.been.calledOnceWith(
+        missingDocUrl,
+        sinon.match({ method: 'GET' })
+      )
+      expect(this.RealTimeRedisManager.sendData).to.have.been.calledOnceWith({
+        project_id: this.project_id,
+        doc_id: missing.doc,
+        error: 'doc not found',
+      })
+      expect(
+        this.HistoryOTUpdateManager.applyUpdate
+      ).to.have.been.calledOnceWith(this.project_id, sibling.doc, sibling)
+      sinon.assert.callOrder(
+        this.RealTimeRedisManager.sendData,
+        this.HistoryOTUpdateManager.applyUpdate
+      )
+    })
+
+    it('keeps propagating a not-found error from any other source', async function () {
+      const missing = { doc: 'missing-doc', op: [{ p: 0, i: 'text' }] }
+      const error = new Errors.NotFoundError('missing')
+      this.UpdateManager.promises.applyUpdate.rejects(error)
+      this.RealTimeRedisManager.promises.getPendingProjectUpdates.resolves([
+        missing,
+      ])
+
+      await expect(
+        this.UpdateManager.promises.fetchAndApplyProjectUpdates(
+          this.project_id,
+          new this.Profiler()
+        )
+      ).to.be.rejectedWith(error)
     })
 
     describe('with updates carrying their doc id', function () {

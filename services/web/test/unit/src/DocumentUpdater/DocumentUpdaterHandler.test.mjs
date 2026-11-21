@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 import path from 'node:path'
@@ -322,6 +323,47 @@ describe('DocumentUpdaterHandler', function () {
         )
         expect(ctx.docUpdaterMock.isDone()).to.be.true
       })
+    })
+
+    it('forwards a captured document version, including zero', async function (ctx) {
+      ctx.docUpdaterMock
+        .post(`/project/${ctx.project_id}/doc/${ctx.doc_id}/set-if-version`, {
+          lines: ctx.lines,
+          source: ctx.source,
+          user_id: ctx.user_id,
+          trackChanges: true,
+          expectedVersion: 0,
+        })
+        .reply(204)
+      await ctx.handler.promises.setDocument(
+        ctx.project_id,
+        ctx.doc_id,
+        ctx.user_id,
+        ctx.lines,
+        ctx.source,
+        true,
+        0
+      )
+      expect(ctx.docUpdaterMock.isDone()).to.be.true
+    })
+
+    it('fails closed when an older document updater lacks the guarded endpoint', async function (ctx) {
+      ctx.docUpdaterMock
+        .post(`/project/${ctx.project_id}/doc/${ctx.doc_id}/set-if-version`)
+        .reply(404)
+      await assert.rejects(
+        ctx.handler.promises.setDocument(
+          ctx.project_id,
+          ctx.doc_id,
+          ctx.user_id,
+          ctx.lines,
+          ctx.source,
+          false,
+          12
+        ),
+        error => error.response?.status === 404
+      )
+      expect(ctx.docUpdaterMock.isDone()).to.be.true
     })
 
     describe('when the document updater API returns an error', function () {
