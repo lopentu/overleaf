@@ -384,8 +384,24 @@ const addFile = wrapWithLock({
   },
 })
 
+function githubDocumentChanged(cause) {
+  return new OError(
+    'The editable document at this path changed during GitHub sync.',
+    { status: 409 },
+    cause
+  )
+}
+
 const upsertDoc = wrapWithLock(
-  async function (projectId, folderId, docName, docLines, source, userId) {
+  async function (
+    projectId,
+    folderId,
+    docName,
+    docLines,
+    source,
+    userId,
+    expectedDocument
+  ) {
     if (!SafePath.isCleanFilename(docName)) {
       throw new Errors.InvalidNameError('invalid element name')
     }
@@ -407,7 +423,7 @@ const upsertDoc = wrapWithLock(
         }))
     } catch (error) {
       if (error instanceof Errors.NotFoundError) {
-        throw new Error('folder_not_found')
+        throw new Error('folder_not_found', { cause: error })
       }
       throw error
     }
@@ -418,6 +434,13 @@ const upsertDoc = wrapWithLock(
 
     const existingDoc = element.docs.find(({ name }) => name === docName)
     const existingFile = element.fileRefs.find(({ name }) => name === docName)
+    if (
+      (expectedDocument === null && existingDoc) ||
+      (expectedDocument &&
+        existingDoc?._id.toString() !== expectedDocument.docId)
+    ) {
+      throw githubDocumentChanged()
+    }
     if (existingFile) {
       const doc = new Doc({ name: docName })
       const filePath = `${folderPath.fileSystem}/${existingFile.name}`
@@ -490,7 +513,8 @@ const upsertDoc = wrapWithLock(
         userId,
         docLines,
         source,
-        trackChanges
+        trackChanges,
+        ...(expectedDocument ? [expectedDocument.version] : [])
       )
       logger.debug(
         { projectId, docId: existingDoc._id },
@@ -607,7 +631,7 @@ const upsertFile = wrapWithLock({
       }))
     } catch (error) {
       if (error instanceof Errors.NotFoundError) {
-        throw new Error('folder_not_found')
+        throw new Error('folder_not_found', { cause: error })
       }
       throw error
     }
@@ -627,7 +651,7 @@ const upsertFile = wrapWithLock({
           type: 'doc',
         }))
       } catch (err) {
-        throw new Error("couldn't find existing file")
+        throw new Error("couldn't find existing file", { cause: err })
       }
       const project =
         await ProjectEntityMongoUpdateHandler.promises.replaceDocWithFile(
@@ -705,18 +729,51 @@ const upsertFile = wrapWithLock({
 })
 
 const upsertDocWithPath = wrapWithLock(
-  async function (projectId, elementPath, docLines, source, userId) {
+  async function (
+    projectId,
+    elementPath,
+    docLines,
+    source,
+    userId,
+    expectedDocument
+  ) {
     if (!SafePath.isCleanPath(elementPath)) {
       throw new Errors.InvalidNameError('invalid element name')
     }
     const docName = Path.basename(elementPath)
-    const folderPath = Path.dirname(elementPath)
-    const { newFolders, folder } =
-      await ProjectEntityUpdateHandler.promises.mkdirp.withoutLock(
-        projectId,
-        folderPath,
-        userId
-      )
+    let newFolders, folder
+    if (expectedDocument) {
+      // Resolve guarded paths without recreating folders removed by another edit.
+      let located
+      try {
+        located = await ProjectLocator.promises.findElementByPath({
+          project_id: projectId,
+          path: elementPath,
+          exactCaseMatch: true,
+        })
+      } catch (error) {
+        if (error instanceof Errors.NotFoundError) {
+          throw githubDocumentChanged(error)
+        }
+        throw error
+      }
+      if (
+        located.type !== 'doc' ||
+        located.element?._id.toString() !== expectedDocument.docId ||
+        !located.folder
+      ) {
+        throw githubDocumentChanged()
+      }
+      ;({ folder } = located)
+      newFolders = []
+    } else {
+      ;({ newFolders, folder } =
+        await ProjectEntityUpdateHandler.promises.mkdirp.withoutLock(
+          projectId,
+          Path.dirname(elementPath),
+          userId
+        ))
+    }
     const { isNew, doc } =
       await ProjectEntityUpdateHandler.promises.upsertDoc.withoutLock(
         projectId,
@@ -724,7 +781,8 @@ const upsertDocWithPath = wrapWithLock(
         docName,
         docLines,
         source,
-        userId
+        userId,
+        ...(expectedDocument !== undefined ? [expectedDocument] : [])
       )
 
     return { doc, isNew, newFolders, folder }

@@ -107,10 +107,13 @@ async function setDocument(
   userId,
   docLines,
   source,
-  trackChanges = false
+  trackChanges = false,
+  expectedVersion
 ) {
+  // A guarded write must fail on an older updater, before it can modify text.
+  const endpoint = expectedVersion === undefined ? '' : '/set-if-version'
   const maybeJson = await fetchString(
-    `${BASE_URL}/project/${projectId}/doc/${docId}`,
+    `${BASE_URL}/project/${projectId}/doc/${docId}${endpoint}`,
     {
       method: 'POST',
       json: {
@@ -118,6 +121,7 @@ async function setDocument(
         source,
         user_id: userId,
         trackChanges,
+        expectedVersion,
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }

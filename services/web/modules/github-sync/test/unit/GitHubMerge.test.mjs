@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const projectId = '507f1f77bcf86cd799439011'
 const userId = '507f1f77bcf86cd799439012'
+const docId = '507f1f77bcf86cd799439013'
 const token = 'synthetic-provider-token'
 const repo = 'test-account/disposable'
 const branch = 'main'
@@ -100,11 +101,20 @@ async function setup() {
       }),
     },
   }))
+  const docUpdater = {
+    flushProjectToMongo: vi.fn(),
+    getDocument: vi.fn().mockResolvedValue({ version: 0 }),
+  }
+  const entities = {
+    getAllEntities: vi.fn().mockResolvedValue({ docs: [], files: [] }),
+  }
   vi.doMock(
     '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs',
-    () => ({
-      default: { promises: { flushProjectToMongo: vi.fn() } },
-    })
+    () => ({ default: { promises: docUpdater } })
+  )
+  vi.doMock(
+    '../../../../app/src/Features/Project/ProjectEntityHandler.mjs',
+    () => ({ default: { promises: entities } })
   )
   vi.doMock(
     '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs',
@@ -118,6 +128,8 @@ async function setup() {
     provider,
     history,
     editor,
+    docUpdater,
+    entities,
     localBlob,
     unlink,
     doGitMerge,
@@ -271,7 +283,8 @@ describe('GitHub merge and recovery', () => {
       projectId,
       '/main.tex',
       test.localBlob,
-      'github'
+      'github',
+      null
     )
     expect(test.store.updateProjectState).toHaveBeenCalledWith(projectId, {
       mergeStatus: 'clean',
@@ -372,6 +385,33 @@ describe('GitHub merge and recovery', () => {
       message: 'Overleaf changed during GitHub sync. Retry the sync.',
     })
     expect(test.store.updateProjectState).not.toHaveBeenCalled()
+  })
+
+  it('captures the editable document version before the final history check', async () => {
+    test.store.getProjectState.mockResolvedValue(conflict)
+    test.provider.getBranchHead.mockResolvedValue(integrated)
+    test.provider.isCommitIncluded.mockResolvedValue(true)
+    test.entities.getAllEntities.mockResolvedValue({
+      docs: [{ path: '/main.tex', doc: { _id: docId } }],
+      files: [],
+    })
+    await test.doGitMerge(userId, projectId, '', true)
+    expect(test.docUpdater.getDocument).toHaveBeenCalledExactlyOnceWith(
+      projectId,
+      docId,
+      -1
+    )
+    expect(
+      test.docUpdater.getDocument.mock.invocationCallOrder[0]
+    ).toBeLessThan(test.history.latestVersion.mock.invocationCallOrder[1])
+    expect(test.editor._mergeUpdate).toHaveBeenCalledExactlyOnceWith(
+      userId,
+      projectId,
+      '/main.tex',
+      test.localBlob,
+      'github',
+      { docId, version: 0 }
+    )
   })
 
   it('does not upload a path created and removed before the next sync', async () => {

@@ -81,10 +81,18 @@ Overleaf to import the resolution. The app checks the commit history before
 it applies the GitHub snapshot.
 
 The app downloads the files before checking the Overleaf version again. It
-verifies deletions and keeps unrelated edits out of the sync position. An
-import can write several files concurrently. An editor change to the same
-file during its final write can still be overwritten. Verify this scenario
-before production rollout.
+verifies deletions and keeps unrelated edits out of the sync position. Before
+replacing an editable document, GitHub sync checks its identity under the
+project structure lock and its version under the document updater lock. A
+newer version, a moved document, or a newly created editable document at the
+target of a planned text import stops the write. The user can retry sync.
+The conditional-write route makes a staged Web build reject replacements
+against an older document updater.
+
+Imports can apply several files concurrently. Deletions and binary file
+writes still use their existing paths. GitHub sync stops if an incoming
+binary file would replace an editable document. Those operations and live
+provider verification remain rollout checks.
 
 ## Final-image dependency projection
 

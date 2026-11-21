@@ -86,6 +86,28 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: conditional-document-updater
+        name: Conditional document writes and updater HTTP regressions
+        entry: >-
+          env REQ_VALIDATION_MODE=enforce corepack yarn workspace @overleaf/document-updater
+          exec mocha --exit --reporter dot
+          test/unit/js/DocumentManager/DocumentManagerTests.js
+          test/unit/js/HttpController/HttpControllerTests.js
+        language: system
+        pass_filenames: false
+        files: '^(services/document-updater/|services/web/(app/src/Features/(DocumentUpdater|Editor|Project|ThirdPartyDataStore)/|modules/github-sync/)|\.pre-commit-config\.yaml$)'
+      - id: conditional-document-web
+        name: Web editor, document updater client and guarded import regressions
+        entry: >-
+          corepack yarn workspace @overleaf/web exec vitest run
+          --config vitest.config.js
+          test/unit/src/DocumentUpdater/DocumentUpdaterHandler.test.mjs
+          test/unit/src/Editor/EditorController.test.mjs
+          test/unit/src/Project/ProjectEntityUpdateHandler.test.mjs
+          test/unit/src/ThirdPartyDataStore/UpdateMerger.test.mjs
+        language: system
+        pass_filenames: false
+        files: '^(services/document-updater/|services/web/(app/src/Features/(DocumentUpdater|Editor|Project|ThirdPartyDataStore)/|modules/github-sync/|test/unit/src/(DocumentUpdater|Editor|Project|ThirdPartyDataStore)/)|\.pre-commit-config\.yaml$)'
       - id: git-bridge-quality
         name: Git bridge Java formatting, compilation and tests
         entry: tools/lope/check-git-bridge.sh

@@ -179,6 +179,9 @@ const DocumentManager = {
     )
   },
 
+  /**
+   * @param {number} [expectedVersion] The document version required by a conditional write
+   */
   async setDoc(
     projectId,
     docId,
@@ -187,7 +190,8 @@ const DocumentManager = {
     userId,
     undoing,
     external,
-    trackChanges
+    trackChanges,
+    expectedVersion
   ) {
     if (newLines == null) {
       throw new Error('No lines were provided to setDoc')
@@ -203,6 +207,14 @@ const DocumentManager = {
       alreadyLoaded,
       type,
     } = await DocumentManager.getDoc(projectId, docId)
+
+    if (expectedVersion !== undefined && version !== expectedVersion) {
+      if (!alreadyLoaded) {
+        // This request loaded the document into Redis without editing it.
+        await RedisManager.promises.removeDocFromMemory(projectId, docId)
+      }
+      throw new Errors.DocumentVersionMismatchError('document version changed')
+    }
 
     logger.debug(
       { docId, projectId, oldLines, newLines },
@@ -658,6 +670,9 @@ const DocumentManager = {
     )
   },
 
+  /**
+   * @param {number} [expectedVersion] The document version required by a conditional write
+   */
   async setDocWithLock(
     projectId,
     docId,
@@ -666,7 +681,8 @@ const DocumentManager = {
     userId,
     undoing,
     external,
-    trackChanges
+    trackChanges,
+    expectedVersion
   ) {
     const UpdateManager = require('./UpdateManager')
     return await UpdateManager.promises.lockUpdatesAndDo(
@@ -678,7 +694,8 @@ const DocumentManager = {
       userId,
       undoing,
       external,
-      trackChanges
+      trackChanges,
+      expectedVersion
     )
   },
 

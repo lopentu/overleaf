@@ -205,14 +205,20 @@ const EditorController = {
     docLines,
     source,
     userId,
+    expectedDocument,
     callback
   ) {
+    if (typeof expectedDocument === 'function') {
+      callback = expectedDocument
+      expectedDocument = undefined
+    }
     ProjectEntityUpdateHandler.upsertDocWithPath(
       projectId,
       elementPath,
       docLines,
       source,
       userId,
+      ...(expectedDocument !== undefined ? [expectedDocument] : []),
       function (err, doc, didAddNewDoc, newFolders, lastFolder) {
         if (err) {
           return callback(err)

@@ -3,6 +3,7 @@ import _ from 'lodash'
 import fsPromises from 'node:fs/promises'
 import fs from 'node:fs'
 import logger from '@overleaf/logger'
+import OError from '@overleaf/o-error'
 import EditorController from '../Editor/EditorController.mjs'
 import FileTypeManager from '../Uploads/FileTypeManager.mjs'
 import ProjectEntityHandler from '../Project/ProjectEntityHandler.mjs'
@@ -88,10 +89,35 @@ async function _determineFileType(projectId, path, fsPath) {
   }
 }
 
-async function _mergeUpdate(userId, projectId, path, fsPath, source) {
+/** @typedef {{docId: string, version: number}} ExpectedDocument */
+
+/**
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {string} path
+ * @param {string} fsPath
+ * @param {string} source
+ * @param {ExpectedDocument|null} [expectedDocument] null requires no editable document at the path
+ */
+async function _mergeUpdate(
+  userId,
+  projectId,
+  path,
+  fsPath,
+  source,
+  expectedDocument
+) {
   const fileType = await _determineFileType(projectId, path, fsPath)
 
   if (fileType === 'file') {
+    if (expectedDocument) {
+      throw new OError(
+        'GitHub sync cannot replace a guarded editable document with a binary file.',
+        {
+          status: 409,
+        }
+      )
+    }
     const { file, folder } = await _processFile(
       projectId,
       fsPath,
@@ -112,7 +138,8 @@ async function _mergeUpdate(userId, projectId, path, fsPath, source) {
       userId,
       fsPath,
       path,
-      source
+      source,
+      expectedDocument
     )
     return {
       projectId,
@@ -142,7 +169,14 @@ async function deleteUpdate(userId, projectId, path, source) {
   }
 }
 
-async function _processDoc(projectId, userId, fsPath, path, source) {
+async function _processDoc(
+  projectId,
+  userId,
+  fsPath,
+  path,
+  source,
+  expectedDocument
+) {
   const docLines = await _readFileIntoTextArray(fsPath)
   logger.debug({ docLines }, 'processing doc update from tpds')
   const doc = await EditorController.promises.upsertDocWithPath(
@@ -150,7 +184,8 @@ async function _processDoc(projectId, userId, fsPath, path, source) {
     path,
     docLines,
     source,
-    userId
+    userId,
+    ...(expectedDocument !== undefined ? [expectedDocument] : [])
   )
   return doc
 }

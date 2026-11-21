@@ -10,6 +10,7 @@ import HistoryManager from './HistoryManager.mjs'
 import { GitConflictError, GitNotLinkedError } from './GitSyncErrors.mjs'
 import TokenManager from './TokenManager.mjs'
 import LockManager from '../../../../app/src/infrastructure/LockManager.mjs'
+import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
 import UpdateMerger from '../../../../app/src/Features/ThirdPartyDataStore/UpdateMerger.mjs'
 import DocumentUpdaterHandler from '../../../../app/src/Features/DocumentUpdater/DocumentUpdaterHandler.mjs'
 
@@ -660,6 +661,7 @@ async function applyGitSnapshotToProject({
       )
     )
 
+    const documentVersions = await captureDocumentVersions(projectId, updates)
     // Complete provider reads before checking the editor version and mutating files.
     await DocumentUpdaterHandler.promises.flushProjectToMongo(projectId)
     if ((await HistoryManager.latestVersion(projectId)) !== expectedVersion) {
@@ -676,7 +678,8 @@ async function applyGitSnapshotToProject({
             projectId,
             '/' + path,
             fsPath,
-            'github'
+            'github',
+            documentVersions.get('/' + path) ?? null
           )
         )
       )
@@ -734,6 +737,44 @@ async function applyGitSnapshotToProject({
     }
   }
   return resultVersion
+}
+
+/**
+ * @param {string} projectId
+ * @param {string[]} updatedPaths
+ */
+async function captureDocumentVersions(projectId, updatedPaths) {
+  /** @type {Map<string, {docId: string, version: number}>} */
+  const versions = new Map()
+  if (updatedPaths.length === 0) return versions
+
+  const paths = new Set(updatedPaths.map(path => '/' + path))
+  const { docs } = await ProjectEntityHandler.promises.getAllEntities(projectId)
+  const limit = pLimit(5)
+  await Promise.all(
+    docs
+      .filter(({ path }) => paths.has(path))
+      .map(({ path, doc }) =>
+        limit(async () => {
+          const docId = doc._id.toString()
+          // Fetch the current version with no operation history. The final project
+          // flush below checks for edits already present in any captured version.
+          const { version } = await DocumentUpdaterHandler.promises.getDocument(
+            projectId,
+            docId,
+            -1
+          )
+          if (!Number.isSafeInteger(version) || version < 0) {
+            throw new OError(
+              'Could not capture the editable document version',
+              { status: 502 }
+            )
+          }
+          versions.set(path, { docId, version })
+        })
+      )
+  )
+  return versions
 }
 
 function projectChangedDuringSync() {

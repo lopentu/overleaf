@@ -110,6 +110,9 @@ Do not substitute that result for a successful production image build.
 - GitHub sync workflow checks also type the sync handler and run fixtures for
   private-by-default export, seeded commit ancestry, changed refs, conflict
   confirmation and already-merged provider responses.
+  Changes to the guarded document write also run blocking Web and document
+  updater suites. These cover stale versions, older updater responses, and
+  the existing editor path.
 - Behavioral regressions: comment deletion permissions, chat API contracts,
   linked-file controllers/creation, plan telemetry, GitHub state, admin actions
   and template settings, including the admin all-project recovery endpoint. Unit tests do not replace actual migration or sandbox

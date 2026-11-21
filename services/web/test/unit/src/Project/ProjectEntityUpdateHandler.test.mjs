@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 import Errors from '../../../../app/src/Features/Errors/Errors.js'
@@ -944,6 +945,72 @@ describe('ProjectEntityUpdateHandler', function () {
           .should.equal(true)
       })
 
+      it('refuses to replace a different document that now occupies the path', async function (ctx) {
+        ctx.DocumentUpdaterHandler.promises.setDocument.resetHistory()
+        await assert.rejects(
+          ctx.ProjectEntityUpdateHandler.promises.upsertDoc(
+            projectId,
+            folderId,
+            ctx.docName,
+            ctx.docLines,
+            'github',
+            userId,
+            { docId: '507f1f77bcf86cd799439014', version: 0 }
+          ),
+          {
+            message:
+              'The editable document at this path changed during GitHub sync.',
+          }
+        )
+        expect(ctx.DocumentUpdaterHandler.promises.setDocument.called).to.be
+          .false
+      })
+
+      it('refuses to overwrite a document that appeared after an absence check', async function (ctx) {
+        ctx.DocumentUpdaterHandler.promises.setDocument.resetHistory()
+        await assert.rejects(
+          ctx.ProjectEntityUpdateHandler.promises.upsertDoc(
+            projectId,
+            folderId,
+            ctx.docName,
+            ctx.docLines,
+            'github',
+            userId,
+            null
+          ),
+          {
+            message:
+              'The editable document at this path changed during GitHub sync.',
+          }
+        )
+        expect(ctx.DocumentUpdaterHandler.promises.setDocument.called).to.be
+          .false
+      })
+
+      it('checks the version of the original document in the document updater', async function (ctx) {
+        ctx.DocumentUpdaterHandler.promises.setDocument.resetHistory()
+        await ctx.ProjectEntityUpdateHandler.promises.upsertDoc(
+          projectId,
+          folderId,
+          ctx.docName,
+          ctx.docLines,
+          'github',
+          userId,
+          { docId: docId.toString(), version: 0 }
+        )
+        expect(
+          ctx.DocumentUpdaterHandler.promises.setDocument
+        ).to.have.been.calledWithExactly(
+          projectId,
+          ctx.existingDoc._id,
+          userId,
+          ctx.docLines,
+          'github',
+          false,
+          0
+        )
+      })
+
       it('returns the doc', function (ctx) {
         expect(upsertDocResponse.isNew).to.equal(false)
         expect(upsertDocResponse.doc).to.eql(ctx.existingDoc)
@@ -1547,6 +1614,77 @@ describe('ProjectEntityUpdateHandler', function () {
             ctx.source,
             userId
           )
+      })
+
+      it('leaves the structure alone if the original document path is gone', async function (ctx) {
+        ctx.ProjectLocator.promises.findElementByPath.rejects(
+          new Errors.NotFoundError()
+        )
+        ctx.ProjectEntityUpdateHandler.promises.mkdirp.withoutLock.resetHistory()
+        ctx.ProjectEntityUpdateHandler.promises.upsertDoc.withoutLock.resetHistory()
+        await assert.rejects(
+          ctx.ProjectEntityUpdateHandler.promises.upsertDocWithPath(
+            projectId,
+            ctx.path,
+            ctx.docLines,
+            'github',
+            userId,
+            { docId: docId.toString(), version: 0 }
+          ),
+          {
+            message:
+              'The editable document at this path changed during GitHub sync.',
+          }
+        )
+        expect(
+          ctx.ProjectEntityUpdateHandler.promises.mkdirp.withoutLock.called
+        ).to.be.false
+        expect(
+          ctx.ProjectEntityUpdateHandler.promises.upsertDoc.withoutLock.called
+        ).to.be.false
+      })
+
+      it('uses the original document folder without creating folders', async function (ctx) {
+        ctx.ProjectLocator.promises.findElementByPath.resolves({
+          element: ctx.doc,
+          type: 'doc',
+          folder: ctx.folder,
+        })
+        ctx.ProjectEntityUpdateHandler.promises.mkdirp.withoutLock.resetHistory()
+        const expected = { docId: docId.toString(), version: 0 }
+
+        const result =
+          await ctx.ProjectEntityUpdateHandler.promises.upsertDocWithPath(
+            projectId,
+            ctx.path,
+            ctx.docLines,
+            'github',
+            userId,
+            expected
+          )
+
+        expect(
+          ctx.ProjectLocator.promises.findElementByPath
+        ).to.have.been.calledWith({
+          project_id: projectId,
+          path: ctx.path,
+          exactCaseMatch: true,
+        })
+        expect(
+          ctx.ProjectEntityUpdateHandler.promises.mkdirp.withoutLock.called
+        ).to.be.false
+        expect(
+          ctx.ProjectEntityUpdateHandler.promises.upsertDoc.withoutLock
+        ).to.have.been.calledWithExactly(
+          projectId,
+          folderId,
+          'doc.tex',
+          ctx.docLines,
+          'github',
+          userId,
+          expected
+        )
+        expect(result.newFolders).to.deep.equal([])
       })
 
       it('creates any necessary folders', function (ctx) {
