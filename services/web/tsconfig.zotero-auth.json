@@ -4,6 +4,7 @@
   "include": [
     "modules/zotero/app/src/ZoteroRequestError.mjs",
     "modules/zotero/app/src/ZoteroOAuth.mjs",
+    "modules/zotero/test/unit/ZoteroBibliographyWorkflow.test.mjs",
     "modules/zotero/test/unit/ZoteroRequestSafety.test.mjs"
   ]
 }
