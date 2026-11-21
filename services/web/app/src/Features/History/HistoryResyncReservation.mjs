@@ -19,15 +19,14 @@ async function read(projectId) {
 /**
  * @param {string} projectId
  * @param {string} token
- * @param {string} [expectedToken] Previously observed reservation, while holding the history lock.
  */
-export async function claim(projectId, token, expectedToken) {
+export async function claim(projectId, token) {
   await Project.updateOne(
     {
       _id: projectId,
       activeDocumentRetirement: { $exists: false },
       $or: [
-        { historyResyncReservation: expectedToken ?? { $exists: false } },
+        { historyResyncReservation: { $exists: false } },
         { historyResyncReservation: token },
       ],
     },
@@ -38,7 +37,7 @@ export async function claim(projectId, token, expectedToken) {
   if (!project || project.activeDocumentRetirement) return { status: 'blocked' }
   if (project.historyResyncReservation === token) return { status: 'claimed' }
   if (project.historyResyncReservation) {
-    return { status: 'held', token: project.historyResyncReservation }
+    return { status: 'held' }
   }
   throw new Error('History resync reservation could not be confirmed')
 }

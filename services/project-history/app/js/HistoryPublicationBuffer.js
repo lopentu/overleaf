@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto'
+import { HistoryQueueResetBlockedError } from './Errors.js'
 
 /** @import { BufferRequest, BufferResult } from './HistoryPublication.js' */
 
@@ -189,7 +190,9 @@ export async function resetHistoryQueue(redis, keys, projectId) {
     'reset'
   )
   if (result === 'blocked-by-publication') {
-    throw new Error('Cannot reset history queue with pending publications')
+    throw new HistoryQueueResetBlockedError(
+      'Cannot reset history queue with pending publications'
+    )
   }
   if (result !== 'reset') throw new Error('Invalid project history queue')
 }

@@ -117,9 +117,32 @@ Creating a file requires the exact-case path to remain vacant. Editable
 document deletion checks the captured identity and editor version, with an
 atomic check for late queued edits still pending. If Web confirms an editor
 update targets a missing document, the updater reports the error to that
-client and continues the other edits in the batch. GitHub sync rejects
-attempts to convert an editable document to a binary file. Live provider
-verification remains a rollout check.
+client and continues the other edits in the batch. Guarded GitHub sync can
+convert an editable document to a binary file after checking the editor
+version and the Git blob hash. Live provider verification remains a rollout
+check.
+
+### Guarded history resync recovery
+
+With guarded retirement enabled, MongoDB holds one resync reservation per
+project until the acknowledged resync state is saved. An existing claim keeps
+later starters out even when the Redis lock expires. A declined queue reset or
+an already-running soft resync releases the new reservation when cleanup is
+confirmed. A timeout or uncertain write keeps its reservation for recovery.
+
+During authorized maintenance, drain project-history, Web and document-updater
+workers that may still be handling the resync. Capture the exact project ID and
+reservation UUID from the primary with majority read concern. Reconcile the
+saved sync state, pending queue and history position. Once the old request can
+no longer write and those outcomes are known, conditionally unset only the
+captured `historyResyncReservation` on that project with majority write concern.
+Re-read the project before resuming. Keep the reservation whenever a write
+outcome or worker lifetime is uncertain.
+
+When a legacy project receives its first history ID, Web starts the guarded
+resync through project-history. Keep the assigned ID if the request fails. A
+repeat export sees the existing ID, so an initial request lost before dispatch
+requires a normal resync of that project after checking the saved state.
 
 ## Final-image dependency projection
 

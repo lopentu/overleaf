@@ -55,20 +55,16 @@ export async function getDocumentRetirement({
   )
 }
 
-const resyncReservationClaim = z.discriminatedUnion('status', [
-  z.object({ status: z.enum(['claimed', 'blocked']) }),
-  z.object({ status: z.literal('held'), token: z.uuid() }),
-])
+const resyncReservationClaim = z.object({
+  status: z.enum(['claimed', 'blocked', 'held']),
+})
 const resyncReservationRelease = z.object({
   status: z.enum(['released', 'missing', 'conflict']),
 })
 
-async function claimResyncReservation(projectId, token, expectedToken) {
+async function claimResyncReservation(projectId, token) {
   return resyncReservationClaim.parse(
-    await requestResyncReservation(projectId, 'claim', {
-      token,
-      ...(expectedToken === undefined ? {} : { expectedToken }),
-    })
+    await requestResyncReservation(projectId, 'claim', { token })
   )
 }
 

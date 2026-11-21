@@ -298,7 +298,7 @@ async function resyncProjectHistory(req, res, next) {
 const resyncReservationParams = z.strictObject({ Project_id: zz.objectId() })
 const claimResyncReservationSchema = z.object({
   params: resyncReservationParams,
-  body: z.strictObject({ token: z.uuid(), expectedToken: z.uuid().optional() }),
+  body: z.strictObject({ token: z.uuid() }),
 })
 const releaseResyncReservationSchema = z.object({
   params: resyncReservationParams,
@@ -308,13 +308,7 @@ const releaseResyncReservationSchema = z.object({
 /** @param {Request} req @param {Response} res */
 async function claimResyncReservation(req, res) {
   const { params, body } = parseReq(req, claimResyncReservationSchema)
-  res.json(
-    await HistoryResyncReservation.claim(
-      params.Project_id,
-      body.token,
-      body.expectedToken
-    )
-  )
+  res.json(await HistoryResyncReservation.claim(params.Project_id, body.token))
 }
 
 /** @param {Request} req @param {Response} res */

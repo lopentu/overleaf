@@ -6,6 +6,7 @@ export class NotFoundError extends OError {}
 export class BadRequestError extends OError {}
 export class SyncError extends OError {}
 export class SyncOngoingError extends OError {}
+export class HistoryQueueResetBlockedError extends OError {}
 export class OpsOutOfOrderError extends OError {}
 export class InconsistentChunkError extends OError {}
 export class UpdateWithUnknownFormatError extends OError {}

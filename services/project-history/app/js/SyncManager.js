@@ -15,6 +15,7 @@ import {
 } from 'overleaf-editor-core/lib/errors.js'
 import {
   FileContentEmptyError,
+  HistoryQueueResetBlockedError,
   NeedFullProjectStructureResyncError,
   SYNC_ONGOING_ERROR_MESSAGE,
   SyncError,
@@ -122,20 +123,10 @@ async function startResyncWithReservation(
     }
     const token = randomUUID()
     await extendLock()
-    let claim = await WebApiManager.promises.claimResyncReservation(
+    const claim = await WebApiManager.promises.claimResyncReservation(
       projectId,
       token
     )
-    if (claim.status === 'held') {
-      // The caller acquired the same history lock used by the previous
-      // starter. Reclaim only the exact token observed under this lock.
-      await extendLock()
-      claim = await WebApiManager.promises.claimResyncReservation(
-        projectId,
-        token,
-        claim.token
-      )
-    }
     if (claim.status !== 'claimed') {
       throw new SyncError(
         'History resync is blocked by a document retirement or another reservation'
@@ -144,34 +135,51 @@ async function startResyncWithReservation(
     reservation = { token, extendLock }
   }
 
-  if (resetQueue) {
-    if (reservation) {
-      await extendLock()
-      // A refusal to delete pending publications must leave Mongo state
-      // intact. Successful Redis reset also clears the timestamp.
-      await RedisManager.promises.destroyDocUpdatesQueue(projectId)
-      await extendLock()
-      await clearResyncState(projectId)
-    } else {
-      await clearResyncState(projectId)
-      await RedisManager.promises.clearFirstOpTimestamp(projectId)
-      await RedisManager.promises.destroyDocUpdatesQueue(projectId)
+  let refusal
+  try {
+    if (resetQueue) {
+      if (reservation) {
+        await extendLock()
+        // Reset checks for pending publications before deleting the queue.
+        await RedisManager.promises.destroyDocUpdatesQueue(projectId)
+        await extendLock()
+        await clearResyncState(projectId)
+      } else {
+        await clearResyncState(projectId)
+        await RedisManager.promises.clearFirstOpTimestamp(projectId)
+        await RedisManager.promises.destroyDocUpdatesQueue(projectId)
+      }
     }
+    await queueResyncAndSaveState(projectId, options, reservation)
+  } catch (error) {
+    const declinedBeforeMutation = resetQueue
+      ? error instanceof HistoryQueueResetBlockedError
+      : error instanceof SyncOngoingError
+    // A failed dispatch may still write. Retain its reservation for recovery.
+    if (!reservation || !declinedBeforeMutation) throw error
+    refusal = error
   }
-  await queueResyncAndSaveState(projectId, options, reservation)
 
   if (reservation) {
-    // Ambiguous failure after reserving leaves the claim for the next
-    // HistoryLock holder. Release only after Mongo has confirmed the state.
-    await extendLock()
-    const release = await WebApiManager.promises.releaseResyncReservation(
-      projectId,
-      reservation.token
-    )
-    if (release.status === 'conflict') {
-      throw new SyncError('History resync reservation changed before release')
+    try {
+      // A confirmed refusal can release its own token even after lease expiry.
+      if (!refusal) await extendLock()
+      const release = await WebApiManager.promises.releaseResyncReservation(
+        projectId,
+        reservation.token
+      )
+      if (release.status === 'conflict') {
+        throw new SyncError('History resync reservation changed before release')
+      }
+    } catch (error) {
+      if (!refusal) throw error
+      logger.warn(
+        { projectId },
+        'history resync reservation release unconfirmed'
+      )
     }
   }
+  if (refusal) throw refusal
 }
 
 async function queueResyncAndSaveState(projectId, options, reservation) {
