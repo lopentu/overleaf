@@ -21,6 +21,7 @@ import UserGetter from '../User/UserGetter.mjs'
 /** @type {any} */
 import ProjectGetter from '../Project/ProjectGetter.mjs'
 import Errors from '../Errors/Errors.js'
+import HttpErrorHandler from '../Errors/HttpErrorHandler.mjs'
 /** @type {any} */
 import HistoryManager from './HistoryManager.mjs'
 /** @type {any} */
@@ -475,11 +476,21 @@ async function revertProject(req, res, next) {
   const { version } = body
   const userId = SessionManager.getLoggedInUserId(req.session)
 
-  const reverted = await RestoreManager.promises.revertProject(
-    userId,
-    projectId,
-    version
-  )
+  let reverted
+  try {
+    reverted = await RestoreManager.promises.revertProject(
+      userId,
+      projectId,
+      version
+    )
+  } catch (error) {
+    if (error instanceof Errors.ProjectRestorePathConflictError) {
+      return HttpErrorHandler.conflict(req, res, error.message, {
+        code: 'project_restore_path_conflict',
+      })
+    }
+    throw error
+  }
 
   ProjectAuditLogHandler.addEntryIfManagedInBackground(
     projectId,

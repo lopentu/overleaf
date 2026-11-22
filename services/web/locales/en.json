@@ -2435,6 +2435,7 @@
   "restore_file_error_message": "There was a problem restoring the file version. Please try again in a few moments. If the problem continues please contact us.",
   "restore_file_error_title": "Restore File Error",
   "restore_file_version": "Restore this version",
+  "restore_project_path_conflict": "Some file or folder paths conflict with this version. Rename or move conflicting items in the current project, or choose a different version.",
   "restore_project_to_this_version": "Restore project to this version",
   "restore_this_version": "Restore this version",
   "restoring": "Restoring",

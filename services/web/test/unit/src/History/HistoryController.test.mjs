@@ -4,6 +4,10 @@ import { RequestFailedError } from '@overleaf/fetch-utils'
 import Errors from '../../../../app/src/Features/Errors/Errors.js'
 import mongodb from 'mongodb-legacy'
 
+vi.mock('../../../../app/src/Features/Errors/Errors.js', () =>
+  vi.importActual('../../../../app/src/Features/Errors/Errors.js')
+)
+
 const { ObjectId } = mongodb
 
 const modulePath = '../../../../app/src/Features/History/HistoryController.mjs'
@@ -49,10 +53,6 @@ describe('HistoryController', function () {
       .stub()
       .resolves({ stream: ctx.stream, response: ctx.fetchResponse })
     ctx.fetchNothing = sinon.stub().resolves()
-
-    vi.mock('../../../../app/src/Features/Errors/Errors.js', () =>
-      vi.importActual('../../../../app/src/Features/Errors/Errors.js')
-    )
 
     vi.doMock('stream/promises', () => ctx.Stream)
 
@@ -131,6 +131,11 @@ describe('HistoryController', function () {
           },
         }),
       })
+    )
+
+    vi.doMock(
+      '../../../../app/src/Features/History/HistoryResyncReservation.mjs',
+      () => ({ requireCurrent: sinon.stub().resolves() })
     )
 
     vi.doMock('../../../../app/src/infrastructure/Features.mjs', () => ({
@@ -538,6 +543,32 @@ describe('HistoryController', function () {
         ctx.project_id,
         42
       )
+    })
+
+    it('reports a project path conflict as 409 without recording a successful restore', async function (ctx) {
+      const message = 'Some file or folder paths conflict with this version.'
+      ctx.req = {
+        params: { project_id: ctx.project_id },
+        body: { version: 42 },
+        session: {},
+        ip: '1.2.3.4',
+        accepts: sinon.stub().returns('json'),
+      }
+      ctx.res.status = sinon.stub().returns(ctx.res)
+      ctx.RestoreManager.promises.revertProject.rejects(
+        new Errors.ProjectRestorePathConflictError(message)
+      )
+
+      await ctx.HistoryController.revertProject(ctx.req, ctx.res, ctx.next)
+
+      expect(ctx.res.status).to.have.been.calledOnceWith(409)
+      expect(ctx.res.json).to.have.been.calledOnceWith({
+        message,
+        code: 'project_restore_path_conflict',
+      })
+      expect(ctx.next).not.to.have.been.called
+      expect(ctx.ProjectAuditLogHandler.addEntryIfManagedInBackground).not.to
+        .have.been.called
     })
 
     it('rejects a non-integer version without invoking RestoreManager', async function (ctx) {

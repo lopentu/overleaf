@@ -1473,7 +1473,7 @@ describe('RestoreManager', function () {
         .resolves([])
       ctx.ProjectEntityHandler.promises.getAllEntities = sinon
         .stub()
-        .resolves({ docs: [], files: [] })
+        .resolves({ docs: [], files: [], folders: [] })
       ctx.EditorController.promises.deleteEntityWithPath = sinon
         .stub()
         .resolves()
@@ -1501,6 +1501,91 @@ describe('RestoreManager', function () {
         ).to.eventually.be.rejectedWith('project does not have ranges support')
       })
     })
+
+    for (const { description, historicalPaths, liveBlockers } of [
+      {
+        description: 'a live folder occupies a historical file path',
+        historicalPaths: ['target.tex'],
+        liveBlockers: { folders: [{ path: '/Target.tex' }] },
+      },
+      {
+        description: 'a live document obstructs a historical parent folder',
+        historicalPaths: ['chapters/old/note.tex'],
+        liveBlockers: { docs: [{ path: '/Chapters' }] },
+      },
+      {
+        description:
+          'a live ancestor differs from the historical path only in case',
+        historicalPaths: ['Figures/plots/note.tex'],
+        liveBlockers: {
+          docs: [{ path: '/figures/plots/note.tex' }],
+          folders: [
+            { path: '/' },
+            { path: '/figures' },
+            { path: '/figures/plots' },
+          ],
+        },
+      },
+      {
+        description:
+          'the live files contain ambiguous aliases for a historical file',
+        historicalPaths: ['note.tex'],
+        liveBlockers: {
+          docs: [{ path: '/note.tex' }],
+          files: [{ path: '/Note.tex' }],
+        },
+      },
+      {
+        description:
+          'the live folders contain ambiguous aliases for a historical ancestor',
+        historicalPaths: ['Figures/note.tex'],
+        liveBlockers: { folders: [{ path: '/figures' }, { path: '/Figures' }] },
+      },
+      {
+        description: 'the historical version has file aliases',
+        historicalPaths: ['Note.tex', 'note.tex'],
+      },
+      {
+        description: 'the historical version has folder aliases',
+        historicalPaths: ['Figures/a.tex', 'figures/b.tex'],
+      },
+      {
+        description: 'the historical version aliases a file and a folder',
+        historicalPaths: ['Figures', 'figures/note.tex'],
+      },
+    ]) {
+      it(`refuses before modifying earlier files when ${description}`, async function (ctx) {
+        const file = { hash: 'abcdef1234567890abcdef1234567890abcdef12' }
+        ctx.HistoryManager.promises.getContentAtVersion.resolves({
+          files: Object.fromEntries(
+            ['main.tex', ...historicalPaths].map(path => [path, file])
+          ),
+        })
+        ctx.ProjectEntityHandler.promises.getAllEntities.resolves({
+          docs: [],
+          files: [],
+          folders: [{ path: '/' }],
+          ...liveBlockers,
+        })
+
+        await expect(
+          ctx.RestoreManager.promises.revertProject(
+            ctx.user_id,
+            ctx.project_id,
+            ctx.version
+          )
+        ).to.eventually.be.rejectedWith(
+          'Some file or folder paths conflict with this version.'
+        )
+
+        expect(ctx.RestoreManager.promises._revertSingleFile).not.to.have.been
+          .called
+        expect(ctx.EditorController.promises.deleteEntityWithPath).not.to.have
+          .been.called
+        expect(ctx.DocumentUpdaterHandler.promises.flushProjectToMongo).not.to
+          .have.been.called
+      })
+    }
 
     describe('for a project with overlap in current files and old files', function () {
       beforeEach(async function (ctx) {
@@ -1533,12 +1618,20 @@ describe('RestoreManager', function () {
             timestamp: new Date().toISOString(),
           })
 
-        ctx.ProjectEntityHandler.promises.getAllEntities = sinon
-          .stub()
+        const liveAfterRestore = {
+          docs: [{ path: '/main.tex' }, { path: '/new-file.tex' }],
+          files: [{ path: '/figures/image.png' }],
+          folders: [{ path: '/' }, { path: '/figures' }],
+        }
+        ctx.ProjectEntityHandler.promises.getAllEntities
+          .onFirstCall()
           .resolves({
-            docs: [{ path: '/main.tex' }, { path: '/new-file.tex' }],
-            files: [{ path: '/figures/image.png' }],
+            ...liveAfterRestore,
+            docs: [{ path: '/Main.TEX' }, { path: '/new-file.tex' }],
           })
+        ctx.ProjectEntityHandler.promises.getAllEntities
+          .onSecondCall()
+          .resolves(liveAfterRestore)
 
         await ctx.RestoreManager.promises.revertProject(
           ctx.user_id,

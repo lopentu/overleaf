@@ -79,6 +79,72 @@ async function restoreCommentThreadState(projectId, comments, userId) {
   return newCommentThreadData
 }
 
+/** @param {{path: string}[]} entities */
+function groupLiveRestorePaths(entities) {
+  /** @type {Map<string, string[]>} */
+  const paths = new Map()
+  for (const { path } of entities) {
+    const relativePath = path.replace(/^\//, '')
+    const key = relativePath.toLowerCase()
+    const matchingPaths = paths.get(key) ?? []
+    matchingPaths.push(relativePath)
+    paths.set(key, matchingPaths)
+  }
+  return paths
+}
+
+/**
+ * @param {string} projectId
+ * @param {string[]} historicalPaths
+ */
+async function checkProjectRestorePaths(projectId, historicalPaths) {
+  const { folders, docs, files } =
+    await ProjectEntityHandler.promises.getAllEntities(projectId)
+  // Restore lookups ignore case, while cleanup compares exact paths.
+  const liveFolders = groupLiveRestorePaths(folders)
+  const liveFiles = groupLiveRestorePaths([...docs, ...files])
+  const historicalFiles = new Set(
+    historicalPaths.map(path => path.toLowerCase())
+  )
+  /** @type {Map<string, string>} */
+  const historicalFolders = new Map()
+  const conflicts =
+    historicalFiles.size !== historicalPaths.length ||
+    historicalPaths.some(path => {
+      const key = path.toLowerCase()
+      if (liveFolders.has(key) || (liveFiles.get(key)?.length ?? 0) > 1) {
+        return true
+      }
+
+      for (
+        let parent = Path.posix.dirname(path);
+        parent !== '.' && parent !== '/';
+        parent = Path.posix.dirname(parent)
+      ) {
+        const parentKey = parent.toLowerCase()
+        const liveMatches = liveFolders.get(parentKey)
+        const historicalMatch = historicalFolders.get(parentKey)
+        if (
+          liveFiles.has(parentKey) ||
+          historicalFiles.has(parentKey) ||
+          (liveMatches != null &&
+            (liveMatches.length !== 1 || liveMatches[0] !== parent)) ||
+          (historicalMatch != null && historicalMatch !== parent)
+        ) {
+          return true
+        }
+        historicalFolders.set(parentKey, parent)
+      }
+      return false
+    })
+
+  if (conflicts) {
+    throw new Errors.ProjectRestorePathConflictError(
+      'Some file or folder paths conflict with this version.'
+    )
+  }
+}
+
 const RestoreManager = {
   async restoreFileFromV2(userId, projectId, version, pathname) {
     const project = await ProjectGetter.promises.getProject(projectId, {
@@ -543,6 +609,7 @@ const RestoreManager = {
     const snapshot = Snapshot.fromRaw(snapshotRaw)
 
     const pathsAtPastVersion = snapshot.getFilePathnames()
+    await checkProjectRestorePaths(projectId, pathsAtPastVersion)
 
     const origin = {
       kind: 'project-restore',

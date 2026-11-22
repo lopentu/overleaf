@@ -210,6 +210,7 @@ repos:
           --config vitest.config.js modules/track-changes/test/unit
           modules/admin-tools/test/unit
           test/unit/src/Chat/ChatApiHandler.test.mjs
+          test/unit/src/History/HistoryController.test.mjs
           test/unit/src/History/RestoreManager.test.mjs
           test/unit/src/LinkedFiles/LinkedFilesController.test.mjs
           test/unit/src/Subscription/CustomerIoPlanHelpers.test.mjs
@@ -236,6 +237,7 @@ repos:
           mocha --timeout 15000 --exit --require test/frontend/bootstrap.js
           test/frontend/features/file-tree/flows/create-linked-file.test.tsx
           test/frontend/features/history/components/restore-deleted-file.test.tsx
+          test/frontend/features/history/components/restore-project-error-modal.test.tsx
           test/frontend/features/history/components/restore-selected-file.test.tsx
           test/frontend/features/ide-react/context/editor-manager-initial-document.test.tsx
           modules/github-sync/test/frontend/modal-state.test.tsx
