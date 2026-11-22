@@ -149,9 +149,12 @@ repos:
       - id: provider-https-regressions
         name: Provider CONNECT TLS redirect cancellation and isolation regressions
         entry: >-
-          corepack yarn workspace @overleaf/web exec vitest run
+          bash -ec 'corepack yarn workspace @overleaf/web exec vitest run
           --config vitest.config.js test/unit/src/Integrations/ProviderHttpsAgent.test.mjs
-          --passWithNoTests=false
+          --passWithNoTests=false &&
+          node --experimental-vm-modules tools/lope/provider-transport/probe.test.mjs &&
+          node tools/lope/provider-transport/entry.test.mjs &&
+          node tools/lope/provider-transport/pnp.mock.test.mjs'
         language: system
         pass_filenames: false
         always_run: true
