@@ -3,6 +3,7 @@
   "compilerOptions": { "checkJs": false },
   "include": [
     "app/src/Features/Integrations/ProviderHttpsAgent.mjs",
-    "test/unit/src/Integrations/ProviderHttpsAgent.test.mjs"
+    "test/unit/src/Integrations/ProviderHttpsAgent.test.mjs",
+    "../../tools/lope/provider-transport/*.mjs"
   ]
 }

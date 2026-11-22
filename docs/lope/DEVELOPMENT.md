@@ -110,6 +110,17 @@ Do not substitute that result for a successful production image build.
   disabled. A separately managed private allowlisted proxy and real provider
   qualification are still required; this source change deploys no proxy, network,
   service or credentials.
+  [The credential-free probe](../../tools/lope/provider-transport/) is covered
+  by the same type and regression hooks. Its offline tests exercise the sealed
+  launcher, allowed and denied destinations, and outage behavior. The PnP
+  smoke test loads the real Web proxy agent with the socket call mocked.
+  In the admitted carrier, mount just the reviewed `entry.mjs` and `probe.mjs`
+  as read-only files under `/overleaf/services/web`. From that directory,
+  start `/usr/bin/env -i /usr/bin/node /overleaf/services/web/entry.mjs connected`
+  or use the fixed `outage` phase. Use the admitted absolute Node path and
+  run without loader flags. Keep outer stderr out of the receipt. Clearing
+  the environment before Node starts prevents inherited preloads.
+  Live qualification also requires firewall, network and cleanup checks.
 - GitHub sync workflow checks also type the sync handler and run fixtures for
   private-by-default export, seeded commit ancestry, changed refs, conflict
   confirmation and already-merged provider responses.
