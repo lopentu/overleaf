@@ -209,6 +209,7 @@ repos:
           corepack yarn workspace @overleaf/web exec vitest run
           --config vitest.config.js modules/track-changes/test/unit
           modules/admin-tools/test/unit
+          modules/template-gallery/test/unit
           test/unit/src/Chat/ChatApiHandler.test.mjs
           test/unit/src/History/HistoryController.test.mjs
           test/unit/src/History/RestoreManager.test.mjs

@@ -2,7 +2,12 @@ import _ from 'lodash'
 import logger from '@overleaf/logger'
 import { Readable } from 'stream'
 import settings from '@overleaf/settings'
-import { OError } from '../../../../app/src/Features/Errors/Errors.js'
+import mongoose from 'mongoose'
+import {
+  ForbiddenError,
+  OError,
+} from '../../../../app/src/Features/Errors/Errors.js'
+import ProjectGetter from '../../../../app/src/Features/Project/ProjectGetter.mjs'
 import { Template } from './models/Template.mjs'
 import {
   validateTemplateInput,
@@ -10,20 +15,32 @@ import {
   uploadTemplateAssets,
   deleteTemplateAssets,
   canUserOverrideTemplate,
-  generateTemplateData
+  generateTemplateData,
 } from './TemplateGalleryHelper.mjs'
-import { cleanHtml }  from './CleanHtml.mjs'
+import { cleanHtml } from './CleanHtml.mjs'
 import { TemplateNameConflictError } from './TemplateErrors.mjs'
+import { requirePublishedTemplateVersion } from './PublishedTemplateVersion.mjs'
 import { fetchStreamWithResponse } from '@overleaf/fetch-utils'
 const TIMEOUT = 30000
 
 async function editTemplate({ templateId, updates }) {
-
+  const editableFields = [
+    'name',
+    'license',
+    'category',
+    'language',
+    'authorMD',
+    'descriptionMD',
+  ]
+  updates = _.pick(updates, editableFields)
   validateTemplateInput(updates)
 
   const template = await Template.findById(templateId)
   if (!template) {
-    throw new OError('Current template not found, strange...', { status: 500, templateId })
+    throw new OError('Current template not found, strange...', {
+      status: 500,
+      templateId,
+    })
   }
 
   if (updates.name) {
@@ -45,43 +62,133 @@ async function editTemplate({ templateId, updates }) {
   return updates
 }
 
-async function deleteTemplate({ templateId, version }) {
-  await deleteTemplateAssets(templateId, version, true)
+async function deleteTemplate({ templateId }) {
+  const template = await Template.findByIdAndDelete(templateId).exec()
+  if (template) {
+    await deleteTemplateAssets(template._id, template.version)
+  }
 }
 
-async function createTemplateFromProject({ projectId, userId, templateSource }) {
+/**
+ * @param {{
+ *   projectId: string,
+ *   userId: string | null | undefined,
+ *   templateSource: {
+ *     name: string,
+ *     category: string,
+ *     descriptionMD: string,
+ *     authorMD: string,
+ *     license: string,
+ *     build: string,
+ *     override?: boolean
+ *   }
+ * }} options
+ */
+async function createTemplateFromProject({
+  projectId,
+  userId,
+  templateSource,
+}) {
   validateTemplateInput(templateSource)
+  const sourceProject = await ProjectGetter.promises.getProject(projectId, {
+    owner_ref: true,
+  })
+  if (!userId || sourceProject?.owner_ref?.toString() !== userId) {
+    throw new ForbiddenError('Template publication requires project ownership')
+  }
+
   let template = await Template.findOne({ name: templateSource.name }).exec()
+  const previousVersion = template?.version
+  let newVersion
 
-  if (template && !templateSource.override) {
-    const { canOverride, templateOwnerName } = await canUserOverrideTemplate(template, userId)
+  if (template) {
+    const { canOverride, templateOwnerName } = await canUserOverrideTemplate(
+      template,
+      userId
+    )
 
-    return {
-      conflict: true,
-      canOverride,
-      templateOwnerName
+    if (!templateSource.override) {
+      return {
+        conflict: true,
+        canOverride,
+        templateOwnerName,
+      }
     }
+    if (!canOverride) {
+      throw new ForbiddenError('Template replacement is not authorized')
+    }
+
+    const authorizedState = {
+      name: template.name,
+      owner: template.owner ?? null,
+      version: template.version,
+    }
+    // Allocate a distinct asset key without changing the version readers see.
+    const reservation = await Template.findOneAndUpdate(
+      { _id: template._id, ...authorizedState },
+      [
+        {
+          $set: {
+            reservedVersion: {
+              $add: [
+                { $max: ['$version', { $ifNull: ['$reservedVersion', 0] }] },
+                1,
+              ],
+            },
+          },
+        },
+      ],
+      { new: true, projection: { reservedVersion: 1 } }
+    )
+      .lean()
+      .exec()
+    if (
+      !reservation ||
+      !Number.isSafeInteger(reservation.reservedVersion) ||
+      reservation.reservedVersion <= template.version
+    ) {
+      throw new OError('Template changed before version reservation')
+    }
+    newVersion = reservation.reservedVersion
+    // Mongoose matches this document's _id and the authorized prior state.
+    template.$where = authorizedState
   }
 
   const templateData = await generateTemplateData(projectId, templateSource)
 
-  let previousVersionExists
   if (!template) {
     template = new Template(templateData)
     template.owner = userId
-    previousVersionExists = false
   } else {
     Object.assign(template, templateData, {
-      version: template.version + 1,
+      version: newVersion,
     })
-    previousVersionExists = true
   }
 
-  await uploadTemplateAssets(projectId, userId, templateSource.build, template)
-  await template.save()
+  try {
+    await uploadTemplateAssets(
+      projectId,
+      userId,
+      templateSource.build,
+      template
+    )
+  } catch (error) {
+    await deleteTemplateAssets(template._id, template.version)
+    throw error
+  }
+  try {
+    await template.save()
+  } catch (error) {
+    // A definite zero-match can only discard this attempt's unique files.
+    // Keep the files when a write error leaves publication uncertain.
+    if (error instanceof mongoose.Error.DocumentNotFoundError) {
+      await deleteTemplateAssets(template._id, template.version)
+    }
+    throw error
+  }
 
-  if (previousVersionExists) {
-    deleteTemplateAssets(template._id, template.version - 1, false)
+  if (previousVersion !== undefined) {
+    void deleteTemplateAssets(template._id, previousVersion)
   }
   return {
     conflict: false,
@@ -90,38 +197,48 @@ async function createTemplateFromProject({ projectId, userId, templateSource }) 
 }
 
 async function fetchTemplatePreview({ templateId, version, style }) {
-  if (!templateId || !version) {
-    throw new OError('Template ID and version are required', { status: 404 })
-  }
+  const publishedVersion = await requirePublishedTemplateVersion(
+    templateId,
+    version
+  )
   const styleParam = style ? `style=${style}` : ''
-  const isImage = (style === 'preview' || style === 'thumbnail')
+  const isImage = style === 'preview' || style === 'thumbnail'
 
   if (style && !isImage) {
     throw new OError('Wrong style', { status: 404, style })
   }
 
-  const pdfUrl = `${settings.apis.filestore.url}/template/${templateId}/v/${version}/pdf?${styleParam}`
+  const pdfUrl = `${settings.apis.filestore.url}/template/${templateId}/v/${publishedVersion}/pdf?${styleParam}`
   const { response } = await fetchStreamWithResponse(pdfUrl, {
     method: 'GET',
     signal: AbortSignal.timeout(TIMEOUT),
   })
 
   if (!response.ok) {
-    throw new OError(`Failed to fetch file: ${response.statusText}`, { status: 400, templateId, version, styleParam })
+    throw new OError(`Failed to fetch file: ${response.statusText}`, {
+      status: 400,
+      templateId,
+      version,
+      styleParam,
+    })
   }
 
   return {
     stream: Readable.from(response.body),
-    contentType: isImage ? 'application/octet-stream' : 'application/pdf'
+    contentType: isImage ? 'application/octet-stream' : 'application/pdf',
   }
 }
 
 async function getTemplatesPageData(category) {
-  const categoryName = settings.templateLinks.find(item => item.url.endsWith(`/${category}`))?.name
-  const templateLinks = categoryName ? undefined : settings.templateLinks.filter(link => link.url !== '/templates/all')
+  const categoryName = settings.templateLinks.find(item =>
+    item.url.endsWith(`/${category}`)
+  )?.name
+  const templateLinks = categoryName
+    ? undefined
+    : settings.templateLinks.filter(link => link.url !== '/templates/all')
   return {
     categoryName,
-    templateLinks
+    templateLinks,
   }
 }
 
@@ -139,14 +256,17 @@ async function getTemplate(key, val) {
 }
 
 async function getCategoryTemplates(reqQuery) {
-  const {
-    category,
-    by = 'lastUpdated',
-    order = 'desc',
-  } = reqQuery || {}
+  const { category, by = 'lastUpdated', order = 'desc' } = reqQuery || {}
 
-  const query = (category === 'all') ? {} : { category : '/templates/' + category }
-  const projection = { _id : 1, version : 1, name : 1, author : 1, description : 1, lastUpdated : 1 }
+  const query = category === 'all' ? {} : { category: '/templates/' + category }
+  const projection = {
+    _id: 1,
+    version: 1,
+    name: 1,
+    author: 1,
+    description: 1,
+    lastUpdated: 1,
+  }
   const allTemplates = await Template.find(query, projection).exec()
   const formattedTemplates = allTemplates.map(_formatTemplateForList)
   const sortedTemplates = _sortTemplates(formattedTemplates, { by, order })
@@ -177,8 +297,8 @@ function _formatTemplateForList(template) {
     id: String(template._id),
     version: String(template.version),
     name: template.name,
-    author: cleanHtml(template.author, "plainText"),
-    description: cleanHtml(template.description, "plainText"),
+    author: cleanHtml(template.author, 'plainText'),
+    description: cleanHtml(template.description, 'plainText'),
     lastUpdated: template.lastUpdated,
   }
 }
@@ -189,9 +309,9 @@ function _formatTemplateForPage(template) {
     version: template.version.toString(),
     category: template.category,
     name: template.name,
-    author: cleanHtml(template.author, "linksOnly"),
+    author: cleanHtml(template.author, 'linksOnly'),
     authorMD: template.authorMD,
-    description: cleanHtml(template.description, "reachText"),
+    description: cleanHtml(template.description, 'reachText'),
     descriptionMD: template.descriptionMD,
     license: template.license,
     lastUpdated: template.lastUpdated,
