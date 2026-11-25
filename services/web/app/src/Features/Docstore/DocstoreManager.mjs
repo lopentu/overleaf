@@ -23,9 +23,10 @@ const TIMEOUT = 30 * 1000 // request timeout
  * @param {string | ObjectId} docId
  * @param {string} name
  * @param {Date} deletedAt
+ * @param {{version: number, rev: number}} [expectedRevision]
  * @return {Promise<void>}
  */
-async function deleteDoc(projectId, docId, name, deletedAt) {
+async function deleteDoc(projectId, docId, name, deletedAt, expectedRevision) {
   const url = new URL(settings.apis.docstore.url)
   url.pathname = path.posix.join(
     'project',
@@ -33,7 +34,12 @@ async function deleteDoc(projectId, docId, name, deletedAt) {
     'doc',
     docId.toString()
   )
-  const docMetaData = { deleted: true, deletedAt, name }
+  const docMetaData = {
+    deleted: true,
+    deletedAt,
+    name,
+    ...(expectedRevision && { expectedRevision }),
+  }
   const options = {
     json: docMetaData,
     signal: AbortSignal.timeout(TIMEOUT),

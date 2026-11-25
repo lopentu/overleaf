@@ -10,13 +10,31 @@ import * as Errors from './Errors.js'
 import _ from 'lodash'
 
 /**
- * @import { Snapshot } from 'overleaf-editor-core'
- * @import { RangesSnapshot } from './types'
+ * @import { File as CoreFile, Snapshot } from 'overleaf-editor-core'
+ * @import { FileRecoverySnapshot, RangesSnapshot } from './types'
  */
 
 StringStream.prototype._read = function () {}
 
 const MAX_REQUESTS = 4 // maximum number of parallel requests to v1 history service
+
+/**
+ * @param {string} projectId
+ * @param {number} version
+ * @param {string} pathname
+ */
+async function getFileAtVersion(projectId, version, pathname) {
+  const snapshot = await _getSnapshotAtVersion(projectId, version)
+  const file = snapshot.getFile(pathname)
+  if (!file) {
+    throw new Errors.NotFoundError(`${pathname} not found`, {
+      projectId,
+      version,
+      pathname,
+    })
+  }
+  return { file, snapshot }
+}
 
 /**
  *
@@ -25,17 +43,7 @@ const MAX_REQUESTS = 4 // maximum number of parallel requests to v1 history serv
  * @param {string} pathname
  */
 async function getFileSnapshotStream(projectId, version, pathname) {
-  const snapshot = await _getSnapshotAtVersion(projectId, version)
-
-  const file = snapshot.getFile(pathname)
-  if (file == null) {
-    throw new Errors.NotFoundError(`${pathname} not found`, {
-      projectId,
-      version,
-      pathname,
-    })
-  }
-
+  const { file } = await getFileAtVersion(projectId, version, pathname)
   const historyId = await WebApiManager.promises.getHistoryId(projectId)
   if (file.isEditable()) {
     await file.load('eager', HistoryStoreManager.getBlobStore(historyId))
@@ -63,28 +71,52 @@ async function getFileSnapshotStream(projectId, version, pathname) {
  * @returns {Promise<RangesSnapshot>}
  */
 async function getRangesSnapshot(projectId, version, pathname) {
-  const snapshot = await _getSnapshotAtVersion(projectId, version)
-  const file = snapshot.getFile(pathname)
-  if (!file) {
-    throw new Errors.NotFoundError(`${pathname} not found`, {
-      projectId,
-      version,
-      pathname,
-    })
+  const { file } = await getFileAtVersion(projectId, version, pathname)
+  return await loadFileRanges(projectId, file)
+}
+
+/**
+ * Gets the selected file's recovery data without loading other project files.
+ * Binary and linked file bytes can be read separately from the snapshot stream.
+ *
+ * @param {string} projectId
+ * @param {number} version
+ * @param {string} pathname
+ * @returns {Promise<FileRecoverySnapshot>}
+ */
+async function getFileRecoverySnapshot(projectId, version, pathname) {
+  const { file, snapshot } = await getFileAtVersion(
+    projectId,
+    version,
+    pathname
+  )
+  const ranges = await loadFileRanges(projectId, file)
+  const editable = file.isEditable() === true
+  const metadata = file.getMetadata()
+
+  return {
+    ...ranges,
+    editable,
+    content: editable
+      ? (file.getContent({ filterTrackedDeletes: true }) ?? null)
+      : null,
+    timestamp: snapshot.getTimestamp()?.toISOString() ?? null,
+    metadata: _.isEmpty(metadata) ? null : metadata,
   }
+}
+
+/**
+ * @param {string} projectId
+ * @param {CoreFile} file
+ * @returns {Promise<RangesSnapshot>}
+ */
+async function loadFileRanges(projectId, file) {
   if (!file.isEditable()) {
-    // A binary file has no tracked changes or comments
-    return {
-      changes: [],
-      comments: [],
-    }
+    return { changes: [], comments: [] }
   }
   const historyId = await WebApiManager.promises.getHistoryId(projectId)
   await file.load('eager', HistoryStoreManager.getBlobStore(historyId))
-
-  // Use the utility function from overleaf-editor-core
-  const { changes, comments } = Core.getDocUpdaterCompatibleRanges(file)
-  return { changes, comments }
+  return Core.getDocUpdaterCompatibleRanges(file)
 }
 
 /**
@@ -96,15 +128,7 @@ async function getRangesSnapshot(projectId, version, pathname) {
  * @returns {Promise<{metadata: any}>}
  */
 async function getFileMetadataSnapshot(projectId, version, pathname) {
-  const snapshot = await _getSnapshotAtVersion(projectId, version)
-  const file = snapshot.getFile(pathname)
-  if (!file) {
-    throw new Errors.NotFoundError(`${pathname} not found`, {
-      projectId,
-      version,
-      pathname,
-    })
-  }
+  const { file } = await getFileAtVersion(projectId, version, pathname)
   const rawMetadata = file.getMetadata()
   const metadata = _.isEmpty(rawMetadata) ? undefined : rawMetadata
 
@@ -273,6 +297,7 @@ async function _loadFilesLimit(snapshot, kind, blobStore) {
 // EXPORTS
 
 const getChangesInChunkSinceCb = callbackify(getChangesInChunkSince)
+const getFileRecoverySnapshotCb = callbackify(getFileRecoverySnapshot)
 const getFileSnapshotStreamCb = callbackify(getFileSnapshotStream)
 const getProjectSnapshotCb = callbackify(getProjectSnapshot)
 const getLatestSnapshotCb = callbackify(getLatestSnapshot)
@@ -287,6 +312,7 @@ const getPathsAtVersionCb = callbackify(getPathsAtVersion)
 export {
   getLatestSnapshotFromChunk,
   getChangesInChunkSinceCb as getChangesInChunkSince,
+  getFileRecoverySnapshotCb as getFileRecoverySnapshot,
   getFileSnapshotStreamCb as getFileSnapshotStream,
   getProjectSnapshotCb as getProjectSnapshot,
   getFileMetadataSnapshotCb as getFileMetadataSnapshot,
@@ -299,6 +325,7 @@ export {
 
 export const promises = {
   getChangesInChunkSince,
+  getFileRecoverySnapshot,
   getFileSnapshotStream,
   getProjectSnapshot,
   getLatestSnapshot,

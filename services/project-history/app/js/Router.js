@@ -25,6 +25,21 @@ export function initialize(app) {
 
   app.post('/project/:project_id/flush', HttpController.flushProject)
 
+  app.post(
+    '/project/:project_id/history-publication/reconcile',
+    HttpController.reconcileHistoryPublication
+  )
+
+  app.post(
+    '/project/:project_id/retirement/:operation_id/reconcile',
+    HttpController.reconcileRetirementHistory
+  )
+
+  app.get(
+    '/project/:project_id/retirement-ready',
+    HttpController.getRetirementReadiness
+  )
+
   app.get(
     '/project/:project_id/resync-pending',
     HttpController.getResyncPending
@@ -62,6 +77,11 @@ export function initialize(app) {
   app.get(
     '/project/:project_id/ranges/version/:version/:pathname',
     HttpController.getRangesSnapshot
+  )
+
+  app.get(
+    '/project/:project_id/recovery/version/:version/:pathname',
+    HttpController.getFileRecoverySnapshot
   )
 
   app.get(

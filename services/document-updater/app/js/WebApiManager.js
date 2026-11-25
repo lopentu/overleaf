@@ -1,8 +1,43 @@
 // @ts-check
 const Settings = require('@overleaf/settings')
-const { fetchNothing } = require('@overleaf/fetch-utils')
+const { fetchJson, fetchNothing } = require('@overleaf/fetch-utils')
+const { z } = require('@overleaf/validation-tools')
 
 const MAX_HTTP_REQUEST_LENGTH = 5000
+const retirementDecision = z.object({
+  status: z.enum([
+    'prepared',
+    'committed',
+    'aborted',
+    'missing',
+    'conflict',
+    'unknown',
+  ]),
+})
+
+/** @param {import('./DocumentWriterSeal').SealOwner} owner */
+async function getRetirementDecision({
+  projectId,
+  docId,
+  operationId,
+  version,
+}) {
+  const url = new URL(
+    `/project/${projectId}/doc/${docId}/retirement/${operationId}/lookup`,
+    Settings.apis.web.url
+  )
+  return retirementDecision.parse(
+    await fetchJson(url, {
+      method: 'POST',
+      json: { version },
+      basicAuth: {
+        user: Settings.apis.web.user,
+        password: Settings.apis.web.pass,
+      },
+      signal: AbortSignal.timeout(MAX_HTTP_REQUEST_LENGTH),
+    })
+  ).status
+}
 
 /**
  * @param {string} projectId
@@ -40,6 +75,7 @@ async function notifyTrackChangesRejected(
 
 module.exports = {
   promises: {
+    getRetirementDecision,
     notifyTrackChangesRejected,
   },
 }

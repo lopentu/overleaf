@@ -986,6 +986,11 @@ async function initialize(webRouter, privateApiRouter, publicApiRouter) {
     DocumentController.setDocument
   )
   privateApiRouter.post(
+    '/project/:Project_id/doc/:doc_id/retirement/:operation_id/lookup',
+    AuthenticationController.requirePrivateApiAuth(),
+    DocumentController.getRetirementDecision
+  )
+  privateApiRouter.post(
     '/project/:Project_id/doc/:doc_id/changes/reject',
     AuthenticationController.requirePrivateApiAuth(),
     DocumentController.trackChangesRejected
@@ -1312,9 +1317,12 @@ async function initialize(webRouter, privateApiRouter, publicApiRouter) {
     )
   }
 
-  webRouter.get(['/learn*', '/blog*', '/latex*', '/for/*', '/contact*'], (req, res) => {
-    res.redirect(301, `https://www.overleaf.com${req.originalUrl}`)
-  })
+  webRouter.get(
+    ['/learn*', '/blog*', '/latex*', '/for/*', '/contact*'],
+    (req, res) => {
+      res.redirect(301, `https://www.overleaf.com${req.originalUrl}`)
+    }
+  )
 
   webRouter.get('/unsupported-browser', renderUnsupportedBrowserPage)
 

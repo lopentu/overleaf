@@ -11,6 +11,9 @@ const History = core.History
 
 const assert = require('./assert')
 const chunkStore = require('./chunk_store')
+const {
+  hasHistoryActivationReceipts,
+} = require('./chunk_store/mongo_activation_receipts')
 const { BlobStore } = require('./blob_store')
 const { InvalidChangeError } = require('./errors')
 const { getContentHash } = require('./content_hash')
@@ -19,7 +22,7 @@ function countChangeBytes(change) {
   // Note: This is not quite accurate, because the raw change may contain raw
   // file info (or conceivably even content) that will not be included in the
   // actual stored object.
-  return Buffer.byteLength(JSON.stringify(change.toRaw()))
+  return Buffer.byteLength(JSON.stringify(change.toStorageRaw()))
 }
 
 function totalChangeBytes(changes) {
@@ -78,6 +81,8 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
    */
   let currentSnapshot
 
+  /** @type {import('./chunk_store').ChunkRevision | undefined} */
+  let predecessor
   let originalEndVersion
   let changesToPersist
   let resyncNeeded = false
@@ -126,10 +131,11 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
         break
       }
 
+      const tagged = change.getHistoryPublication() != null
       for (const operation of change.iterativelyApplyTo(currentSnapshot, {
         strict: true,
       })) {
-        await validateContentHash(operation)
+        await validateContentHash(operation, tagged)
       }
 
       chunk.pushChanges([change])
@@ -146,8 +152,9 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
    * For now, this checks content hashes when they are provided.
    *
    * @param {core.Operation} operation
+   * @param {boolean} tagged
    */
-  async function validateContentHash(operation) {
+  async function validateContentHash(operation, tagged) {
     if (operation instanceof core.EditFileOperation) {
       const editOperation = operation.getOperation()
       if (
@@ -168,6 +175,16 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
         const actualHash = content != null ? getContentHash(content) : null
         logger.debug({ expectedHash, actualHash }, 'validating content hash')
         if (actualHash !== expectedHash) {
+          // A durable receipt cannot carry the legacy best-effort resync hint.
+          if (tagged) {
+            throw new InvalidChangeError(
+              'tagged history change content hash mismatch',
+              {
+                projectId,
+                path,
+              }
+            )
+          }
           // only log a warning on the first mismatch in each persistChanges call
           if (!resyncNeeded) {
             logger.warn(
@@ -186,9 +203,10 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
   }
 
   async function loadLatestChunk() {
-    const latestChunk = await chunkStore.loadLatest(projectId, {
-      persistedOnly: true,
-    })
+    const { chunk: latestChunk, chunkMetadata } =
+      await chunkStore.loadLatestWithMetadata(projectId, {
+        persistedOnly: true,
+      })
 
     currentChunk = latestChunk
     originalEndVersion = latestChunk.getEndVersion()
@@ -197,6 +215,19 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
         clientEndVersion,
         originalEndVersion
       )
+    }
+
+    if (
+      hasHistoryActivationReceipts(latestChunk) ||
+      changesToPersist.some(change => change.getHistoryPublication())
+    ) {
+      if (chunkMetadata.endVersion !== originalEndVersion) {
+        throw new chunkStore.ChunkVersionConflictError(
+          'selected chunk end does not match stored history',
+          { projectId }
+        )
+      }
+      predecessor = chunkMetadata
     }
 
     currentSnapshot = latestChunk.getSnapshot().clone()
@@ -212,7 +243,16 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
 
     checkElapsedTime(timer)
 
-    await chunkStore.update(projectId, currentChunk, earliestChangeTimestamp)
+    if (predecessor) {
+      predecessor = await chunkStore.update(
+        projectId,
+        currentChunk,
+        earliestChangeTimestamp,
+        predecessor
+      )
+    } else {
+      await chunkStore.update(projectId, currentChunk, earliestChangeTimestamp)
+    }
   }
 
   async function createNewChunksAsNeeded() {
@@ -225,8 +265,17 @@ async function persistChanges(projectId, allChanges, limits, clientEndVersion) {
       const changesPushed = await fillChunk(chunk, changesToPersist)
       if (changesPushed) {
         checkElapsedTime(timer)
+        if (predecessor) {
+          predecessor = await chunkStore.create(
+            projectId,
+            chunk,
+            earliestChangeTimestamp,
+            predecessor
+          )
+        } else {
+          await chunkStore.create(projectId, chunk, earliestChangeTimestamp)
+        }
         currentChunk = chunk
-        await chunkStore.create(projectId, chunk, earliestChangeTimestamp)
       } else {
         throw new Error('failed to fill empty chunk')
       }

@@ -7,6 +7,11 @@ const metrics = require('./Metrics')
 const Errors = require('./Errors')
 const crypto = require('node:crypto')
 const { docIsTooLarge } = require('./Limits')
+const {
+  createDocumentSealCommand,
+  createDocumentReceiptCommands,
+  createDocumentFlushCommands,
+} = require('./DocumentWriterSeal')
 
 const rclient = RedisWrapper.createClient(Settings.redis.documentupdater)
 
@@ -27,8 +32,142 @@ const MEGABYTES = 1024 * 1024
 const MAX_RANGES_SIZE = 3 * MEGABYTES
 
 const keys = Settings.redis.documentupdater.key_schema
+const callDocumentSeal = createDocumentSealCommand(rclient, keys)
+const queueReceipts = createDocumentReceiptCommands(rclient, keys)
+const sealedFlush = createDocumentFlushCommands(rclient, keys)
+
+function writerSealEnabled() {
+  return Settings.documentupdater?.enableRetirementWriterSeal === true
+}
+
+/** @param {string} operation @param {string} reply */
+function writerSealRejected(operation, reply) {
+  return new OError(`Document writer guard refused ${operation}: ${reply}`)
+}
+
+/** @typedef {import('./DocumentWriterSeal').SealOwner} SealOwner */
+/** @typedef {import('./DocumentWriterSeal').QueueApplicationIdentity} QueueApplicationIdentity */
+/** @typedef {{identity: QueueApplicationIdentity, previousVersion: number, historyEntries: string[]}} QueuedApplication */
+
+/** @param {'seal' | 'evict' | 'release'} operation @param {SealOwner} owner */
+async function changeDocumentSeal(operation, owner) {
+  if (!writerSealEnabled()) throw new OError('Document writer seal is disabled')
+  return callDocumentSeal(
+    owner.docId,
+    operation,
+    owner.projectId,
+    owner.operationId,
+    owner.version
+  )
+}
+
+async function removeDocumentIndexes(projectId, docId) {
+  // Keep the project index and state invalidation in the same project slot.
+  const multi = rclient.multi()
+  multi.srem(keys.docsInProject({ project_id: projectId }), docId)
+  multi.del(keys.projectState({ project_id: projectId }))
+  await multi.exec()
+  await rclient.srem(keys.historyRangesSupport(), docId)
+}
 
 const RedisManager = {
+  /** @template T @param {string} docId @param {(reservationId: string) => Promise<T>} read */
+  async withDocumentLoadReservation(docId, read) {
+    if (!writerSealEnabled())
+      throw new OError('Document writer seal is disabled')
+    const reservationId = crypto.randomUUID()
+    const reply = await callDocumentSeal(docId, 'begin-load', reservationId)
+    if (reply !== 'reserved') throw writerSealRejected('cold load', reply)
+    async function releaseReservation() {
+      const released = await callDocumentSeal(docId, 'end-load', reservationId)
+      if (released !== 'released')
+        throw writerSealRejected('cold-load release', released)
+    }
+    let result
+    try {
+      result = await read(reservationId)
+    } catch (readError) {
+      try {
+        await releaseReservation()
+      } catch (releaseError) {
+        throw new AggregateError(
+          [readError, releaseError],
+          'Document cold load and reservation release failed',
+          { cause: releaseError }
+        )
+      }
+      throw readError
+    }
+    await releaseReservation()
+    return result
+  },
+
+  /** @param {SealOwner} owner */
+  sealDocumentWrite(owner) {
+    return changeDocumentSeal('seal', owner)
+  },
+
+  /**
+   * The owner must retain the seal until these index removals are acknowledged.
+   * If a reply is lost, the same owner can retry the Lua eviction and the
+   * idempotent project and global index removals.
+   *
+   * @param {SealOwner} owner
+   */
+  async evictSealedDocumentCache(owner) {
+    const sealOwner = { ...owner }
+    const result = await changeDocumentSeal('evict', sealOwner)
+    if (result === 'evicted') {
+      await removeDocumentIndexes(sealOwner.projectId, sealOwner.docId)
+    }
+    return result
+  },
+
+  /** @param {SealOwner} owner */
+  releaseDocumentWriteSeal(owner) {
+    return changeDocumentSeal('release', owner)
+  },
+
+  /**
+   * @template T
+   * @param {SealOwner} owner
+   * @param {(snapshot: {
+   *   lines: string[] | import('overleaf-editor-core/lib/types').StringFileRawData,
+   *   ranges: import('./types').Ranges,
+   *   lastUpdatedAt: string | null,
+   *   lastUpdatedBy: string | null
+   * }) => Promise<T>} persist
+   * @returns {Promise<T>}
+   */
+  async withSealedDocumentFlush(owner, persist) {
+    if (!writerSealEnabled())
+      throw new OError('Document writer seal is disabled')
+    const sealOwner = { ...owner }
+    const snapshot = await sealedFlush.capture(sealOwner)
+    const [rawLines, rawRanges, , lastUpdatedAt, lastUpdatedBy] = snapshot
+    let lines, ranges
+    try {
+      lines = JSON.parse(rawLines)
+      ranges = RedisManager._deserializeRanges(rawRanges) ?? {}
+    } catch {
+      throw new OError('Invalid sealed document snapshot')
+    }
+    const hasText = Array.isArray(lines)
+      ? lines.every(line => typeof line === 'string')
+      : typeof lines?.content === 'string'
+    if (!hasText || typeof ranges !== 'object' || Array.isArray(ranges)) {
+      throw new OError('Invalid sealed document snapshot')
+    }
+    const result = await persist({
+      lines,
+      ranges,
+      lastUpdatedAt,
+      lastUpdatedBy,
+    })
+    await sealedFlush.complete(sealOwner, snapshot)
+    return result
+  },
+
   async putDocInMemory(
     projectId,
     docId,
@@ -38,8 +177,16 @@ const RedisManager = {
     resolvedCommentIds,
     pathname,
     projectHistoryId,
-    historyRangesSupport
+    historyRangesSupport,
+    reservationId
   ) {
+    const guard = writerSealEnabled()
+    if (guard) {
+      if (!reservationId)
+        throw new OError('Document-load reservation is required')
+      const claim = await callDocumentSeal(docId, 'check-load', reservationId)
+      if (claim !== 'reserved') throw writerSealRejected('cold load', claim)
+    }
     const timer = new metrics.Timer('redis.put-doc')
     const shareJSTextOT = Array.isArray(docLines)
     const docLinesArray = docLines
@@ -96,6 +243,26 @@ const RedisManager = {
       })
     }
 
+    if (guard) {
+      const result = await callDocumentSeal(
+        docId,
+        'put',
+        reservationId,
+        projectId,
+        version,
+        docLines,
+        docHash,
+        ranges ?? '',
+        pathname ?? '',
+        projectHistoryId ?? '',
+        historyRangesSupport ? 1 : 0,
+        ...(historyRangesSupport ? resolvedCommentIds : [])
+      )
+      if (result !== 'written') throw writerSealRejected('cache load', result)
+      timer.done()
+      return
+    }
+
     // Make sure that this MULTI operation only operates on doc
     // specific keys, i.e. keys that have the doc id in curly braces.
     // The curly braces identify a hash key for Redis and ensures that
@@ -143,7 +310,7 @@ const RedisManager = {
     // The curly braces identify a hash key for Redis and ensures that
     // the MULTI's operations are all done on the same node in a
     // cluster environment.
-    let multi = rclient.multi()
+    const multi = rclient.multi()
     multi.strlen(keys.docLines({ doc_id: docId }))
     multi.del(
       keys.docLines({ doc_id: docId }),
@@ -165,17 +332,7 @@ const RedisManager = {
       metrics.summary('redis.docLines', length, { status: 'del' })
     }
 
-    // Make sure that this MULTI operation only operates on project
-    // specific keys, i.e. keys that have the project id in curly braces.
-    // The curly braces identify a hash key for Redis and ensures that
-    // the MULTI's operations are all done on the same node in a
-    // cluster environment.
-    multi = rclient.multi()
-    multi.srem(keys.docsInProject({ project_id: projectId }), docId)
-    multi.del(keys.projectState({ project_id: projectId }))
-    await multi.exec()
-
-    await rclient.srem(keys.historyRangesSupport(), docId)
+    await removeDocumentIndexes(projectId, docId)
   },
 
   async checkOrSetProjectState(projectId, newState) {
@@ -359,6 +516,17 @@ const RedisManager = {
 
   DOC_OPS_TTL: 60 * minutes,
   DOC_OPS_MAX_LENGTH: 100,
+
+  /**
+   * @param {string} projectId
+   * @param {string} docId
+   * @param {QueueApplicationIdentity} identity
+   */
+  async getQueuedUpdateReceipt(projectId, docId, identity) {
+    return await queueReceipts.getReceipt(projectId, docId, identity)
+  },
+
+  /** @param {QueuedApplication} [application] */
   async updateDocument(
     projectId,
     docId,
@@ -366,20 +534,27 @@ const RedisManager = {
     newVersion,
     appliedOps,
     ranges,
-    updateMeta
+    updateMeta,
+    application
   ) {
     if (appliedOps == null) {
       appliedOps = []
     }
     const shareJSTextOT = Array.isArray(docLines)
-    const currentVersion = await RedisManager.getDocVersion(docId)
-    if (currentVersion + appliedOps.length !== newVersion) {
-      throw new OError('Version mismatch. doc is corrupted', {
-        docId,
-        currentVersion,
-        newVersion,
-        opsLength: appliedOps.length,
-      })
+    const guard = writerSealEnabled()
+    if (application !== undefined && !guard) {
+      throw new OError('Queued document applications require the writer seal')
+    }
+    if (!guard) {
+      const currentVersion = await RedisManager.getDocVersion(docId)
+      if (currentVersion + appliedOps.length !== newVersion) {
+        throw new OError('Version mismatch. doc is corrupted', {
+          docId,
+          currentVersion,
+          newVersion,
+          opsLength: appliedOps.length,
+        })
+      }
     }
 
     const jsonOps = appliedOps.map(op => JSON.stringify(op))
@@ -435,6 +610,42 @@ const RedisManager = {
     if (jsonRanges && jsonRanges.indexOf('\u0000') !== -1) {
       // this check was added to catch memory corruption in JSON.stringify
       throw new OError('null bytes found in ranges', { docId })
+    }
+
+    if (application !== undefined) {
+      return await queueReceipts.apply(projectId, docId, application.identity, {
+        previousVersion: application.previousVersion,
+        version: newVersion,
+        historyEntries: application.historyEntries,
+        lines: newDocLines,
+        hash: newHash,
+        ranges: jsonRanges ?? '',
+        timestamp: Date.now(),
+        author: updateMeta?.user_id ?? '',
+        maxOps: RedisManager.DOC_OPS_MAX_LENGTH,
+        opsTtl: RedisManager.DOC_OPS_TTL,
+        documentOps: jsonOps,
+      })
+    }
+
+    if (guard) {
+      const result = await callDocumentSeal(
+        docId,
+        'update',
+        projectId,
+        newVersion - appliedOps.length,
+        newVersion,
+        newDocLines,
+        newHash,
+        jsonRanges ?? '',
+        Date.now(),
+        updateMeta?.user_id ?? '',
+        RedisManager.DOC_OPS_MAX_LENGTH,
+        RedisManager.DOC_OPS_TTL,
+        ...jsonOps
+      )
+      if (result !== 'written') throw writerSealRejected('cache update', result)
+      return
     }
 
     // Make sure that this MULTI operation only operates on doc

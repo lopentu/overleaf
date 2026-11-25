@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 const http = require('node:http')
 const https = require('node:https')
 
@@ -126,6 +125,11 @@ const settings = {
   max_doc_length: 2 * 1024 * 1024, // 2mb
 
   // should be set to the same same as dispatcherCount in document updater
+  documentupdater: {
+    enableRetirementQueue:
+      process.env.OVERLEAF_ENABLE_GUARDED_DOCUMENT_RETIREMENT === 'true',
+  },
+
   pendingUpdateListShardCount: parseInt(
     process.env.PENDING_UPDATE_LIST_SHARD_COUNT || 10,
     10

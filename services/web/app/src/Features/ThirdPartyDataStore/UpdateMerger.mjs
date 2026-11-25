@@ -3,6 +3,8 @@ import _ from 'lodash'
 import fsPromises from 'node:fs/promises'
 import fs from 'node:fs'
 import logger from '@overleaf/logger'
+import OError from '@overleaf/o-error'
+import { blobHashFromString } from 'overleaf-editor-core/lib/blob_utils.js'
 import EditorController from '../Editor/EditorController.mjs'
 import FileTypeManager from '../Uploads/FileTypeManager.mjs'
 import ProjectEntityHandler from '../Project/ProjectEntityHandler.mjs'
@@ -54,11 +56,7 @@ async function _findExistingFileType(projectId, path) {
   return null
 }
 
-async function _determineFileType(projectId, path, fsPath) {
-  // check if there is an existing file with the same path (we either need
-  // to overwrite it or delete it)
-  const existingFileType = await _findExistingFileType(projectId, path)
-
+async function _determineFileType(path, fsPath, existingFileType) {
   // determine whether the update should create a doc or binary file
   const { binary, encoding } = await FileTypeManager.promises.getType(
     path,
@@ -88,31 +86,110 @@ async function _determineFileType(projectId, path, fsPath) {
   }
 }
 
-async function _mergeUpdate(userId, projectId, path, fsPath, source) {
-  const fileType = await _determineFileType(projectId, path, fsPath)
+/** @typedef {{docId: string, version: number}} ExpectedDocument */
+/** @typedef {ExpectedDocument & {operationId: string, sourceCommit: string, blobHash: string}} ExpectedDocumentReplacement */
+/** @typedef {{fileId: string, rev: number | undefined}} ExpectedFile */
+/** @typedef {ExpectedDocument | ExpectedDocumentReplacement | ExpectedFile | null} ExpectedEntity */
+/** @typedef {(ExpectedDocument & {operationId?: string}) | ExpectedFile} ExpectedDeletion */
+
+/**
+ * @param {ExpectedDocument | ExpectedDocumentReplacement} target
+ * @returns {target is ExpectedDocumentReplacement}
+ */
+function hasGuardedBinaryReplacement(target) {
+  const guard = Settings.documentupdater
+  return (
+    guard?.enableRetirementBinaryConversion === true &&
+    guard.enableRetirementQueue === true &&
+    guard.enableRetirementWriterSeal === true &&
+    'operationId' in target &&
+    typeof target.operationId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      target.operationId
+    ) &&
+    typeof target.sourceCommit === 'string' &&
+    /^[0-9a-f]{40}$/.test(target.sourceCommit) &&
+    typeof target.blobHash === 'string' &&
+    /^[0-9a-f]{40}$/.test(target.blobHash)
+  )
+}
+
+/**
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {string} path
+ * @param {string} fsPath
+ * @param {string} source
+ * @param {ExpectedEntity} [expectedEntity] null requires an unused path
+ */
+async function _mergeUpdate(
+  userId,
+  projectId,
+  path,
+  fsPath,
+  source,
+  expectedEntity
+) {
+  const expectedDocument = expectedEntity && 'docId' in expectedEntity
+  let existingFileType
+  if (expectedEntity === undefined) {
+    existingFileType = await _findExistingFileType(projectId, path)
+  } else if (expectedEntity === null) {
+    existingFileType = null
+  } else {
+    existingFileType = expectedDocument ? 'doc' : 'file'
+  }
+  const fileType = await _determineFileType(path, fsPath, existingFileType)
 
   if (fileType === 'file') {
+    const replacement =
+      expectedDocument &&
+      source === 'github' &&
+      hasGuardedBinaryReplacement(expectedEntity)
+        ? expectedEntity
+        : null
+    if (expectedDocument && !replacement) {
+      throw new OError(
+        'GitHub sync cannot replace a guarded editable document with a binary file.',
+        {
+          status: 409,
+        }
+      )
+    }
     const { file, folder } = await _processFile(
       projectId,
       fsPath,
       path,
       source,
-      userId
+      userId,
+      expectedEntity
     )
+    if (replacement && file.hash !== replacement.blobHash) {
+      throw new OError(
+        'The binary replacement did not match the GitHub blob.',
+        {
+          status: 409,
+        }
+      )
+    }
     return {
       projectId,
       entityType: 'file',
       entityId: file._id,
       rev: file.rev,
       folderId: folder._id,
+      ...(replacement ? { contentHash: file.hash } : {}),
     }
   } else if (fileType === 'doc') {
-    const { doc, folder } = await _processDoc(
+    const { doc, folder, contentHash } = await _processDoc(
       projectId,
       userId,
       fsPath,
       path,
-      source
+      source,
+      expectedDocument
+        ? { docId: expectedEntity.docId, version: expectedEntity.version }
+        : expectedEntity
     )
     return {
       projectId,
@@ -120,21 +197,31 @@ async function _mergeUpdate(userId, projectId, path, fsPath, source) {
       entityId: doc._id,
       rev: doc.rev,
       folderId: folder._id,
+      ...(contentHash === undefined ? {} : { contentHash }),
     }
   } else {
     throw new Error('unrecognized file')
   }
 }
 
-async function deleteUpdate(userId, projectId, path, source) {
+/**
+ * @param {string} userId
+ * @param {string} projectId
+ * @param {string} path
+ * @param {string} source
+ * @param {ExpectedDeletion} [expectedEntity]
+ */
+async function deleteUpdate(userId, projectId, path, source, expectedEntity) {
   try {
     return await EditorController.promises.deleteEntityWithPath(
       projectId,
       path,
       source,
-      userId
+      userId,
+      ...(expectedEntity !== undefined ? [expectedEntity] : [])
     )
   } catch (err) {
+    if (expectedEntity !== undefined) throw err
     logger.warn(
       { err, userId, projectId, path, source },
       'failed to delete entity'
@@ -142,27 +229,44 @@ async function deleteUpdate(userId, projectId, path, source) {
   }
 }
 
-async function _processDoc(projectId, userId, fsPath, path, source) {
+async function _processDoc(
+  projectId,
+  userId,
+  fsPath,
+  path,
+  source,
+  expectedDocument
+) {
   const docLines = await _readFileIntoTextArray(fsPath)
   logger.debug({ docLines }, 'processing doc update from tpds')
-  const doc = await EditorController.promises.upsertDocWithPath(
+  const result = await EditorController.promises.upsertDocWithPath(
     projectId,
     path,
     docLines,
     source,
-    userId
+    userId,
+    ...(expectedDocument !== undefined ? [expectedDocument] : [])
   )
-  return doc
+  if (expectedDocument === undefined) return result
+  return { ...result, contentHash: blobHashFromString(docLines.join('\n')) }
 }
 
-async function _processFile(projectId, fsPath, path, source, userId) {
+async function _processFile(
+  projectId,
+  fsPath,
+  path,
+  source,
+  userId,
+  expectedFile
+) {
   const { file, folder } = await EditorController.promises.upsertFileWithPath(
     projectId,
     path,
     fsPath,
     null,
     source,
-    userId
+    userId,
+    ...(expectedFile !== undefined ? [expectedFile] : [])
   )
   return { file, folder }
 }
@@ -192,7 +296,8 @@ export default {
   createFolder: callbackify(createFolder),
   promises: {
     mergeUpdate,
-    _mergeUpdate, // called by GitBridgeHandler
+    _mergeUpdate, // applies a previously staged update
+    writeUpdateToDisk,
     deleteUpdate,
     createFolder,
   },

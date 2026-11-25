@@ -55,12 +55,12 @@ async function readCsv(filename) {
 
 async function getHistory(chunk) {
   const rawHistory = await historyStore.loadRaw(chunk.projectId, chunk.id)
-  const history = History.fromRaw(rawHistory)
+  const history = History.fromStorageRaw(rawHistory)
   return history
 }
 
 async function storeHistory(chunk, history) {
-  const rawHistory = history.toRaw()
+  const rawHistory = history.toStorageRaw()
   await historyStore.storeRaw(chunk.projectId, chunk.id, rawHistory)
 }
 

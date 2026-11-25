@@ -1,6 +1,7 @@
 // @ts-check
 
 const { callbackifyAll } = require('@overleaf/promise-utils')
+const Settings = require('@overleaf/settings')
 const ProjectLockManager = require('./ProjectLockManager')
 const RedisManager = require('./RedisManager')
 const ProjectHistoryRedisManager = require('./ProjectHistoryRedisManager')
@@ -18,9 +19,13 @@ const Profiler = require('./Profiler')
 const { isInsert, isDelete, getDocLength, computeDocHash } = require('./Utils')
 const HistoryOTUpdateManager = require('./HistoryOTUpdateManager')
 const { buildSparseChangePreviews } = require('./TrackedChangePreview')
+const QueuedDocumentApply = require('./QueuedDocumentApply')
+const QueuedProjectUpdates = require('./QueuedProjectUpdates')
 
 /**
  * @import { Ranges, Update, HistoryUpdate } from "./types"
+ * @import { GuardedProcessingContext, QueueApplicationIdentity } from "./QueuedDocumentApply"
+ * @import { Dependencies as QueuedBatchDependencies } from "./QueuedProjectUpdates"
  */
 
 const UpdateManager = {
@@ -71,10 +76,18 @@ const UpdateManager = {
     }
     for (const update of updates) {
       const docId = update.doc
-      if (HistoryOTUpdateManager.isHistoryOTEditOperationUpdate(update)) {
-        await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
-      } else {
-        await UpdateManager.applyUpdate(projectId, docId, update)
+      try {
+        if (HistoryOTUpdateManager.isHistoryOTEditOperationUpdate(update)) {
+          await HistoryOTUpdateManager.applyUpdate(projectId, docId, update)
+        } else {
+          await UpdateManager.applyUpdate(projectId, docId, update)
+        }
+      } catch (error) {
+        if (!(error instanceof Errors.WebDocumentNotFoundError)) throw error
+        // The client was already notified. The rest of the batch was also
+        // removed from Redis and still needs to be processed.
+        profile.log('skipMissingProjectDoc')
+        continue
       }
       profile.log('applyProjectUpdate')
     }
@@ -95,22 +108,170 @@ const UpdateManager = {
   },
 
   /**
+   * Process one recoverable batch using the durable history proof supplied
+   * by the caller. Release the project lock when history is still pending.
+   *
+   * @param {string} projectId
+   * @param {Omit<QueuedBatchDependencies, 'apply'>} dependencies
+   */
+  async processGuardedQueuedBatchWithLock(projectId, dependencies) {
+    return await UpdateManager.withGuardedProjectLock(projectId, lock =>
+      UpdateManager.processGuardedQueuedBatchUnderLock(
+        projectId,
+        lock,
+        dependencies
+      )
+    )
+  },
+
+  /**
+   * @template T
+   * @param {string} projectId
+   * @param {(lock: string) => Promise<T>} operation
+   * @returns {Promise<T>}
+   */
+  async withGuardedProjectLock(projectId, operation) {
+    const lock = await ProjectLockManager.promises.getLock(projectId)
+    try {
+      const result = await operation(lock)
+      await ProjectLockManager.promises.extendLock(projectId, lock)
+      return result
+    } finally {
+      await ProjectLockManager.promises
+        .releaseLock(projectId, lock)
+        .catch(err => {
+          logger.warn(
+            { err, projectId },
+            'failed to release guarded project lock'
+          )
+        })
+    }
+  },
+
+  /**
+   * @param {string} projectId
+   * @param {string} lock
+   * @param {Omit<QueuedBatchDependencies, 'apply'>} dependencies
+   */
+  async processGuardedQueuedBatchUnderLock(projectId, lock, dependencies) {
+    return await QueuedProjectUpdates.processQueuedBatch(
+      { ...dependencies, apply: UpdateManager.applyQueuedUpdate },
+      projectId,
+      () => ProjectLockManager.promises.extendLock(projectId, lock)
+    )
+  },
+
+  /**
+   * @param {string} projectId
+   * @param {string} lock
+   * @param {Profiler} profile
+   * @returns {Promise<'legacy' | 'guarded'>}
+   */
+  async drainProjectBeforeOperationUnderLock(projectId, lock, profile) {
+    try {
+      await UpdateManager.fetchAndApplyProjectUpdates(projectId, profile)
+      return 'legacy'
+    } catch (error) {
+      if (!(error instanceof Errors.ProjectUpdateQueueGuardedError)) throw error
+    }
+
+    if (
+      Settings.documentupdater?.enableRetirementQueue === true &&
+      Settings.documentupdater?.enableRetirementWriterSeal === true
+    ) {
+      for (
+        let attempt = 0;
+        attempt < QueuedProjectUpdates.MAX_PROJECT_DRAIN_ATTEMPTS;
+        attempt++
+      ) {
+        const result = await UpdateManager.processGuardedQueuedBatchUnderLock(
+          projectId,
+          lock,
+          {
+            queue: RealTimeRedisManager.guardedProjectQueue,
+            ensureHistoryDurable:
+              HistoryManager.promises.ensureQueuedHistoryDurable,
+          }
+        )
+        if (result === 'empty') return 'guarded'
+        if (result !== 'acknowledged') break
+      }
+    }
+    throw new Errors.ProjectStateChangedError(
+      'project updates have not drained'
+    )
+  },
+
+  /**
+   * @param {string} projectId
+   * @param {string} rawUpdate
+   * @param {QueueApplicationIdentity} identity
+   */
+  async applyQueuedUpdate(projectId, rawUpdate, identity) {
+    /** @type {Update | null} */
+    const update = JSON.parse(rawUpdate)
+    if (
+      !update ||
+      typeof update.doc !== 'string' ||
+      !update.doc ||
+      !Number.isSafeInteger(update.v) ||
+      update.v < 0 ||
+      !Array.isArray(update.op)
+    ) {
+      throw new Error('invalid queued editor update')
+    }
+
+    const processing = { identity }
+    const receipt = HistoryOTUpdateManager.isHistoryOTEditOperationUpdate(
+      update
+    )
+      ? await HistoryOTUpdateManager.applyUpdate(
+          projectId,
+          update.doc,
+          update,
+          processing
+        )
+      : await UpdateManager.applyUpdate(
+          projectId,
+          update.doc,
+          update,
+          processing
+        )
+
+    if (!receipt)
+      throw new Error('queued editor update did not return a receipt')
+    return receipt
+  },
+
+  /**
    * Apply an update to the given document
    *
    * @param {string} projectId
    * @param {string} docId
    * @param {Update} update
+   * @param {GuardedProcessingContext} [processing]
    */
-  async applyUpdate(projectId, docId, update) {
+  async applyUpdate(projectId, docId, update, processing) {
     const profile = new Profiler('applyUpdate', {
       project_id: projectId,
       doc_id: docId,
     })
 
-    UpdateManager._sanitizeUpdate(update)
-    profile.log('sanitizeUpdate', { sync: true })
+    if (!processing) UpdateManager._sanitizeUpdate(update)
 
     try {
+      if (processing) {
+        const receipt = await QueuedDocumentApply.getExistingReceipt(
+          projectId,
+          docId,
+          processing
+        )
+        if (receipt) return receipt
+        update = structuredClone(update)
+        UpdateManager._sanitizeUpdate(update)
+      }
+      profile.log('sanitizeUpdate', { sync: true })
+
       let {
         lines,
         version,
@@ -161,28 +322,60 @@ const UpdateManager = {
       )
       profile.log('RangesManager.applyUpdate', { sync: true })
 
-      await RedisManager.promises.updateDocument(
+      /** @param {HistoryUpdate[]} updates */
+      const addHistoryMetadata = updates =>
+        UpdateManager._adjustHistoryUpdatesMetadata(
+          updates,
+          pathname,
+          projectHistoryId,
+          lines,
+          ranges,
+          updatedDocLines,
+          historyRangesSupport
+        )
+
+      let application
+      if (processing) {
+        // History metadata is edited during preparation. The ranges result
+        // shares meta with the original editor operations and broadcasts.
+        const forHistory = historyUpdates.map(op => ({
+          ...op,
+          meta: { ...op.meta },
+        }))
+        addHistoryMetadata(forHistory)
+        application = {
+          identity: processing.identity,
+          previousVersion,
+          historyEntries: forHistory.map(op => JSON.stringify(op)),
+        }
+      }
+      const result = await RedisManager.promises.updateDocument(
         projectId,
         docId,
         updatedDocLines,
         version,
         appliedOps,
         newRanges,
-        update.meta
+        update.meta,
+        ...(application ? [application] : [])
       )
       profile.log('RedisManager.updateDocument')
+      const committed = processing
+        ? QueuedDocumentApply.requireReceipt(result)
+        : null
+      if (committed?.status === 'replayed') return committed.receipt
 
-      UpdateManager._adjustHistoryUpdatesMetadata(
-        historyUpdates,
-        pathname,
-        projectHistoryId,
-        lines,
-        ranges,
-        updatedDocLines,
-        historyRangesSupport
-      )
+      if (Settings.documentupdater?.enableRetirementWriterSeal === true) {
+        ShareJsUpdateManager.publishPersistedOps(
+          projectId,
+          docId,
+          update,
+          appliedOps
+        )
+      }
 
-      if (historyUpdates.length > 0) {
+      if (!processing) addHistoryMetadata(historyUpdates)
+      if (!processing && historyUpdates.length > 0) {
         Metrics.inc('history-queue', 1, { status: 'project-history' })
         try {
           const projectOpsLength =
@@ -202,6 +395,8 @@ const UpdateManager = {
           // Just record the error here and acknowledge the write-op.
           Metrics.inc('history-queue-error')
         }
+      }
+      if (historyUpdates.length > 0) {
         const timestamp = update.meta?.ts || Date.now()
         await RedisManager.promises.recordProjectNotificationTimestamp(
           projectId,
@@ -270,13 +465,18 @@ const UpdateManager = {
           ranges
         )
       }
+      return committed?.receipt
     } catch (error) {
-      RealTimeRedisManager.sendData({
-        project_id: projectId,
-        doc_id: docId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      profile.log('sendData')
+      // A guarded write's failure can mean the reply was lost after commit.
+      // The batch owner must reconcile the receipt before notifying a client.
+      if (!processing) {
+        RealTimeRedisManager.sendData({
+          project_id: projectId,
+          doc_id: docId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        profile.log('sendData')
+      }
       throw error
     } finally {
       profile.end()
@@ -306,8 +506,13 @@ const UpdateManager = {
     profile.log('getProjectLock')
 
     let result
+    let mode
     try {
-      await UpdateManager.fetchAndApplyProjectUpdates(projectId, profile)
+      mode = await UpdateManager.drainProjectBeforeOperationUnderLock(
+        projectId,
+        projectLockValue,
+        profile
+      )
       profile.log('fetchAndApplyProjectUpdates')
 
       await ProjectLockManager.promises.extendLock(projectId, projectLockValue)
@@ -319,6 +524,8 @@ const UpdateManager = {
       await ProjectLockManager.promises.releaseLock(projectId, projectLockValue)
       profile.log('releaseProjectLock').end()
     }
+
+    if (mode === 'guarded') return result
 
     // We held the lock for a while so updates might have queued up
     UpdateManager.continueProcessingUpdatesWithLock(projectId).catch(err => {

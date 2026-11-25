@@ -32,6 +32,7 @@ const BatchBlobStore = require('../batch_blob_store')
 const { BlobStore } = require('../blob_store')
 const { historyStore } = require('../history_store')
 const mongoBackend = require('./mongo')
+const { hasHistoryActivationReceipts } = require('./mongo_activation_receipts')
 const postgresBackend = require('./postgres')
 const redisBackend = require('./redis')
 const {
@@ -43,6 +44,8 @@ const { promiseMapWithLimit } = require('@overleaf/promise-utils')
 /**
  * @import { Change } from 'overleaf-editor-core'
  */
+
+/** @typedef {{id: string, startVersion: number, endVersion: number}} ChunkRevision */
 
 const DEFAULT_DELETE_BATCH_SIZE = parseInt(config.get('maxDeleteKeys'), 10)
 const DEFAULT_DELETE_TIMEOUT_SECS = 3000 // 50 minutes
@@ -183,9 +186,18 @@ async function getLatestChunkMetadata(projectId, opts) {
  * @return {Promise<Chunk>}
  */
 async function loadLatest(projectId, opts = {}) {
+  return (await loadLatestWithMetadata(projectId, opts)).chunk
+}
+
+/**
+ * Return the exact metadata selected to load the object, for a later activation CAS.
+ * @param {string} projectId
+ * @param {{persistedOnly?: boolean}} [opts]
+ */
+async function loadLatestWithMetadata(projectId, opts = {}) {
   const chunkMetadata = await getLatestChunkMetadata(projectId)
   const rawHistory = await historyStore.loadRaw(projectId, chunkMetadata.id)
-  const history = History.fromRaw(rawHistory)
+  const history = History.fromStorageRaw(rawHistory)
 
   if (!opts.persistedOnly) {
     const nonPersistedChanges = await getChunkExtension(
@@ -198,7 +210,10 @@ async function loadLatest(projectId, opts = {}) {
   const blobStore = new BlobStore(projectId)
   const batchBlobStore = new BatchBlobStore(blobStore)
   await lazyLoadHistoryFiles(history, batchBlobStore)
-  return new Chunk(history, chunkMetadata.startVersion)
+  return {
+    chunk: new Chunk(history, chunkMetadata.startVersion),
+    chunkMetadata,
+  }
 }
 
 /**
@@ -240,7 +255,7 @@ async function loadAtVersion(projectId, version, opts = {}) {
     }
   )
   const rawHistory = await historyStore.loadRaw(projectId, chunkRecord.id)
-  const history = History.fromRaw(rawHistory)
+  const history = History.fromStorageRaw(rawHistory)
   const startVersion = chunkRecord.endVersion - history.countChanges()
 
   if (!opts.persistedOnly) {
@@ -281,7 +296,7 @@ async function loadAtTimestamp(projectId, timestamp, opts = {}) {
 
   const chunkRecord = await backend.getChunkForTimestamp(projectId, timestamp)
   const rawHistory = await historyStore.loadRaw(projectId, chunkRecord.id)
-  const history = History.fromRaw(rawHistory)
+  const history = History.fromStorageRaw(rawHistory)
   const startVersion = chunkRecord.endVersion - history.countChanges()
 
   if (!opts.persistedOnly) {
@@ -347,23 +362,59 @@ async function getChangesSinceVersion(projectId, since) {
 }
 
 /**
+ * @param {typeof mongoBackend | typeof postgresBackend} backend
+ * @param {string} projectId
+ * @param {Chunk} chunk
+ * @param {ChunkRevision | undefined} predecessor
+ * @param {boolean} [initial]
+ */
+function requireTaggedPredecessor(
+  backend,
+  projectId,
+  chunk,
+  predecessor,
+  initial = false
+) {
+  const tagged = hasHistoryActivationReceipts(chunk)
+  if ((tagged || predecessor) && backend !== mongoBackend) {
+    throw new OError('tagged chunk activation requires Mongo history', {
+      projectId,
+    })
+  }
+  if (tagged && !predecessor && !initial) {
+    throw new ChunkVersionConflictError('missing tagged chunk predecessor', {
+      projectId,
+    })
+  }
+}
+
+/**
  * Store the chunk and insert corresponding records in the database.
  *
  * @param {string} projectId
  * @param {Chunk} chunk
  * @param {Date} [earliestChangeTimestamp]
+ * @param {ChunkRevision} [predecessor]
  */
-async function create(projectId, chunk, earliestChangeTimestamp) {
+async function create(projectId, chunk, earliestChangeTimestamp, predecessor) {
   assert.projectId(projectId, 'bad projectId')
   assert.instance(chunk, Chunk, 'bad chunk')
   assert.maybe.date(earliestChangeTimestamp, 'bad timestamp')
 
   const backend = getBackend(projectId)
   const chunkStart = chunk.getStartVersion()
+  requireTaggedPredecessor(
+    backend,
+    projectId,
+    chunk,
+    predecessor,
+    chunkStart === 0
+  )
 
   const opts = {}
-  if (chunkStart > 0) {
-    const oldChunk = await backend.getChunkForVersion(projectId, chunkStart)
+  if (predecessor || chunkStart > 0) {
+    const oldChunk =
+      predecessor ?? (await backend.getChunkForVersion(projectId, chunkStart))
 
     if (oldChunk.endVersion !== chunkStart) {
       throw new ChunkVersionConflictError(
@@ -377,6 +428,7 @@ async function create(projectId, chunk, earliestChangeTimestamp) {
     }
 
     opts.oldChunkId = oldChunk.id
+    if (predecessor) opts.expectedPreviousEnd = predecessor.endVersion
   }
   if (earliestChangeTimestamp != null) {
     opts.earliestChangeTimestamp = earliestChangeTimestamp
@@ -384,6 +436,13 @@ async function create(projectId, chunk, earliestChangeTimestamp) {
 
   const chunkId = await uploadChunk(projectId, chunk)
   await backend.confirmCreate(projectId, chunk, chunkId, opts)
+  if (predecessor) {
+    return {
+      id: chunkId,
+      startVersion: chunkStart,
+      endVersion: chunk.getEndVersion(),
+    }
+  }
 }
 
 /**
@@ -415,19 +474,25 @@ async function uploadChunk(projectId, chunk) {
  * @param {string} projectId
  * @param {Chunk} newChunk
  * @param {Date} [earliestChangeTimestamp]
- * @return {Promise}
+ * @param {ChunkRevision} [predecessor]
  */
-async function update(projectId, newChunk, earliestChangeTimestamp) {
+async function update(
+  projectId,
+  newChunk,
+  earliestChangeTimestamp,
+  predecessor
+) {
   assert.projectId(projectId, 'bad projectId')
   assert.instance(newChunk, Chunk, 'bad newChunk')
   assert.maybe.date(earliestChangeTimestamp, 'bad timestamp')
 
   const backend = getBackend(projectId)
-  const oldChunk = await backend.getChunkForVersion(
-    projectId,
-    newChunk.getStartVersion(),
-    { preferNewer: true }
-  )
+  requireTaggedPredecessor(backend, projectId, newChunk, predecessor)
+  const oldChunk =
+    predecessor ??
+    (await backend.getChunkForVersion(projectId, newChunk.getStartVersion(), {
+      preferNewer: true,
+    }))
 
   if (oldChunk.startVersion !== newChunk.getStartVersion()) {
     throw new ChunkVersionConflictError(
@@ -457,6 +522,7 @@ async function update(projectId, newChunk, earliestChangeTimestamp) {
   if (earliestChangeTimestamp != null) {
     opts.earliestChangeTimestamp = earliestChangeTimestamp
   }
+  if (predecessor) opts.expectedPreviousEnd = predecessor.endVersion
 
   await backend.confirmUpdate(
     projectId,
@@ -465,6 +531,13 @@ async function update(projectId, newChunk, earliestChangeTimestamp) {
     newChunkId,
     opts
   )
+  if (predecessor) {
+    return {
+      id: newChunkId,
+      startVersion: newChunk.getStartVersion(),
+      endVersion: newChunk.getEndVersion(),
+    }
+  }
 }
 
 /**
@@ -519,7 +592,7 @@ async function loadByChunkRecord(projectId, chunkRecord) {
   const batchBlobStore = new BatchBlobStore(blobStore)
   const { raw: rawHistory, buffer: chunkBuffer } =
     await historyStore.loadRawWithBuffer(projectId, chunkRecord.id)
-  const history = History.fromRaw(rawHistory)
+  const history = History.fromStorageRaw(rawHistory)
   await lazyLoadHistoryFiles(history, batchBlobStore)
   return {
     chunk: new Chunk(history, chunkRecord.endVersion - history.countChanges()),
@@ -657,13 +730,15 @@ function getBackend(projectId) {
  * @param {string} projectId
  * @param {number} chunkEndVersion - end version of the chunk to extend
  *
+ * @param {{maxChanges?: number}} [options]
  * @return {Promise<Change[]>}
  */
-async function getChunkExtension(projectId, chunkEndVersion) {
+async function getChunkExtension(projectId, chunkEndVersion, options) {
   try {
     const changes = await redisBackend.getNonPersistedChanges(
       projectId,
-      chunkEndVersion
+      chunkEndVersion,
+      options
     )
     return changes
   } catch (err) {
@@ -687,7 +762,9 @@ module.exports = {
   initializeProject,
   cloneProject,
   loadLatest,
+  loadLatestWithMetadata,
   getLatestChunkMetadata,
+  getChunkExtension,
   loadAtVersion,
   loadAtTimestamp,
   loadByChunkRecord,

@@ -1,14 +1,20 @@
 'use strict'
 
 const { expect } = require('chai')
+const FakeBlobStore = require('./support/fake_blob_store')
+const { rawChange, rawStorageChange } = require('../../lib/schemas')
 const {
   Change,
+  Chunk,
+  ChunkResponse,
+  History,
   File,
   Operation,
   AddFileOperation,
   Snapshot,
   Origin,
   RestoreFileOrigin,
+  TextOperation,
 } = require('../..')
 
 describe('Change', function () {
@@ -97,5 +103,105 @@ describe('Change', function () {
       change.applyTo(snapshot)
       expect(snapshot.getTimestamp().toISOString()).to.equal(now.toISOString())
     })
+  })
+})
+
+describe('internal history publication metadata', function () {
+  const raw = {
+    operations: [],
+    timestamp: '2015-03-05T12:03:53.035Z',
+    authors: [null],
+  }
+  const publication = {
+    historyId: '507f1f77bcf86cd799439011',
+    batchId: '10000000-0000-4000-8000-000000000001',
+    ordinal: 0,
+    entryOrdinal: 1,
+    digest: 'a'.repeat(64),
+  }
+
+  it('preserves the existing raw format for an untagged change', async function () {
+    const change = Change.mustFromRaw(raw)
+    expect(JSON.stringify(await change.store(new FakeBlobStore()))).to.equal(
+      JSON.stringify(change.toRaw())
+    )
+    expect(change.toRaw()).not.to.have.property('historyPublication')
+    expect(rawChange.safeParse(change.toRaw()).success).to.equal(true)
+  })
+
+  it('round-trips the exact internal identity through stored history', async function () {
+    const change = Change.fromStorageRaw({
+      ...raw,
+      historyPublication: publication,
+    })
+    const history = new History(new Snapshot(), [change])
+    const stored = await history.store(new FakeBlobStore())
+    expect(stored.changes[0].historyPublication).to.eql(publication)
+    expect(rawStorageChange.safeParse(stored.changes[0]).success).to.equal(true)
+    const restored = History.fromStorageRaw(JSON.parse(JSON.stringify(stored)))
+    expect(restored.getChanges()[0].getHistoryPublication()).to.eql(publication)
+    expect(restored.toStorageRaw()).to.eql(history.toStorageRaw())
+  })
+
+  it('keeps internal identities out of change, chunk, and ordinary import formats', function () {
+    const stored = { ...raw, historyPublication: publication }
+    const change = Change.fromStorageRaw(stored)
+    const response = new ChunkResponse(
+      new Chunk(new History(new Snapshot(), [change]), 0)
+    )
+    expect(change.toRaw()).not.to.have.property('historyPublication')
+    expect(JSON.stringify(change)).not.to.include(publication.batchId)
+    expect(response.toRaw().chunk.history.changes[0]).to.eql(change.toRaw())
+    expect(rawChange.safeParse(stored).success).to.equal(false)
+    expect(Change.mustFromRaw(stored).toStorageRaw()).not.to.have.property(
+      'historyPublication'
+    )
+  })
+
+  it('preserves a tag across transform and reconstruction without allowing retagging', function () {
+    const submitted = { ...publication }
+    const change = Change.mustFromRaw(raw)
+    change.setHistoryPublication(submitted)
+    submitted.digest = 'b'.repeat(64)
+    change.toStorageRaw().historyPublication.ordinal = 999
+    const copy = change.clone()
+    copy.pushOperation(
+      Operation.editFile('main.tex', new TextOperation().insert('a'))
+    )
+    const other = Change.mustFromRaw(raw)
+    other.pushOperation(
+      Operation.editFile('main.tex', new TextOperation().insert('b'))
+    )
+    const originalOperations = copy.toRaw().operations
+    copy.transformAfter(other)
+    expect(copy.toRaw().operations).not.to.eql(originalOperations)
+    expect(copy.toStorageRaw().historyPublication).to.eql(publication)
+    expect(copy.getOperations()).to.have.length(1)
+    expect(copy.getHistoryPublication()).not.to.equal(
+      change.getHistoryPublication()
+    )
+    copy.setHistoryPublication({ ...publication })
+    expect(() => copy.setHistoryPublication(submitted)).to.throw(
+      'History publication identity is already set'
+    )
+  })
+
+  it('rejects incomplete, out-of-range, and unrecognized receipt metadata', function () {
+    for (const invalid of [
+      null,
+      Object.create(publication),
+      { ...publication, historyId: 'not-a-history-id' },
+      { ...publication, batchId: 'not-a-uuid' },
+      { ...publication, ordinal: Number.MAX_SAFE_INTEGER + 1 },
+      { ...publication, entryOrdinal: -1 },
+      { ...publication, digest: 'a' },
+      { ...publication, extra: 'must not be accepted' },
+    ]) {
+      const stored = { ...raw, historyPublication: invalid }
+      expect(rawStorageChange.safeParse(stored).success).to.equal(false)
+      expect(() => Change.fromStorageRaw(stored)).to.throw(
+        'Invalid history publication metadata'
+      )
+    }
   })
 })

@@ -8,14 +8,21 @@ import {
 import OLButton from '@/shared/components/ol/ol-button'
 import { useTranslation } from 'react-i18next'
 import { useFeatureFlag } from '@/shared/context/split-test-context'
+import { FetchError } from '@/infrastructure/fetch-json'
 
 export function RestoreProjectErrorModal({
+  error,
   resetErrorBoundary,
 }: {
+  error: unknown
   resetErrorBoundary: VoidFunction
 }) {
   const { t } = useTranslation()
   const themed = useFeatureFlag('themed-modals')
+  const isPathConflict =
+    error instanceof FetchError &&
+    error.response?.status === 409 &&
+    error.data?.code === 'project_restore_path_conflict'
 
   return (
     <OLModal show onHide={resetErrorBoundary} themed={themed}>
@@ -25,9 +32,14 @@ export function RestoreProjectErrorModal({
         </OLModalTitle>
       </OLModalHeader>
       <OLModalBody>
-        {t(
-          'there_was_a_problem_restoring_the_project_please_try_again_in_a_few_moments_or_contact_us'
-        )}
+        {isPathConflict
+          ? t('restore_project_path_conflict', {
+              defaultValue:
+                'Some file or folder paths conflict with this version. Rename or move conflicting items in the current project, or choose a different version.',
+            })
+          : t(
+              'there_was_a_problem_restoring_the_project_please_try_again_in_a_few_moments_or_contact_us'
+            )}
       </OLModalBody>
       <OLModalFooter>
         <OLButton variant="secondary" onClick={resetErrorBoundary}>

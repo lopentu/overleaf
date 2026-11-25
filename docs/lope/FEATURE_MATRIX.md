@@ -1,11 +1,8 @@
 # Workflow parity and acceptance matrix
 
-CE+ is the development base, not a claim of complete Overleaf.com parity.
-Source presence, unit tests, native acceptance and production deployment are
-separate results. The accepted live base is CE+ f5cd4cdd/image5dcf4da7, managed
-by the separate server-utils runtime contract. Current compiler increment
-0104ea71 remains discovery/unselected; see [operations](OPERATIONS.md).
-Kernel/console, rootless/untrusted compilation and full parity remain pending.
+CE+ is the development base. [Operations](OPERATIONS.md) records the serving
+image and links to the current promotion checklist. Production acceptance of
+isolated compilation and full hosted workflow parity remain open.
 
 | Workflow                                     | Candidate evidence                                                                                         | Still required                                                                                                                            |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -84,3 +81,39 @@ Production-source dependency audit findings also need patch-aware triage before
 promotion; the existing body-parser pipeline backport must be preserved and
 regression-tested. No broad audit ignore is justified. Private evidence and the
 current operational handoff are maintained in the canonical server-utils repo.
+
+## November 21 editable-file retirement checkpoint
+
+The local candidate saves a durable dispatch marker before admitting an edit.
+After interruption, the updater reclaims the marker and reuses the original
+batch identity. It retains the queue entry until history-v1 verifies the exact
+receipt from the Mongo activation transaction. Project history keeps each tagged
+edit separate and refuses a queue reset while tagged entries remain.
+
+The integrated source passed 592 document-updater tests, 645 project-history
+tests, 25 Redis-wrapper tests, 17 storage-entry fixtures and seven
+private HTTP socket cases. A disposable Redis rehearsal covered worker exit,
+reclaim, a pending history receipt, a sibling edit and replay. The HTTP and
+storage fixtures simulated the persistence boundaries they exercised.
+
+The legacy Redis drain now checks the persistent protection marker in the same
+operation that would trim the queue. The document HTTP wrappers defer actions
+while protected updates are pending. The project flush checks for work before
+enumerating cached documents, including an empty cache. The local retirement
+preparation checks the exact editor revision after the project queue drains.
+
+The candidate remains default-off. GitHub import uses the exact source commit,
+case-sensitive path and editor revision to recover the same operation. Web
+holds an ordering barrier until the updater verifies durable history and
+finishes cache eviction. Docstore compares the saved editor and storage
+revisions. Binary replacement requires both the old document's removal and
+the exact uploaded file's addition. Review found and the draft addressed
+premature abort on a sibling action and repeated file-tree events. The focused
+GitHub merge and Web persistence run passed 35 cases. Browser acceptance with
+the actual GitHub app, Redis, Mongo and history storage remains open.
+
+Portable Compose enables Redis AOF with one-second fsync. Interruption
+acceptance includes the chosen deployment's persistence and recovery behavior.
+The pinned compiler archive passed offline admission. The production compiler,
+restored project, provider integrations and hosted migration have gates in the
+server-utils release checklist.

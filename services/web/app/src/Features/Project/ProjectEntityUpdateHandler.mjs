@@ -24,6 +24,12 @@ import FileWriter from '../../infrastructure/FileWriter.mjs'
 import EditorRealTimeController from '../Editor/EditorRealTimeController.mjs'
 import { callbackifyMultiResult, callbackify } from '@overleaf/promise-utils'
 import { iterablePaths } from './IterablePath.mjs'
+import { requireCurrent as requireHistoryResyncReservation } from '../History/HistoryResyncReservation.mjs'
+import {
+  retirementEnabled,
+  retireGitHubDocument,
+  settleActiveRetirement,
+} from './ProjectDocumentRetirementCoordinator.mjs'
 
 const LOCK_NAMESPACE = 'sequentialProjectStructureUpdateLock'
 const VALID_ROOT_DOC_EXTENSIONS = Settings.validRootDocExtensions
@@ -32,14 +38,37 @@ const VALID_ROOT_DOC_REGEXP = new RegExp(
   'i'
 )
 
-function wrapWithLock(methodWithoutLock, lockManager = LockManager) {
+async function settleProjectRetirement(projectId, options) {
+  await settleActiveRetirement(projectId, options)
+}
+
+async function resumeActiveDocumentRetirement(projectId) {
+  if (!retirementEnabled()) return
+  await LockManager.promises.runWithLock(LOCK_NAMESPACE, projectId, () =>
+    settleProjectRetirement(projectId)
+  )
+}
+
+function wrapWithLock(
+  methodWithoutLock,
+  lockManager = LockManager,
+  retirementOperationId
+) {
   // This lock is used to make sure that the project structure updates are made
   // sequentially. In particular the updates must be made in mongo and sent to
   // the doc-updater in the same order.
   if (typeof methodWithoutLock === 'function') {
     const methodWithLock = async (projectId, ...rest) => {
-      return lockManager.promises.runWithLock(LOCK_NAMESPACE, projectId, () =>
-        methodWithoutLock(projectId, ...rest)
+      return lockManager.promises.runWithLock(
+        LOCK_NAMESPACE,
+        projectId,
+        async () => {
+          if (retirementEnabled())
+            await settleProjectRetirement(projectId, {
+              operationId: retirementOperationId?.(rest),
+            })
+          return methodWithoutLock(projectId, ...rest)
+        }
       )
     }
     methodWithLock.withoutLock = methodWithoutLock
@@ -49,8 +78,16 @@ function wrapWithLock(methodWithoutLock, lockManager = LockManager) {
     const mainTask = methodWithoutLock.withLock
     const methodWithLock = async (projectId, ...rest) => {
       const arg = await methodWithoutLock.beforeLock(projectId, ...rest)
-      return lockManager.promises.runWithLock(LOCK_NAMESPACE, projectId, () =>
-        mainTask(arg)
+      return lockManager.promises.runWithLock(
+        LOCK_NAMESPACE,
+        projectId,
+        async () => {
+          if (retirementEnabled())
+            await settleProjectRetirement(projectId, {
+              operationId: methodWithoutLock.retirementOperationId?.(arg),
+            })
+          return mainTask(arg)
+        }
       )
     }
     methodWithLock.withoutLock = async (...args) => {
@@ -202,21 +239,36 @@ async function updateDocLines(
   return { rev, modified }
 }
 
+async function getDocumentPointerFilter(projectId) {
+  if (!retirementEnabled()) return { _id: projectId }
+  const project = await ProjectGetter.promises.getProject(projectId, {
+    version: true,
+  })
+  if (!project) throw new Errors.NotFoundError('project not found')
+  return {
+    _id: projectId,
+    version: project.version ?? { $exists: false },
+    activeDocumentRetirement: { $exists: false },
+  }
+}
+
 async function setRootDoc(projectId, rootDocId) {
   logger.debug({ projectId, rootDocId }, 'setting root doc')
   if (projectId == null || rootDocId == null) {
     throw new Errors.InvalidError('missing arguments (project or doc)')
   }
+  const filter = await getDocumentPointerFilter(projectId)
   const rootResourcePath =
     await ProjectEntityHandler.promises.getDocPathByProjectIdAndDocId(
       projectId,
       rootDocId
     )
   if (ProjectEntityUpdateHandler.isPathValidForRootDoc(rootResourcePath)) {
-    await Project.updateOne(
-      { _id: projectId },
-      { rootDoc_id: rootDocId }
-    ).exec()
+    const result = await Project.updateOne(filter, {
+      rootDoc_id: rootDocId,
+    }).exec()
+    if (retirementEnabled() && result.matchedCount !== 1)
+      throw githubDocumentChanged()
   } else {
     throw new Errors.UnsupportedFileTypeError(
       'invalid file extension for root doc'
@@ -384,8 +436,149 @@ const addFile = wrapWithLock({
   },
 })
 
+/**
+ * Add a historical copy without replacing a live entity that uses its name.
+ * @param {string} projectId
+ * @param {string} folderId
+ * @param {string} basename
+ * @param {string} restoredBasename
+ * @param {{type: 'doc', lines: string[], ranges: ReturnType<typeof import('overleaf-editor-core').getDocUpdaterCompatibleRanges>} | {type: 'file', fsPath: string, linkedFileData: object | undefined}} content
+ * @param {object} source
+ * @param {string} userId
+ * @param {() => void} [beforeInsert]
+ */
+const addHistoryRecovery = wrapWithLock({
+  async beforeLock(
+    projectId,
+    folderId,
+    basename,
+    restoredBasename,
+    content,
+    source,
+    userId,
+    beforeInsert
+  ) {
+    // Blob uploads and docstore writes identify their data by hash or ID.
+    // Prepare them before the lease, then select the visible name under it.
+    if (content.type === 'doc') {
+      const prepared = await addDocWithRanges.beforeLock(
+        projectId,
+        folderId,
+        basename,
+        content.lines,
+        content.ranges,
+        userId,
+        source
+      )
+      return {
+        type: /** @type {const} */ ('doc'),
+        prepared,
+        basename,
+        restoredBasename,
+        beforeInsert,
+      }
+    }
+
+    const prepared = await addFile.beforeLock(
+      projectId,
+      folderId,
+      basename,
+      content.fsPath,
+      content.linkedFileData,
+      userId,
+      source
+    )
+    return {
+      type: /** @type {const} */ ('file'),
+      prepared,
+      basename,
+      restoredBasename,
+      beforeInsert,
+    }
+  },
+  async withLock(recovery) {
+    const { basename, restoredBasename, prepared } = recovery
+    const { projectId, folderId } = prepared
+    const project = await ProjectGetter.promises.getProject(projectId, {
+      rootFolder: true,
+    })
+    if (!project) {
+      throw new Errors.NotFoundError('project not found')
+    }
+    const { element: folder, path } = await ProjectLocator.promises.findElement(
+      {
+        project,
+        element_id: folderId ?? project.rootFolder[0]._id,
+        type: 'folder',
+      }
+    )
+    const occupied = new Set(
+      [
+        ...(folder.docs ?? []),
+        ...(folder.fileRefs ?? []),
+        ...(folder.folders ?? []),
+      ].map(entity => entity.name)
+    )
+
+    let name = basename
+    if (occupied.has(name)) {
+      name = restoredBasename
+      const extension = Path.extname(restoredBasename)
+      const stem = Path.basename(restoredBasename, extension)
+      for (let index = 2; occupied.has(name); index++) {
+        name = stem + ' ' + index + extension
+      }
+    }
+    if (
+      !SafePath.isCleanFilename(name) ||
+      !SafePath.isAllowedLength(path.fileSystem + '/' + name)
+    ) {
+      throw new Errors.InvalidNameError('invalid recovered filename')
+    }
+
+    // The add main tasks retain the Mongo sibling-name check and the normal
+    // project-history updates.
+    if (recovery.type === 'doc') {
+      const doc = recovery.prepared.doc
+      doc.name = name
+      recovery.beforeInsert?.()
+      const result = await addDocWithRanges.mainTask({
+        ...recovery.prepared,
+        folderId: folder._id,
+        docName: name,
+      })
+      return { type: /** @type {const} */ ('doc'), ...result }
+    }
+
+    const fileRef = recovery.prepared.fileRef
+    fileRef.name = name
+    recovery.beforeInsert?.()
+    const result = await addFile.mainTask({
+      ...recovery.prepared,
+      folderId: folder._id,
+    })
+    return { type: /** @type {const} */ ('file'), ...result }
+  },
+})
+
+function githubDocumentChanged(cause) {
+  return new OError(
+    'The editable document at this path changed during GitHub sync.',
+    { status: 409 },
+    cause
+  )
+}
+
 const upsertDoc = wrapWithLock(
-  async function (projectId, folderId, docName, docLines, source, userId) {
+  async function (
+    projectId,
+    folderId,
+    docName,
+    docLines,
+    source,
+    userId,
+    expectedDocument
+  ) {
     if (!SafePath.isCleanFilename(docName)) {
       throw new Errors.InvalidNameError('invalid element name')
     }
@@ -407,7 +600,7 @@ const upsertDoc = wrapWithLock(
         }))
     } catch (error) {
       if (error instanceof Errors.NotFoundError) {
-        throw new Error('folder_not_found')
+        throw new Error('folder_not_found', { cause: error })
       }
       throw error
     }
@@ -418,6 +611,13 @@ const upsertDoc = wrapWithLock(
 
     const existingDoc = element.docs.find(({ name }) => name === docName)
     const existingFile = element.fileRefs.find(({ name }) => name === docName)
+    if (
+      (expectedDocument === null && (existingDoc || existingFile)) ||
+      (expectedDocument &&
+        existingDoc?._id.toString() !== expectedDocument.docId)
+    ) {
+      throw githubDocumentChanged()
+    }
     if (existingFile) {
       const doc = new Doc({ name: docName })
       const filePath = `${folderPath.fileSystem}/${existingFile.name}`
@@ -490,7 +690,8 @@ const upsertDoc = wrapWithLock(
         userId,
         docLines,
         source,
-        trackChanges
+        trackChanges,
+        ...(expectedDocument ? [expectedDocument.version] : [])
       )
       logger.debug(
         { projectId, docId: existingDoc._id },
@@ -597,6 +798,7 @@ const upsertFile = wrapWithLock({
     fileRef,
     createdBlob,
     source,
+    expectVacant,
   }) {
     let element
     try {
@@ -607,7 +809,7 @@ const upsertFile = wrapWithLock({
       }))
     } catch (error) {
       if (error instanceof Errors.NotFoundError) {
-        throw new Error('folder_not_found')
+        throw new Error('folder_not_found', { cause: error })
       }
       throw error
     }
@@ -617,6 +819,7 @@ const upsertFile = wrapWithLock({
     }
     const existingFile = element.fileRefs.find(({ name }) => name === fileName)
     const existingDoc = element.docs.find(({ name }) => name === fileName)
+    if (expectVacant && (existingFile || existingDoc)) throw githubFileChanged()
 
     if (existingDoc) {
       let path
@@ -627,7 +830,7 @@ const upsertFile = wrapWithLock({
           type: 'doc',
         }))
       } catch (err) {
-        throw new Error("couldn't find existing file")
+        throw new Error("couldn't find existing file", { cause: err })
       }
       const project =
         await ProjectEntityMongoUpdateHandler.promises.replaceDocWithFile(
@@ -705,18 +908,57 @@ const upsertFile = wrapWithLock({
 })
 
 const upsertDocWithPath = wrapWithLock(
-  async function (projectId, elementPath, docLines, source, userId) {
+  async function (
+    projectId,
+    elementPath,
+    docLines,
+    source,
+    userId,
+    expectedDocument
+  ) {
     if (!SafePath.isCleanPath(elementPath)) {
       throw new Errors.InvalidNameError('invalid element name')
     }
     const docName = Path.basename(elementPath)
-    const folderPath = Path.dirname(elementPath)
-    const { newFolders, folder } =
-      await ProjectEntityUpdateHandler.promises.mkdirp.withoutLock(
+    let newFolders, folder
+    if (expectedDocument) {
+      // Resolve guarded paths without recreating folders removed by another edit.
+      let located
+      try {
+        located = await ProjectLocator.promises.findElementByPath({
+          project_id: projectId,
+          path: elementPath,
+          exactCaseMatch: true,
+        })
+      } catch (error) {
+        if (error instanceof Errors.NotFoundError) {
+          throw githubDocumentChanged(error)
+        }
+        throw error
+      }
+      if (
+        located.type !== 'doc' ||
+        located.element?._id.toString() !== expectedDocument.docId ||
+        !located.folder
+      ) {
+        throw githubDocumentChanged()
+      }
+      ;({ folder } = located)
+      newFolders = []
+    } else {
+      if (
+        expectedDocument === null &&
+        (await findGitHubImportTarget(projectId, elementPath))
+      ) {
+        throw githubDocumentChanged()
+      }
+      ;({ newFolders, folder } = await getImportFolder(
         projectId,
-        folderPath,
-        userId
-      )
+        Path.dirname(elementPath),
+        userId,
+        expectedDocument === null
+      ))
+    }
     const { isNew, doc } =
       await ProjectEntityUpdateHandler.promises.upsertDoc.withoutLock(
         projectId,
@@ -724,21 +966,80 @@ const upsertDocWithPath = wrapWithLock(
         docName,
         docLines,
         source,
-        userId
+        userId,
+        ...(expectedDocument !== undefined ? [expectedDocument] : [])
       )
 
     return { doc, isNew, newFolders, folder }
   }
 )
 
+async function findGitHubImportTarget(projectId, elementPath) {
+  try {
+    return await ProjectLocator.promises.findElementByPath({
+      project_id: projectId,
+      path: elementPath,
+      exactCaseMatch: true,
+    })
+  } catch (error) {
+    if (error instanceof Errors.NotFoundError) return null
+    throw error
+  }
+}
+
+async function locateCommittedReplacement(receipt) {
+  const located = await findGitHubImportTarget(receipt.projectId, receipt.path)
+  if (
+    located?.type !== 'file' ||
+    located.element._id.toString() !== receipt.replacement?.fileId ||
+    !located.folder
+  ) {
+    throw githubFileChanged()
+  }
+  return located
+}
+
+function getImportFolder(projectId, path, userId, exactCase) {
+  const { mkdirp, mkdirpWithExactCase } = ProjectEntityUpdateHandler.promises
+  return (exactCase ? mkdirpWithExactCase : mkdirp).withoutLock(
+    projectId,
+    path,
+    userId
+  )
+}
+
+function githubFileChanged() {
+  return new OError('The file at this path changed during GitHub sync.', {
+    status: 409,
+  })
+}
+
+/**
+ * @param {Awaited<ReturnType<typeof findGitHubImportTarget>>} located
+ * @param {import('../ThirdPartyDataStore/UpdateMerger.mjs').ExpectedFile|null} expectedFile
+ */
+function assertGitHubFileMatches(located, expectedFile) {
+  const matches =
+    expectedFile === null
+      ? !located
+      : located?.type === 'file' &&
+        located.element._id.toString() === expectedFile.fileId &&
+        located.element.rev === expectedFile.rev
+  if (!matches) throw githubFileChanged()
+}
+
 const upsertFileWithPath = wrapWithLock({
+  retirementOperationId({ expectedFile }) {
+    return expectedFile?.operationId
+  },
   async beforeLock(
     projectId,
     elementPath,
     fsPath,
     linkedFileData,
     userId,
-    source
+    source,
+    expectedFile
   ) {
     if (!SafePath.isCleanPath(elementPath)) {
       throw new Errors.InvalidNameError('invalid element name')
@@ -759,6 +1060,7 @@ const upsertFileWithPath = wrapWithLock({
 
     return {
       projectId,
+      elementPath,
       folderPath,
       fileName,
       fsPath,
@@ -767,10 +1069,12 @@ const upsertFileWithPath = wrapWithLock({
       fileRef,
       createdBlob,
       source,
+      expectedFile,
     }
   },
   async withLock({
     projectId,
+    elementPath,
     folderPath,
     fileName,
     fsPath,
@@ -779,13 +1083,53 @@ const upsertFileWithPath = wrapWithLock({
     fileRef,
     createdBlob,
     source,
+    expectedFile,
   }) {
-    const { newFolders, folder } =
-      await ProjectEntityUpdateHandler.promises.mkdirp.withoutLock(
-        projectId,
-        folderPath,
-        userId
+    if (expectedFile && 'docId' in expectedFile) {
+      const { docId, version, operationId, sourceCommit, blobHash } =
+        expectedFile
+      if (
+        !retirementEnabled() ||
+        Settings.documentupdater?.enableRetirementBinaryConversion !== true ||
+        source !== 'github' ||
+        fileRef.hash !== blobHash
+      ) {
+        throw githubDocumentChanged()
+      }
+      const receipt = await retireGitHubDocument(
+        { projectId, docId, version, operationId },
+        elementPath,
+        userId,
+        {
+          sourceCommit,
+          fileId: fileRef._id.toString(),
+          hash: blobHash,
+          name: fileRef.name,
+          created: fileRef.created,
+        }
       )
+      const { element, folder } = await locateCommittedReplacement(receipt)
+      return {
+        fileRef: element,
+        isNew: false,
+        oldFileRef: { _id: docId },
+        newFolders: [],
+        folder,
+      }
+    }
+    let located
+    if (expectedFile !== undefined) {
+      located = await findGitHubImportTarget(projectId, elementPath)
+      assertGitHubFileMatches(located, expectedFile)
+    }
+    const { newFolders, folder } = located
+      ? { newFolders: [], folder: located.folder }
+      : await getImportFolder(
+          projectId,
+          folderPath,
+          userId,
+          expectedFile === null
+        )
     // this calls directly into the upsertFile main task (without the beforeLock part)
     const {
       fileRef: newFileRef,
@@ -801,6 +1145,7 @@ const upsertFileWithPath = wrapWithLock({
       fileRef,
       createdBlob,
       source,
+      ...(expectedFile === null ? { expectVacant: true } : {}),
     })
 
     return {
@@ -859,12 +1204,42 @@ const deleteEntity = wrapWithLock(
 )
 
 const deleteEntityWithPath = wrapWithLock(
-  async (projectId, path, userId, source) => {
-    const { element, type } = await ProjectLocator.promises.findElementByPath({
-      project_id: projectId,
-      path,
-      exactCaseMatch: true,
-    })
+  async (projectId, path, userId, source, expectedEntity) => {
+    if (retirementEnabled() && expectedEntity && 'docId' in expectedEntity) {
+      const { docId, version, operationId } = expectedEntity
+      if (!operationId) throw githubDocumentChanged()
+      const result = await retireGitHubDocument(
+        { projectId, docId, version, operationId },
+        path,
+        userId
+      )
+      return result.docId
+    }
+    const located =
+      expectedEntity === undefined
+        ? await ProjectLocator.promises.findElementByPath({
+            project_id: projectId,
+            path,
+            exactCaseMatch: true,
+          })
+        : await findGitHubImportTarget(projectId, path)
+    if (expectedEntity && 'fileId' in expectedEntity) {
+      assertGitHubFileMatches(located, expectedEntity)
+    } else if (expectedEntity) {
+      if (
+        located?.type !== 'doc' ||
+        located.element._id.toString() !== expectedEntity.docId
+      ) {
+        throw githubDocumentChanged()
+      }
+      const { version } = await DocumentUpdaterHandler.promises.getDocument(
+        projectId,
+        expectedEntity.docId,
+        -1
+      )
+      if (version !== expectedEntity.version) throw githubDocumentChanged()
+    }
+    const { element, type } = located
     if (element == null) {
       throw new Errors.NotFoundError('project not found')
     }
@@ -875,7 +1250,9 @@ const deleteEntityWithPath = wrapWithLock(
       userId,
       source
     )
-  }
+  },
+  LockManager,
+  ([, , , expectedEntity]) => expectedEntity?.operationId
 )
 
 const mkdirp = wrapWithLock(async function (projectId, path, userId) {
@@ -1039,6 +1416,10 @@ const renameEntity = wrapWithLock(
 // to prevent anything else being queued before the resync update
 const resyncProjectHistory = wrapWithLock(
   async (projectId, opts) => {
+    const { resyncReservationToken, ...resyncOptions } = opts
+    if (retirementEnabled()) {
+      await requireHistoryResyncReservation(projectId, resyncReservationToken)
+    }
     const project = await ProjectGetter.promises.getProject(projectId, {
       rootFolder: true,
       overleaf: true,
@@ -1065,7 +1446,7 @@ const resyncProjectHistory = wrapWithLock(
       projectHistoryId,
       docs,
       files,
-      opts
+      resyncOptions
     )
     if (opts.historyRangesMigration) {
       return await ProjectOptionsHandler.promises.setHistoryRangesSupport(
@@ -1177,16 +1558,18 @@ async function setMainBibliographyDoc(projectId, newBibliographyDocId) {
   if (projectId == null || newBibliographyDocId == null) {
     throw new Errors.InvalidError('missing arguments (project or doc)')
   }
+  const filter = await getDocumentPointerFilter(projectId)
   const docPath =
     await ProjectEntityHandler.promises.getDocPathByProjectIdAndDocId(
       projectId,
       newBibliographyDocId
     )
   if (ProjectEntityUpdateHandler.isPathValidForMainBibliographyDoc(docPath)) {
-    await Project.updateOne(
-      { _id: projectId },
-      { mainBibliographyDoc_id: newBibliographyDocId }
-    ).exec()
+    const result = await Project.updateOne(filter, {
+      mainBibliographyDoc_id: newBibliographyDocId,
+    }).exec()
+    if (retirementEnabled() && result.matchedCount !== 1)
+      throw githubDocumentChanged()
   } else {
     throw new Errors.UnsupportedFileTypeError(
       'invalid file extension for main bibliography doc'
@@ -1273,10 +1656,12 @@ const ProjectEntityUpdateHandler = {
     addDoc,
     addDocWithRanges,
     addFile,
+    addHistoryRecovery,
     addFolder,
     convertDocToFile,
     deleteEntity,
     deleteEntityWithPath,
+    resumeActiveDocumentRetirement,
     mkdirp,
     mkdirpWithExactCase,
     moveEntity,

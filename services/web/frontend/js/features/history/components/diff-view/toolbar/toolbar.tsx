@@ -22,26 +22,23 @@ export default function Toolbar({
 }: ToolbarProps) {
   const { write } = usePermissionsContext()
   const hasRestoreFileToVersion = useFeatureFlag('revert-file')
+  const { selectedFile } = selection
+  const isRemoved = selectedFile && isFileRemoved(selectedFile)
 
   const showRestoreFileToVersionButton =
     hasRestoreFileToVersion &&
-    selection.selectedFile &&
+    selectedFile &&
+    !isRemoved &&
     write &&
     !isCurrentVersion
-
-  const showRestoreFileButton =
-    selection.selectedFile &&
-    isFileRemoved(selection.selectedFile) &&
-    !showRestoreFileToVersionButton &&
-    write
 
   return (
     <div className="history-react-toolbar">
       <ToolbarDatetime selection={selection} />
-      {selection.selectedFile?.pathname ? (
+      {selectedFile?.pathname ? (
         <ToolbarFileInfo diff={diff} selection={selection} />
       ) : null}
-      {showRestoreFileButton ? (
+      {isRemoved && write ? (
         <ToolbarRestoreFileButton selection={selection} />
       ) : null}
       {showRestoreFileToVersionButton ? (

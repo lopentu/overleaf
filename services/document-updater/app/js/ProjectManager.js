@@ -6,10 +6,95 @@ const logger = require('@overleaf/logger')
 const Metrics = require('./Metrics')
 const Errors = require('./Errors')
 const { callbackifyAll } = require('@overleaf/promise-utils')
+const Settings = require('@overleaf/settings')
 
-async function flushProjectWithLocks(projectId) {
+const { MAX_PROJECT_DRAIN_ATTEMPTS } = require('./QueuedProjectUpdates')
+
+/**
+ * @typedef {{
+ *   queue: { getDrainMode: (projectId: string) => Promise<'legacy' | 'guarded'> },
+ *   withProjectLock: <T>(projectId: string, operation: (lock: string) => Promise<T>) => Promise<T>,
+ *   drainWithLock: (
+ *     projectId: string,
+ *     lock: string
+ *   ) => Promise<'empty' | 'acknowledged' | 'waiting-history' | 'reconcile'>
+ * }} ProjectDrain
+ */
+
+/** @returns {ProjectDrain | undefined} */
+function guardedProjectDrain() {
+  if (
+    Settings.documentupdater?.enableRetirementQueue !== true ||
+    Settings.documentupdater?.enableRetirementWriterSeal !== true
+  ) {
+    return
+  }
+  const { guardedProjectQueue: queue } = require('./RealTimeRedisManager')
+  const UpdateManager = require('./UpdateManager').promises
+  return {
+    queue,
+    withProjectLock: UpdateManager.withGuardedProjectLock,
+    drainWithLock: (projectId, lock) =>
+      UpdateManager.processGuardedQueuedBatchUnderLock(projectId, lock, {
+        queue,
+        ensureHistoryDurable:
+          HistoryManager.promises.ensureQueuedHistoryDurable,
+      }),
+  }
+}
+
+/**
+ * Capture loaded documents only after the guarded queue is observed empty.
+ * The supplied lock wrapper must validate ownership before returning a
+ * successful capture. Document methods and the history flush take their own
+ * locks and run after this lock has been released.
+ *
+ * @param {string} projectId
+ * @param {ProjectDrain} [drain]
+ * @returns {Promise<string[]>}
+ */
+async function getDocIdsForProjectFlush(
+  projectId,
+  drain = guardedProjectDrain()
+) {
+  if (!drain) {
+    return await RedisManager.promises.getDocIdsInProject(projectId)
+  }
+
+  for (let attempt = 0; attempt < MAX_PROJECT_DRAIN_ATTEMPTS; attempt++) {
+    const docIds = await drain.withProjectLock(projectId, async lock => {
+      const mode = await drain.queue.getDrainMode(projectId)
+      if (mode === 'guarded') {
+        const result = await drain.drainWithLock(projectId, lock)
+        // Take a fresh lock for the next batch. ACK says nothing about the
+        // tail and is insufficient proof of an empty queue.
+        if (result === 'acknowledged') return null
+        if (result !== 'empty') {
+          throw new Errors.ProjectStateChangedError(
+            'project updates have not drained'
+          )
+        }
+        return await RedisManager.promises.getDocIdsInProject(projectId)
+      }
+      if (mode !== 'legacy')
+        throw new Error('Unknown project update drain mode')
+
+      const docIds = await RedisManager.promises.getDocIdsInProject(projectId)
+      // A producer can persist guarded mode while a legacy capture is running.
+      return (await drain.queue.getDrainMode(projectId)) === 'legacy'
+        ? docIds
+        : null
+    })
+    if (docIds !== null) return docIds
+  }
+
+  throw new Errors.ProjectStateChangedError('project updates have not drained')
+}
+
+/** @param {string} projectId @param {ProjectDrain} [drain] */
+async function flushProjectWithLocks(projectId, drain) {
   const timer = new Metrics.Timer('projectManager.flushProjectWithLocks')
-  const docIds = await RedisManager.promises.getDocIdsInProject(projectId)
+  const docIds = await getDocIdsForProjectFlush(projectId, drain)
 
   logger.debug({ projectId, docIds }, 'flushing docs')
   const errors = []
@@ -35,12 +120,17 @@ async function flushProjectWithLocks(projectId) {
   }
 }
 
-async function flushAndDeleteProjectWithLocks(projectId, options) {
+/**
+ * @param {string} projectId
+ * @param {object} options
+ * @param {ProjectDrain} [drain]
+ */
+async function flushAndDeleteProjectWithLocks(projectId, options, drain) {
   const timer = new Metrics.Timer(
     'projectManager.flushAndDeleteProjectWithLocks'
   )
 
-  const docIds = await RedisManager.promises.getDocIdsInProject(projectId)
+  const docIds = await getDocIdsForProjectFlush(projectId, drain)
 
   logger.debug({ projectId, docIds }, 'deleting docs')
   const errors = []

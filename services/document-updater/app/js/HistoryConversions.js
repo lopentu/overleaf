@@ -188,9 +188,13 @@ function toHistoryComment(comment, offset) {
  * positions (as maintained by the RangesTracker).
  *
  * @param {StringFileRawData} raw
+ * @param {(index: number) => string} [generateChangeId]
  * @return {{lines: string[], ranges: Ranges}}
  */
-function fromHistoryOT(raw) {
+function fromHistoryOT(
+  raw,
+  generateChangeId = () => RangesTracker.generateId()
+) {
   const fileData = StringFileData.fromRaw(raw)
   const { changes, comments } = getDocUpdaterCompatibleRanges(
     new File(fileData)
@@ -198,9 +202,9 @@ function fromHistoryOT(raw) {
   /** @type {Ranges} */
   const ranges = {}
   if (changes.length > 0) {
-    ranges.changes = changes.map(change => ({
+    ranges.changes = changes.map((change, index) => ({
       ...change,
-      id: RangesTracker.generateId(),
+      id: generateChangeId(index),
     }))
   }
   if (comments.length > 0) {

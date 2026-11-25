@@ -3,6 +3,7 @@ import ProjectGetter from '../Project/ProjectGetter.mjs'
 import ProjectLocator from '../Project/ProjectLocator.mjs'
 import ProjectEntityHandler from '../Project/ProjectEntityHandler.mjs'
 import ProjectEntityUpdateHandler from '../Project/ProjectEntityUpdateHandler.mjs'
+import ProjectEntityMongoUpdateHandler from '../Project/ProjectEntityMongoUpdateHandler.mjs'
 import logger from '@overleaf/logger'
 import Metrics from '@overleaf/metrics'
 import _ from 'lodash'
@@ -11,6 +12,36 @@ import { expressify } from '@overleaf/promise-utils'
 import Modules from '../../infrastructure/Modules.mjs'
 import { z, zz, parseReq } from '../../infrastructure/Validation.mjs'
 import rangesSchemas from '@overleaf/ranges-tracker/schemas.js'
+
+const retirementLookupSchema = z.object({
+  params: z.strictObject({
+    Project_id: zz.objectId(),
+    doc_id: zz.objectId(),
+    operation_id: z.uuid(),
+  }),
+  body: z.strictObject({ version: z.number().int().nonnegative() }),
+})
+
+async function getRetirementDecision(req, res) {
+  const {
+    params: { Project_id: projectId, doc_id: docId, operation_id: operationId },
+    body: { version },
+  } = parseReq(req, retirementLookupSchema)
+  const state =
+    await ProjectEntityMongoUpdateHandler.promises.readDocumentRetirement({
+      projectId,
+      docId,
+      operationId,
+      version,
+    })
+  res
+    .set('Cache-Control', 'no-store')
+    .json(
+      state.status === 'committed'
+        ? { status: state.status, retirement: state.retirement }
+        : { status: state.status }
+    )
+}
 
 const getDocumentSchema = z.object({
   params: z.strictObject({
@@ -221,5 +252,6 @@ async function trackChangesRejected(req, res) {
 export default {
   getDocument: expressify(getDocument),
   setDocument: expressify(setDocument),
+  getRetirementDecision: expressify(getRetirementDecision),
   trackChangesRejected: expressify(trackChangesRejected),
 }

@@ -153,7 +153,7 @@ async function fakePersistRedisChanges(
  * @param {Change[]} changes
  */
 function serializeChanges(changes) {
-  return JSON.stringify(changes.map(change => change.toRaw()))
+  return JSON.stringify(changes.map(change => change.toStorageRaw()))
 }
 
 module.exports = commitChanges

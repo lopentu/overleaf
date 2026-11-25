@@ -17,10 +17,11 @@ import { pipeline } from 'node:stream/promises'
 import ClsiCacheManager from '../Compile/ClsiCacheManager.mjs'
 import Path from 'node:path'
 import OError from '@overleaf/o-error'
+import { requirePublishedTemplateVersion } from '../../../../modules/template-gallery/app/src/PublishedTemplateVersion.mjs'
 
 const { promises: ProjectRootDocManager } = ProjectRootDocManagerModule
 const { promises: ProjectOptionsHandler } = ProjectOptionsHandlerModule
-const TIMEOUT = 30000  // 30 sec
+const TIMEOUT = 30000 // 30 sec
 
 const TemplatesManager = {
   async createProjectFromV1Template(
@@ -38,13 +39,20 @@ const TemplatesManager = {
       compiler || settings.defaultLatexCompiler
     )
     try {
-       imageName = ProjectOptionsHandler.normalizeImageName(imageName)
+      imageName = ProjectOptionsHandler.normalizeImageName(imageName)
     } catch {
-      logger.warn( { templateId, imageName }, 'cannot use the image required by the template, using the default image')
+      logger.warn(
+        { templateId, imageName },
+        'cannot use the image required by the template, using the default image'
+      )
       imageName = null
     }
 
-    const zipUrl = `${settings.apis.filestore.url}/template/${templateId}/v/${templateVersionId}/zip`
+    const publishedVersion = await requirePublishedTemplateVersion(
+      templateId,
+      templateVersionId
+    )
+    const zipUrl = `${settings.apis.filestore.url}/template/${templateId}/v/${publishedVersion}/zip`
     const zipReq = await fetchStreamWithResponse(zipUrl, {
       signal: AbortSignal.timeout(TIMEOUT),
     })
@@ -57,7 +65,7 @@ const TemplatesManager = {
       const attributes = {
         compiler,
         imageName,
-        spellCheckLanguage
+        spellCheckLanguage,
       }
       if (brandVariationId) attributes.brandVariationId = brandVariationId
 

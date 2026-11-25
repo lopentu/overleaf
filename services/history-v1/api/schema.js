@@ -5,6 +5,8 @@ const Blob = require('overleaf-editor-core').Blob
 const {
   rawSnapshot,
   rawChange,
+  rawHistoryPublication,
+  rawStorageChange,
   rawBlobHash,
   rawFileMetadata,
 } = require('overleaf-editor-core/lib/schemas')
@@ -467,6 +469,35 @@ const schemas = {
       return_snapshot: z.enum(['hashed', 'none']).optional(),
     }),
     body: z.array(fallbackChangeSchema),
+  }),
+
+  lookupActivationReceipt: z.object({
+    params: z.strictObject({ project_id: z.string() }),
+    body: rawHistoryPublication,
+  }),
+
+  activationReadiness: z.object({
+    params: z.strictObject({ project_id: zz.objectId() }),
+  }),
+
+  appendActivationChange: z.object({
+    params: z.strictObject({ project_id: zz.objectId() }),
+    query: z.strictObject({
+      end_version: z
+        .string()
+        .regex(/^(0|[1-9][0-9]*)$/)
+        .transform(Number)
+        .pipe(
+          z
+            .number()
+            .int()
+            .nonnegative()
+            .max(Number.MAX_SAFE_INTEGER - 1)
+        ),
+    }),
+    body: rawStorageChange.extend({
+      historyPublication: rawHistoryPublication,
+    }),
   }),
 
   setContent: z.object({

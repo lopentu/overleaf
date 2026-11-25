@@ -76,10 +76,9 @@ export function useRestoreSelectedFile() {
       if (selectedFile && selectedFile.pathname) {
         const file = files.find(file => file.pathname === selectedFile.pathname)
 
-        if (file) {
-          const deletedAtV = isFileRemoved(file) ? file.deletedAtV : undefined
-          const toVersion = deletedAtV ?? selection.updateRange?.toV
-          if (!toVersion) {
+        if (file && !isFileRemoved(file)) {
+          const toVersion = selection.updateRange?.toV
+          if (toVersion === undefined) {
             return
           }
           setState('restoring')

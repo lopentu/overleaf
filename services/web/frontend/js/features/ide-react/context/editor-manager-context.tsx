@@ -251,7 +251,8 @@ export const EditorManagerProvider: FC<React.PropsWithChildren> = ({
         }
         if (
           update.meta.type === 'external' &&
-          (update.meta.source === 'git-bridge' || update.meta.source === 'github')
+          (update.meta.source === 'git-bridge' ||
+            update.meta.source === 'github')
         ) {
           return
         }
@@ -547,10 +548,16 @@ export const EditorManagerProvider: FC<React.PropsWithChildren> = ({
         }
       }
 
-      const docId =
-        customLocalStorage.getItem(currentDocumentIdStorageKey) || fallbackDocId
-      if (docId) {
-        return await openDocWithId(docId)
+      const savedDocId = customLocalStorage.getItem(currentDocumentIdStorageKey)
+      if (typeof savedDocId === 'string') {
+        const savedDoc = findDocEntityById(fileTreeData, savedDocId)
+        if (savedDoc) {
+          return await openDoc(savedDoc)
+        }
+      }
+
+      if (fallbackDocId) {
+        return await openDocWithId(fallbackDocId)
       }
     },
     [
@@ -594,7 +601,6 @@ export const EditorManagerProvider: FC<React.PropsWithChildren> = ({
         document.off('error')
 
         // Preserve the sharejs contents before the teardown.
-        // eslint-disable-next-line no-unused-vars
         editorContent =
           typeof editorContent === 'string'
             ? editorContent

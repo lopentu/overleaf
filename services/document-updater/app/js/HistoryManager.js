@@ -3,11 +3,16 @@ const { promiseMapWithLimit } = require('@overleaf/promise-utils')
 const Settings = require('@overleaf/settings')
 const ProjectHistoryRedisManager = require('./ProjectHistoryRedisManager')
 const metrics = require('./Metrics')
-const { fetchNothing } = require('@overleaf/fetch-utils')
+const { fetchJson, fetchNothing } = require('@overleaf/fetch-utils')
+const { z } = require('@overleaf/validation-tools')
 const OError = require('@overleaf/o-error')
 
 const FLUSH_PROJECT_EVERY_N_OPS = 500
 const MAX_PARALLEL_REQUESTS = 4
+const HISTORY_RECEIPT_TIMEOUT_MS = 5000
+const historyPublicationResult = z.strictObject({
+  status: z.enum(['pending', 'durable']),
+})
 
 // flush changes in the background
 function flushProjectChangesAsync(projectId) {
@@ -36,6 +41,50 @@ async function flushProjectChanges(projectId, options) {
   } catch (err) {
     throw OError.tag(err, 'project history api request failed', { projectId })
   }
+}
+
+/** @type {import('./QueuedProjectUpdates').Dependencies['ensureHistoryDurable']} */
+async function ensureQueuedHistoryDurable(projectId, identity, receipt) {
+  if (receipt.historyEntries.length === 0) return 'durable'
+  return await requestHistoryPublication(
+    projectId,
+    'history-publication/reconcile',
+    {
+      ...identity,
+      historyEntries: receipt.historyEntries,
+    }
+  )
+}
+
+/** @param {import('./DocumentWriterSeal').SealOwner} owner */
+async function ensureRetirementHistoryDurable({
+  projectId,
+  docId,
+  operationId,
+  version,
+}) {
+  return await requestHistoryPublication(
+    projectId,
+    `retirement/${operationId}/reconcile`,
+    { docId, version }
+  )
+}
+
+async function requestHistoryPublication(projectId, path, body) {
+  const url = new URL(
+    `${Settings.apis.project_history.url}/project/${projectId}/${path}`
+  )
+  const result = historyPublicationResult.parse(
+    await fetchJson(url, {
+      method: 'POST',
+      json: body,
+      signal: AbortSignal.timeout(HISTORY_RECEIPT_TIMEOUT_MS),
+    })
+  )
+  // History can request a document resync. It must run independently of this
+  // call, which is made while the updater still owns the project lock.
+  if (result.status === 'pending') flushProjectChangesAsync(projectId)
+  return result.status
 }
 
 function recordAndFlushHistoryOps(projectId, ops, projectOpsLength) {
@@ -120,6 +169,8 @@ module.exports = {
   recordAndFlushHistoryOps,
   shouldFlushHistoryOps,
   promises: {
+    ensureQueuedHistoryDurable,
+    ensureRetirementHistoryDurable,
     flushProjectChanges,
     resyncProjectHistory,
   },

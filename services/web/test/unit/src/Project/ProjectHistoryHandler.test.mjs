@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 
 const modulePath =
@@ -64,6 +64,12 @@ describe('ProjectHistoryHandler', function () {
       })
     )
 
+    ctx.retirementEnabled = sinon.stub().returns(false)
+    vi.doMock(
+      '../../../../app/src/Features/Project/ProjectDocumentRetirementCoordinator.mjs',
+      () => ({ retirementEnabled: ctx.retirementEnabled })
+    )
+
     return (ctx.ProjectHistoryHandler = (await import(modulePath)).default)
   })
 
@@ -73,6 +79,7 @@ describe('ProjectHistoryHandler', function () {
         .stub()
         .resolves(ctx.historyId)
       ctx.HistoryManager.promises.flushProject = sinon.stub()
+      ctx.HistoryManager.promises.resyncProject = sinon.stub().resolves()
 
       return (ctx.ProjectEntityUpdateHandler.promises.resyncProjectHistory =
         sinon.stub())
@@ -112,8 +119,9 @@ describe('ProjectHistoryHandler', function () {
       })
 
       it('should resync the project history', async function (ctx) {
+        sinon.assert.notCalled(ctx.HistoryManager.promises.resyncProject)
         return ctx.ProjectEntityUpdateHandler.promises.resyncProjectHistory
-          .calledWith(projectId)
+          .calledWithExactly(projectId, {})
           .should.equal(true)
       })
 
@@ -121,6 +129,53 @@ describe('ProjectHistoryHandler', function () {
         return ctx.HistoryManager.promises.flushProject
           .calledWith(projectId)
           .should.equal(true)
+      })
+    })
+
+    describe('when document retirement is enabled and history is missing', function () {
+      beforeEach(function (ctx) {
+        ctx.retirementEnabled.returns(true)
+        ctx.ProjectDetailsHandler.promises.getDetails = sinon
+          .stub()
+          .withArgs(projectId)
+          .resolves(ctx.project)
+        ctx.ProjectModel.updateOne = sinon.stub().resolves({ matchedCount: 1 })
+      })
+
+      it('should resync through project-history after setting its id', async function (ctx) {
+        await ctx.ProjectHistoryHandler.promises.ensureHistoryExistsForProject(
+          projectId
+        )
+
+        sinon.assert.calledOnceWithExactly(
+          ctx.HistoryManager.promises.resyncProject,
+          projectId
+        )
+        sinon.assert.callOrder(
+          ctx.ProjectModel.updateOne,
+          ctx.HistoryManager.promises.resyncProject
+        )
+        sinon.assert.notCalled(
+          ctx.ProjectEntityUpdateHandler.promises.resyncProjectHistory
+        )
+        sinon.assert.notCalled(ctx.HistoryManager.promises.flushProject)
+      })
+
+      it('should propagate a resync failure and preserve the assigned history id', async function (ctx) {
+        const error = new Error('project-history resync failed')
+        ctx.HistoryManager.promises.resyncProject.rejects(error)
+
+        await expect(
+          ctx.ProjectHistoryHandler.promises.ensureHistoryExistsForProject(
+            projectId
+          )
+        ).to.be.rejectedWith(error)
+
+        sinon.assert.calledOnceWithExactly(
+          ctx.ProjectModel.updateOne,
+          { _id: projectId, 'overleaf.history.id': { $exists: false } },
+          { 'overleaf.history.id': ctx.historyId }
+        )
       })
     })
 

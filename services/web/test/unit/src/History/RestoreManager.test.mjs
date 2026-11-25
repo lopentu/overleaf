@@ -97,6 +97,7 @@ describe('RestoreManager', function () {
       default: {
         fileIgnorePattern:
           '**/{{__MACOSX,.git,.texpadtmp,.R,.venv,venv}{,/**},.!(latexmkrc),*.{dvi,aux,log,toc,out,pdfsync,synctex,synctex(busy),fdb_latexmk,fls,nlo,ind,glo,gls,glg,bbl,blg,doc,docx,gz,swp}}',
+        editableFilenames: [],
         textExtensions: [
           'tex',
           'latex',
@@ -219,7 +220,15 @@ describe('RestoreManager', function () {
           getFile: pathname => ({
             getStringLength: sinon.stub().returns(100),
             getByteLength: sinon.stub().returns(100),
-            getContent: sinon.stub().returns('foo\nbar\nbaz'),
+            getContent: sinon
+              .stub()
+              .callsFake(({ filterTrackedDeletes } = {}) => {
+                const file = snapshotData?.files?.[pathname]
+                const filtered = filterTrackedDeletes
+                  ? file?.filteredText
+                  : undefined
+                return filtered ?? file?.rawText ?? 'foo\nbar\nbaz'
+              }),
             isEditable: sinon.stub().returns(true),
             getMetadata: sinon
               .stub()
@@ -271,6 +280,7 @@ describe('RestoreManager', function () {
 
   describe('restoreFileFromV2', function () {
     beforeEach(function (ctx) {
+      ctx.ProjectGetter.promises.getProject = sinon.stub().resolves({})
       ctx.RestoreManager.promises._writeFileVersionToDisk = sinon
         .stub()
         .resolves((ctx.fsPath = '/tmp/path/on/disk'))
@@ -381,6 +391,277 @@ describe('RestoreManager', function () {
         expect(error).to.exist
         expect(error.message).to.equal('Failed to add entity')
       })
+    })
+  })
+
+  describe('range-enabled deleted-file recovery', function () {
+    beforeEach(function (ctx) {
+      ctx.ProjectGetter.promises.getProject = sinon.stub().resolves({
+        overleaf: { history: { id: 'history-id', rangesSupportEnabled: true } },
+      })
+      ctx.recoverySnapshot = {
+        editable: true,
+        content: 'foo\nbar\nbaz',
+        timestamp: '2026-11-22T00:00:00.000Z',
+        metadata: null,
+        changes: [],
+        comments: [],
+      }
+      ctx.HistoryManager.promises.getFileRecoveryAtVersion = sinon
+        .stub()
+        .resolves(ctx.recoverySnapshot)
+      ctx.recovered = { _id: 'recovered-doc', type: 'doc' }
+      ctx.EditorController.promises.addHistoryRecovery = sinon
+        .stub()
+        .resolves(ctx.recovered)
+      ctx.EditorController.promises.deleteEntity = sinon.stub()
+      ctx.EditorController.promises.upsertFile = sinon.stub()
+      ctx.RestoreManager.promises._findOrCreateFolder = sinon
+        .stub()
+        .resolves('folder-id')
+      ctx.FileSystemImportManager.promises.addEntity = sinon.stub().resolves({
+        _id: 'bare-copy',
+        type: 'doc',
+      })
+      ctx.EditorRealTimeController.emitToRoom = sinon.stub()
+      ctx.ChatApiHandler.promises.resolveThread = sinon.stub().resolves()
+      ctx.ChatApiHandler.promises.reopenThread = sinon.stub().resolves()
+      ctx.ChatApiHandler.promises.deleteThread = sinon.stub().resolves()
+      ctx.ChatManager.promises.injectUserInfoIntoThreads = sinon
+        .stub()
+        .resolves()
+      ctx.recover = (pathname = 'foo.tex') =>
+        ctx.RestoreManager.promises.restoreFileFromV2(
+          ctx.user_id,
+          ctx.project_id,
+          0,
+          pathname
+        )
+    })
+
+    it('recovers additively from version zero', async function (ctx) {
+      expect(await ctx.recover()).to.deep.equal(ctx.recovered)
+      sinon.assert.calledOnceWithExactly(
+        ctx.HistoryManager.promises.getFileRecoveryAtVersion,
+        ctx.project_id,
+        0,
+        'foo.tex'
+      )
+      sinon.assert.notCalled(ctx.HistoryManager.promises.getContentAtVersion)
+      sinon.assert.notCalled(ctx.FileSystemImportManager.promises.addEntity)
+      sinon.assert.notCalled(ctx.EditorController.promises.deleteEntity)
+    })
+
+    it('keeps historical ranges and copies surviving threads without changing their originals', async function (ctx) {
+      const historicalChanges = [{ op: { p: 1, i: 'historical insertion' } }]
+      const original = {
+        id: 'original-thread',
+        op: { t: 'original-thread', p: 0, c: 'anchor', resolved: true },
+      }
+      const missing = {
+        id: 'deleted-thread',
+        op: { t: 'deleted-thread', p: 2, c: 'old anchor' },
+      }
+      ctx.recoverySnapshot.changes = historicalChanges
+      ctx.recoverySnapshot.comments = [original, missing]
+      ctx.ChatApiHandler.promises.duplicateCommentThreads = sinon
+        .stub()
+        .resolves({
+          newThreads: {
+            'original-thread': { duplicateId: 'copied-thread' },
+            'deleted-thread': { error: 'not found' },
+          },
+        })
+      const reply = { content: 'reply in the copied thread' }
+      ctx.ChatApiHandler.promises.generateThreadData = sinon.stub().resolves({
+        'copied-thread': { messages: [reply] },
+      })
+
+      expect(await ctx.recover()).to.deep.equal(ctx.recovered)
+
+      sinon.assert.calledOnceWithExactly(
+        ctx.ChatApiHandler.promises.duplicateCommentThreads,
+        ctx.project_id,
+        ['original-thread', 'deleted-thread']
+      )
+      sinon.assert.calledOnceWithExactly(
+        ctx.ChatApiHandler.promises.resolveThread,
+        ctx.project_id,
+        'copied-thread',
+        ctx.user_id
+      )
+      sinon.assert.notCalled(ctx.ChatApiHandler.promises.reopenThread)
+      expect(original.op.t).to.equal('original-thread')
+      expect(
+        ctx.EditorController.promises.addHistoryRecovery.firstCall.args[4]
+      ).to.deep.equal({
+        type: 'doc',
+        lines: ['foo', 'bar', 'baz'],
+        ranges: {
+          changes: historicalChanges,
+          comments: [
+            {
+              id: 'copied-thread',
+              op: { t: 'copied-thread', p: 0, c: 'anchor', resolved: true },
+            },
+          ],
+        },
+      })
+      expect(
+        ctx.EditorRealTimeController.emitToRoom.firstCall.args[2][
+          'copied-thread'
+        ].messages
+      ).to.deep.equal([reply])
+    })
+
+    it('propagates a chat operational failure and cleans up known unused copies', async function (ctx) {
+      ctx.recoverySnapshot.comments = [
+        { op: { t: 'original-thread' } },
+        { op: { t: 'error-thread' } },
+      ]
+      ctx.ChatApiHandler.promises.duplicateCommentThreads = sinon
+        .stub()
+        .resolves({
+          newThreads: {
+            'original-thread': { duplicateId: 'unused-copy' },
+            'error-thread': { error: 'unknown' },
+          },
+        })
+
+      await expect(ctx.recover()).to.eventually.be.rejectedWith(
+        'failed to duplicate a historical comment thread'
+      )
+
+      sinon.assert.calledOnceWithExactly(
+        ctx.ChatApiHandler.promises.deleteThread,
+        ctx.project_id,
+        'unused-copy'
+      )
+      sinon.assert.notCalled(ctx.EditorController.promises.addHistoryRecovery)
+    })
+
+    it('cleans known unused copies when the add fails before inserting', async function (ctx) {
+      ctx.recoverySnapshot.comments = [{ op: { t: 'original-thread' } }]
+      ctx.ChatApiHandler.promises.duplicateCommentThreads = sinon
+        .stub()
+        .resolves({
+          newThreads: { 'original-thread': { duplicateId: 'unused-copy' } },
+        })
+      ctx.ChatApiHandler.promises.generateThreadData = sinon.stub().resolves({
+        'unused-copy': { messages: [] },
+      })
+      ctx.EditorController.promises.addHistoryRecovery.rejects(
+        new Error('docstore failed')
+      )
+
+      await expect(ctx.recover()).to.eventually.be.rejectedWith(
+        'docstore failed'
+      )
+      sinon.assert.calledOnceWithExactly(
+        ctx.ChatApiHandler.promises.deleteThread,
+        ctx.project_id,
+        'unused-copy'
+      )
+      sinon.assert.notCalled(ctx.EditorRealTimeController.emitToRoom)
+    })
+
+    it('cleans unused copies when the project is already at its file limit', async function (ctx) {
+      ctx.recoverySnapshot.comments = [{ op: { t: 'original-thread' } }]
+      ctx.ChatApiHandler.promises.duplicateCommentThreads = sinon
+        .stub()
+        .resolves({
+          newThreads: { 'original-thread': { duplicateId: 'unused-copy' } },
+        })
+      ctx.ChatApiHandler.promises.generateThreadData = sinon.stub().resolves({
+        'unused-copy': { messages: [] },
+      })
+      ctx.EditorController.promises.addHistoryRecovery.callsFake(
+        async (...args) => {
+          args[7]()
+          throw new Errors.TooManyFilesError('project has too many files')
+        }
+      )
+
+      await expect(ctx.recover()).to.eventually.be.rejectedWith(
+        Errors.TooManyFilesError
+      )
+
+      sinon.assert.calledOnceWithExactly(
+        ctx.ChatApiHandler.promises.deleteThread,
+        ctx.project_id,
+        'unused-copy'
+      )
+    })
+
+    it('filters tracked deletions when materializing historical text as a binary file', async function (ctx) {
+      ctx.recoverySnapshot.content = 'keep'
+      ctx.EditorController.promises.addHistoryRecovery.resolves({
+        _id: 'recovered-file',
+        type: 'file',
+      })
+
+      await ctx.recover('legacy.pdf')
+
+      sinon.assert.calledOnceWithExactly(
+        ctx.FileWriter.promises.writeContentToDisk,
+        'history-id_restore-manager-editable',
+        'keep'
+      )
+      expect(
+        ctx.EditorController.promises.addHistoryRecovery.firstCall.args[4].type
+      ).to.equal('file')
+    })
+
+    it('keeps copy threads if a failure may have occurred after the document was attached', async function (ctx) {
+      ctx.recoverySnapshot.comments = [{ op: { t: 'original-thread' } }]
+      ctx.ChatApiHandler.promises.duplicateCommentThreads = sinon
+        .stub()
+        .resolves({
+          newThreads: {
+            'original-thread': { duplicateId: 'possibly-attached-copy' },
+          },
+        })
+      ctx.ChatApiHandler.promises.generateThreadData = sinon.stub().resolves({
+        'possibly-attached-copy': { messages: [] },
+      })
+      ctx.EditorController.promises.addHistoryRecovery.callsFake(
+        async (...args) => {
+          args[7]()
+          throw new Error('doc updater failed')
+        }
+      )
+
+      await expect(ctx.recover()).to.eventually.be.rejectedWith(
+        'doc updater failed'
+      )
+      sinon.assert.notCalled(ctx.ChatApiHandler.promises.deleteThread)
+      sinon.assert.notCalled(ctx.EditorRealTimeController.emitToRoom)
+    })
+
+    it('adds a historical linked file without upserting a live one', async function (ctx) {
+      const file = { _id: 'new-linked-file', type: 'file' }
+      ctx.EditorController.promises.addHistoryRecovery.resolves(file)
+      ctx.recoverySnapshot.content = null
+      ctx.recoverySnapshot.editable = false
+      ctx.recoverySnapshot.metadata = { provider: 'mendeley' }
+      ctx.RestoreManager.promises._writeFileVersionToDisk.resolves(ctx.fsPath)
+
+      expect(await ctx.recover('linkedFile.bib')).to.deep.equal(file)
+      sinon.assert.calledOnceWithExactly(
+        ctx.RestoreManager.promises._writeFileVersionToDisk,
+        ctx.project_id,
+        0,
+        'linkedFile.bib'
+      )
+      expect(
+        ctx.EditorController.promises.addHistoryRecovery.firstCall.args[4]
+      ).to.deep.equal({
+        type: 'file',
+        fsPath: ctx.fsPath,
+        linkedFileData: { provider: 'mendeley' },
+      })
+      sinon.assert.notCalled(ctx.EditorController.promises.upsertFile)
+      sinon.assert.notCalled(ctx.EditorController.promises.deleteEntity)
     })
   })
 
@@ -1192,7 +1473,7 @@ describe('RestoreManager', function () {
         .resolves([])
       ctx.ProjectEntityHandler.promises.getAllEntities = sinon
         .stub()
-        .resolves({ docs: [], files: [] })
+        .resolves({ docs: [], files: [], folders: [] })
       ctx.EditorController.promises.deleteEntityWithPath = sinon
         .stub()
         .resolves()
@@ -1220,6 +1501,91 @@ describe('RestoreManager', function () {
         ).to.eventually.be.rejectedWith('project does not have ranges support')
       })
     })
+
+    for (const { description, historicalPaths, liveBlockers } of [
+      {
+        description: 'a live folder occupies a historical file path',
+        historicalPaths: ['target.tex'],
+        liveBlockers: { folders: [{ path: '/Target.tex' }] },
+      },
+      {
+        description: 'a live document obstructs a historical parent folder',
+        historicalPaths: ['chapters/old/note.tex'],
+        liveBlockers: { docs: [{ path: '/Chapters' }] },
+      },
+      {
+        description:
+          'a live ancestor differs from the historical path only in case',
+        historicalPaths: ['Figures/plots/note.tex'],
+        liveBlockers: {
+          docs: [{ path: '/figures/plots/note.tex' }],
+          folders: [
+            { path: '/' },
+            { path: '/figures' },
+            { path: '/figures/plots' },
+          ],
+        },
+      },
+      {
+        description:
+          'the live files contain ambiguous aliases for a historical file',
+        historicalPaths: ['note.tex'],
+        liveBlockers: {
+          docs: [{ path: '/note.tex' }],
+          files: [{ path: '/Note.tex' }],
+        },
+      },
+      {
+        description:
+          'the live folders contain ambiguous aliases for a historical ancestor',
+        historicalPaths: ['Figures/note.tex'],
+        liveBlockers: { folders: [{ path: '/figures' }, { path: '/Figures' }] },
+      },
+      {
+        description: 'the historical version has file aliases',
+        historicalPaths: ['Note.tex', 'note.tex'],
+      },
+      {
+        description: 'the historical version has folder aliases',
+        historicalPaths: ['Figures/a.tex', 'figures/b.tex'],
+      },
+      {
+        description: 'the historical version aliases a file and a folder',
+        historicalPaths: ['Figures', 'figures/note.tex'],
+      },
+    ]) {
+      it(`refuses before modifying earlier files when ${description}`, async function (ctx) {
+        const file = { hash: 'abcdef1234567890abcdef1234567890abcdef12' }
+        ctx.HistoryManager.promises.getContentAtVersion.resolves({
+          files: Object.fromEntries(
+            ['main.tex', ...historicalPaths].map(path => [path, file])
+          ),
+        })
+        ctx.ProjectEntityHandler.promises.getAllEntities.resolves({
+          docs: [],
+          files: [],
+          folders: [{ path: '/' }],
+          ...liveBlockers,
+        })
+
+        await expect(
+          ctx.RestoreManager.promises.revertProject(
+            ctx.user_id,
+            ctx.project_id,
+            ctx.version
+          )
+        ).to.eventually.be.rejectedWith(
+          'Some file or folder paths conflict with this version.'
+        )
+
+        expect(ctx.RestoreManager.promises._revertSingleFile).not.to.have.been
+          .called
+        expect(ctx.EditorController.promises.deleteEntityWithPath).not.to.have
+          .been.called
+        expect(ctx.DocumentUpdaterHandler.promises.flushProjectToMongo).not.to
+          .have.been.called
+      })
+    }
 
     describe('for a project with overlap in current files and old files', function () {
       beforeEach(async function (ctx) {
@@ -1252,12 +1618,20 @@ describe('RestoreManager', function () {
             timestamp: new Date().toISOString(),
           })
 
-        ctx.ProjectEntityHandler.promises.getAllEntities = sinon
-          .stub()
+        const liveAfterRestore = {
+          docs: [{ path: '/main.tex' }, { path: '/new-file.tex' }],
+          files: [{ path: '/figures/image.png' }],
+          folders: [{ path: '/' }, { path: '/figures' }],
+        }
+        ctx.ProjectEntityHandler.promises.getAllEntities
+          .onFirstCall()
           .resolves({
-            docs: [{ path: '/main.tex' }, { path: '/new-file.tex' }],
-            files: [{ path: '/figures/image.png' }],
+            ...liveAfterRestore,
+            docs: [{ path: '/Main.TEX' }, { path: '/new-file.tex' }],
           })
+        ctx.ProjectEntityHandler.promises.getAllEntities
+          .onSecondCall()
+          .resolves(liveAfterRestore)
 
         await ctx.RestoreManager.promises.revertProject(
           ctx.user_id,

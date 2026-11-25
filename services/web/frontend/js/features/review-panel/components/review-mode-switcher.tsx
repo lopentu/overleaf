@@ -36,6 +36,8 @@ function ReviewModeDropdownItems() {
   return (
     <>
       <DropdownMenuItem
+        as="button"
+        type="button"
         disabled={!write}
         onClick={() => {
           if (mode === 'edit') {

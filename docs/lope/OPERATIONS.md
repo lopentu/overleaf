@@ -60,6 +60,90 @@ acceptance, untrusted compilation and complete hosted parity remain open;
 accepting the serving image does not qualify those capabilities or promote the
 candidate.
 
+## GitHub export and conflict recovery
+
+Export to a new repository keeps the initial GitHub commit in history. If
+the export stops after repository creation, check the named repository and
+its default branch before retrying.
+
+MongoDB records one export claim per project in `githubSyncExportClaims`.
+The collection uses the project's ObjectId as its unique `_id`. This keeps
+another export from creating a repository even if the Redis lease expires.
+An interrupted worker, unconfirmed repository creation or sync-state write,
+or failed claim release can leave a claim in place. A conflicting request
+returns HTTP 409.
+
+To reconcile a retained claim, read its `_id`, `claimId`, `startedAt`, `userId`,
+`repositoryName`, and `organization` from the primary database. Confirm the
+original request stopped or completed. If its worker cannot be identified,
+drain the Web workers that could still be running it under an authorized
+maintenance window. Claim age alone is insufficient. Check the project's
+local sync state on the primary and verify the target repository and branch
+with the GitHub account or organization owner. Record the outcome and preserve
+the repository for review. Once the outcomes are known and the original
+request can no longer perform writes, an authorized operator can remove only
+the captured `{ _id, claimId }` with a majority-acknowledged `deleteOne` and
+verify that the claim is gone. Leave the claim in place while the request or
+either write outcome remains uncertain.
+
+On conflict, the app publishes a uniquely named branch with the Overleaf
+changes. Merge that branch into the GitHub default branch with a merge
+commit. Once that commit is on the default branch, use **Continue** in
+Overleaf to import the resolution. The app checks the commit history before
+it applies the GitHub snapshot.
+
+The app downloads the files before checking the Overleaf version again. It
+verifies deletions and keeps unrelated edits out of the sync position. Before
+replacing an editable document, GitHub sync checks its identity under the
+project structure lock and its version under the document updater lock. A
+newer version, a moved document, or a newly created editable document at the
+target of a planned text import stops the write. The user can retry sync.
+The conditional-write route makes a staged Web build reject replacements
+against an older document updater. Before saving the sync position, the app
+checks the final history snapshot against the imported contents. This check
+uses the editor's normalized line endings for text and the Git blob hash for
+binary files. A later coauthor edit keeps the previous sync position so it
+remains visible on retry.
+
+Editable sources follow the upstream
+[Basic Multilingual Plane character limit](https://docs.overleaf.com/troubleshooting-and-support/file-encodings-and-line-endings).
+The final check also rejects any legacy history rewrite that changes the
+imported bytes. The parity checklist uses the documented editable character
+range.
+
+Imports can apply several files concurrently. Binary replacements and
+deletions check the captured file ID and revision under the structure lock.
+Creating a file requires the exact-case path to remain vacant. Editable
+document deletion checks the captured identity and editor version, with an
+atomic check for late queued edits still pending. If Web confirms an editor
+update targets a missing document, the updater reports the error to that
+client and continues the other edits in the batch. Guarded GitHub sync can
+convert an editable document to a binary file after checking the editor
+version and the Git blob hash. Live provider verification remains a rollout
+check.
+
+### Guarded history resync recovery
+
+With guarded retirement enabled, MongoDB holds one resync reservation per
+project until the acknowledged resync state is saved. An existing claim keeps
+later starters out even when the Redis lock expires. A declined queue reset or
+an already-running soft resync releases the new reservation when cleanup is
+confirmed. A timeout or uncertain write keeps its reservation for recovery.
+
+During authorized maintenance, drain project-history, Web and document-updater
+workers that may still be handling the resync. Capture the exact project ID and
+reservation UUID from the primary with majority read concern. Reconcile the
+saved sync state, pending queue and history position. Once the old request can
+no longer write and those outcomes are known, conditionally unset only the
+captured `historyResyncReservation` on that project with majority write concern.
+Re-read the project before resuming. Keep the reservation whenever a write
+outcome or worker lifetime is uncertain.
+
+When a legacy project receives its first history ID, Web starts the guarded
+resync through project-history. Keep the assigned ID if the request fails. A
+repeat export sees the existing ID, so an initial request lost before dispatch
+requires a normal resync of that project after checking the saved state.
+
 ## Final-image dependency projection
 
 The image build keeps the normal developer manifests, lockfile and native build

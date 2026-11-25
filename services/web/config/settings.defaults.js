@@ -77,7 +77,15 @@ const httpPermissionsPolicy = {
 
 const safeCompilers = ['xelatex', 'pdflatex', 'latex', 'lualatex']
 
+const enableGuardedDocumentRetirement =
+  process.env.OVERLEAF_ENABLE_GUARDED_DOCUMENT_RETIREMENT === 'true'
+
 module.exports = {
+  documentupdater: {
+    enableRetirementQueue: enableGuardedDocumentRetirement,
+    enableRetirementWriterSeal: enableGuardedDocumentRetirement,
+    enableRetirementBinaryConversion: enableGuardedDocumentRetirement,
+  },
   env: 'server-ce',
 
   limits: {

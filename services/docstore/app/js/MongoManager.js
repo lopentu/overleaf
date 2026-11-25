@@ -12,7 +12,14 @@ function readPreference(useSecondary) {
   return {}
 }
 
-async function findDoc(projectId, docId, projection, useSecondary = false) {
+/** @param {{rawVersion?: boolean}} [options] */
+async function findDoc(
+  projectId,
+  docId,
+  projection,
+  useSecondary = false,
+  options
+) {
   const doc = await db.docs.findOne(
     {
       _id: new ObjectId(docId.toString()),
@@ -20,7 +27,7 @@ async function findDoc(projectId, docId, projection, useSecondary = false) {
     },
     { projection, ...readPreference(useSecondary) }
   )
-  if (doc && projection.version && !doc.version) {
+  if (doc && projection.version && !doc.version && !options?.rawVersion) {
     doc.version = 0
   }
   return doc
@@ -112,14 +119,24 @@ function convertUpdateToPipeline(update) {
   return pipeline
 }
 
-async function upsertIntoDocCollection(projectId, docId, previousRev, updates) {
-  if (previousRev) {
+/** @param {number | null | undefined} value */
+function persistedNumberPredicate(value) {
+  if (value === undefined) return { $exists: false }
+  if (value === null) return { $type: 'null' }
+  return value
+}
+
+/**
+ * @param {{rev: number | null | undefined, version: number | null | undefined} | null} previous
+ */
+async function upsertIntoDocCollection(projectId, docId, previous, updates) {
+  if (previous !== null) {
     const update = {
       $set: updates,
       $unset: { inS3: true },
     }
     if (updates.lines || updates.ranges) {
-      update.$set.rev = previousRev + 1
+      update.$set.rev = (previous.rev ?? 0) + 1
     }
     const pipeline = convertUpdateToPipeline(update)
     const payloadSize = BSON.calculateObjectSize(pipeline)
@@ -128,7 +145,9 @@ async function upsertIntoDocCollection(projectId, docId, previousRev, updates) {
       {
         _id: new ObjectId(docId),
         project_id: new ObjectId(projectId),
-        rev: previousRev,
+        rev: persistedNumberPredicate(previous.rev),
+        version: persistedNumberPredicate(previous.version),
+        retired: { $ne: true },
       },
       pipeline
     )
@@ -156,16 +175,34 @@ async function upsertIntoDocCollection(projectId, docId, previousRev, updates) {
   }
 }
 
-async function patchDoc(projectId, docId, meta) {
+/** @param {{version: number, rev: number}} [expectedRevision] */
+async function patchDoc(projectId, docId, meta, expectedRevision) {
   const payloadSize = BSON.calculateObjectSize(meta)
   Metrics.count('mongo_docs_write', payloadSize, 1, { method: 'patch' })
-  await db.docs.updateOne(
-    {
-      _id: new ObjectId(docId),
-      project_id: new ObjectId(projectId),
-    },
-    { $set: meta }
-  )
+  const identity = {
+    _id: new ObjectId(docId),
+    project_id: new ObjectId(projectId),
+  }
+  const update = {
+    $set:
+      expectedRevision && meta.deleted === true
+        ? { ...meta, retired: true }
+        : meta,
+  }
+  if (!expectedRevision) return await db.docs.updateOne(identity, update)
+
+  const { version, rev } = expectedRevision
+  if (rev === 0) {
+    // Old unchanged documents may omit rev; Docstore reports those as zero.
+    return await db.docs.updateOne(
+      { ...identity, version, $or: [{ rev: 0 }, { rev: { $exists: false } }] },
+      update,
+      { writeConcern: { w: 'majority' } }
+    )
+  }
+  return await db.docs.updateOne({ ...identity, version, rev }, update, {
+    writeConcern: { w: 'majority' },
+  })
 }
 
 /**

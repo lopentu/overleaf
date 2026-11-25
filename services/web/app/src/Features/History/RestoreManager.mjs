@@ -28,8 +28,138 @@ async function getCommentThreadIds(projectId) {
   return new Map(Object.entries(raw).map(([doc, ids]) => [doc, new Set(ids)]))
 }
 
+function restoredFileName(basename) {
+  const date = moment(new Date()).format('Do MMM YY H:mm:ss')
+  const extension = Path.extname(basename)
+  return (
+    Path.basename(basename, extension) +
+    ' (Restored on ' +
+    date +
+    ')' +
+    extension
+  )
+}
+
+async function restoreCommentThreadState(projectId, comments, userId) {
+  const newCommentThreadData = await ChatApiHandler.promises.generateThreadData(
+    projectId,
+    comments.map(({ op: { t } }) => t)
+  )
+
+  // Resolve/reopen threads in chat service to match what is in history
+  for (const commentRange of comments) {
+    const threadData = newCommentThreadData[commentRange.op.t]
+    if (!threadData) {
+      // comment thread was deleted
+      continue
+    }
+
+    if (commentRange.op.resolved && threadData.resolved == null) {
+      // The history snapshot stores the comment's resolved property as a boolean,
+      // but it does not include information about who resolved the comment or the timestamp.
+      // Until this is fixed, we will resolve the thread with the current user and the current timestamp.
+      await ChatApiHandler.promises.resolveThread(
+        projectId,
+        commentRange.op.t,
+        userId
+      )
+      threadData.resolved = true
+      threadData.resolved_by_user_id = userId
+      threadData.resolved_at = new Date().toISOString()
+    } else if (!commentRange.op.resolved && threadData.resolved != null) {
+      await ChatApiHandler.promises.reopenThread(projectId, commentRange.op.t)
+      delete threadData.resolved
+      delete threadData.resolved_by_user_id
+      delete threadData.resolved_at
+    }
+  }
+
+  await ChatManager.promises.injectUserInfoIntoThreads(newCommentThreadData)
+
+  return newCommentThreadData
+}
+
+/** @param {{path: string}[]} entities */
+function groupLiveRestorePaths(entities) {
+  /** @type {Map<string, string[]>} */
+  const paths = new Map()
+  for (const { path } of entities) {
+    const relativePath = path.replace(/^\//, '')
+    const key = relativePath.toLowerCase()
+    const matchingPaths = paths.get(key) ?? []
+    matchingPaths.push(relativePath)
+    paths.set(key, matchingPaths)
+  }
+  return paths
+}
+
+/**
+ * @param {string} projectId
+ * @param {string[]} historicalPaths
+ */
+async function checkProjectRestorePaths(projectId, historicalPaths) {
+  const { folders, docs, files } =
+    await ProjectEntityHandler.promises.getAllEntities(projectId)
+  // Restore lookups ignore case, while cleanup compares exact paths.
+  const liveFolders = groupLiveRestorePaths(folders)
+  const liveFiles = groupLiveRestorePaths([...docs, ...files])
+  const historicalFiles = new Set(
+    historicalPaths.map(path => path.toLowerCase())
+  )
+  /** @type {Map<string, string>} */
+  const historicalFolders = new Map()
+  const conflicts =
+    historicalFiles.size !== historicalPaths.length ||
+    historicalPaths.some(path => {
+      const key = path.toLowerCase()
+      if (liveFolders.has(key) || (liveFiles.get(key)?.length ?? 0) > 1) {
+        return true
+      }
+
+      for (
+        let parent = Path.posix.dirname(path);
+        parent !== '.' && parent !== '/';
+        parent = Path.posix.dirname(parent)
+      ) {
+        const parentKey = parent.toLowerCase()
+        const liveMatches = liveFolders.get(parentKey)
+        const historicalMatch = historicalFolders.get(parentKey)
+        if (
+          liveFiles.has(parentKey) ||
+          historicalFiles.has(parentKey) ||
+          (liveMatches != null &&
+            (liveMatches.length !== 1 || liveMatches[0] !== parent)) ||
+          (historicalMatch != null && historicalMatch !== parent)
+        ) {
+          return true
+        }
+        historicalFolders.set(parentKey, parent)
+      }
+      return false
+    })
+
+  if (conflicts) {
+    throw new Errors.ProjectRestorePathConflictError(
+      'Some file or folder paths conflict with this version.'
+    )
+  }
+}
+
 const RestoreManager = {
   async restoreFileFromV2(userId, projectId, version, pathname) {
+    const project = await ProjectGetter.promises.getProject(projectId, {
+      overleaf: true,
+    })
+    if (project?.overleaf?.history?.rangesSupportEnabled) {
+      return await RestoreManager._recoverSnapshotFile(
+        userId,
+        projectId,
+        project.overleaf.history.id,
+        version,
+        pathname
+      )
+    }
+
     const fsPath = await RestoreManager._writeFileVersionToDisk(
       projectId,
       version,
@@ -62,6 +192,142 @@ const RestoreManager = {
       )
     } finally {
       await fs.promises.unlink(fsPath).catch(() => {})
+    }
+  },
+
+  async _recoverSnapshotFile(userId, projectId, historyId, version, pathname) {
+    const { content, timestamp, metadata, changes, comments } =
+      await HistoryManager.promises.getFileRecoveryAtVersion(
+        projectId,
+        version,
+        pathname
+      )
+
+    const basename = Path.basename(pathname)
+    const dirname = Path.dirname(pathname)
+    const origin = {
+      kind: 'file-restore',
+      path: pathname,
+      version,
+      timestamp: timestamp ?? undefined,
+    }
+    let mayHaveAttached = false
+    const add = async content => {
+      const folderId = await RestoreManager._findOrCreateFolder(
+        projectId,
+        dirname === '.' ? '' : dirname,
+        userId
+      )
+      return await EditorController.promises.addHistoryRecovery(
+        projectId,
+        folderId,
+        basename,
+        restoredFileName(basename),
+        content,
+        origin,
+        userId,
+        () => {
+          // Insertion can succeed before history notification fails.
+          // Any comments now belong to a potentially live document.
+          mayHaveAttached = true
+        }
+      )
+    }
+
+    if (
+      content === null ||
+      (metadata && 'provider' in metadata) ||
+      !FileTypeManager.isEditable(content, { filename: pathname })
+    ) {
+      const fsPath =
+        content === null
+          ? await RestoreManager._writeFileVersionToDisk(
+              projectId,
+              version,
+              pathname
+            )
+          : await FileWriter.promises.writeContentToDisk(
+              historyId + '_restore-manager-editable',
+              content
+            )
+      try {
+        return await add({
+          type: 'file',
+          fsPath,
+          linkedFileData: metadata ?? undefined,
+        })
+      } finally {
+        await fs.promises.unlink(fsPath).catch(() => {})
+      }
+    }
+
+    const lines = content.split('\n')
+    const originalIds = new Set(comments.map(comment => comment.op.t))
+    if (originalIds.size === 0) {
+      return await add({ type: 'doc', lines, ranges: { changes, comments } })
+    }
+
+    // A restored copy must never resolve or reopen an existing chat thread.
+    const { newThreads } =
+      await ChatApiHandler.promises.duplicateCommentThreads(projectId, [
+        ...originalIds,
+      ])
+    const copies = new Map()
+    for (const id of originalIds) {
+      const copy = newThreads[id]?.duplicateId
+      if (copy && !originalIds.has(copy)) copies.set(id, copy)
+    }
+    try {
+      for (const id of originalIds) {
+        if (!copies.has(id) && newThreads[id]?.error !== 'not found') {
+          throw new OError('failed to duplicate a historical comment thread')
+        }
+      }
+      const recoveredComments = comments.flatMap(comment => {
+        const copy = copies.get(comment.op.t)
+        return copy
+          ? [{ ...comment, id: copy, op: { ...comment.op, t: copy } }]
+          : []
+      })
+      const threadData = await restoreCommentThreadState(
+        projectId,
+        recoveredComments,
+        userId
+      )
+      if (recoveredComments.some(comment => !threadData[comment.op.t])) {
+        throw new OError('a recovered comment thread is unavailable')
+      }
+
+      const restored = await add({
+        type: 'doc',
+        lines,
+        ranges: { changes, comments: recoveredComments },
+      })
+      EditorRealTimeController.emitToRoom(
+        projectId,
+        'new-comment-threads',
+        threadData
+      )
+      return restored
+    } catch (error) {
+      // These tree validation errors precede the Mongo insertion.
+      const rejectedBeforeInsert =
+        error instanceof Errors.TooManyFilesError ||
+        error instanceof Errors.InvalidNameError ||
+        error instanceof Errors.DuplicateNameError
+      if (!mayHaveAttached || rejectedBeforeInsert) {
+        for (const id of copies.values()) {
+          try {
+            await ChatApiHandler.promises.deleteThread(projectId, id)
+          } catch (cleanupError) {
+            logger.warn(
+              { err: cleanupError, projectId },
+              'failed to clean up a recovered comment thread'
+            )
+          }
+        }
+      }
+      throw error
     }
   },
 
@@ -255,41 +521,11 @@ const RestoreManager = {
       newRanges.comments = ranges.comments
     }
 
-    const newCommentThreadData =
-      await ChatApiHandler.promises.generateThreadData(
-        projectId,
-        newRanges.comments.map(({ op: { t } }) => t)
-      )
-
-    // Resolve/reopen threads in chat service to match what is in history
-    for (const commentRange of newRanges.comments) {
-      const threadData = newCommentThreadData[commentRange.op.t]
-      if (!threadData) {
-        // comment thread was deleted
-        continue
-      }
-
-      if (commentRange.op.resolved && threadData.resolved == null) {
-        // The history snapshot stores the comment's resolved property as a boolean,
-        // but it does not include information about who resolved the comment or the timestamp.
-        // Until this is fixed, we will resolve the thread with the current user and the current timestamp.
-        await ChatApiHandler.promises.resolveThread(
-          projectId,
-          commentRange.op.t,
-          userId
-        )
-        threadData.resolved = true
-        threadData.resolved_by_user_id = userId
-        threadData.resolved_at = new Date().toISOString()
-      } else if (!commentRange.op.resolved && threadData.resolved != null) {
-        await ChatApiHandler.promises.reopenThread(projectId, commentRange.op.t)
-        delete threadData.resolved
-        delete threadData.resolved_by_user_id
-        delete threadData.resolved_at
-      }
-    }
-
-    await ChatManager.promises.injectUserInfoIntoThreads(newCommentThreadData)
+    const newCommentThreadData = await restoreCommentThreadState(
+      projectId,
+      newRanges.comments,
+      userId
+    )
 
     // Only keep restored comment ranges that point to a valid thread.
     // The chat service won't have generated thread data for deleted threads.
@@ -350,15 +586,7 @@ const RestoreManager = {
     } catch (error) {
       if (error instanceof Errors.DuplicateNameError) {
         // Duplicate name, so try with a prefix
-        const date = moment(new Date()).format('Do MMM YY H:mm:ss')
-        // Move extension to the end so the file type is preserved
-        const extension = Path.extname(basename)
-        basename = Path.basename(basename, extension)
-        basename = `${basename} (Restored on ${date})`
-        if (extension !== '') {
-          basename = `${basename}${extension}`
-        }
-        return await addEntityWithName(basename)
+        return await addEntityWithName(restoredFileName(basename))
       } else {
         throw error
       }
@@ -381,6 +609,7 @@ const RestoreManager = {
     const snapshot = Snapshot.fromRaw(snapshotRaw)
 
     const pathsAtPastVersion = snapshot.getFilePathnames()
+    await checkProjectRestorePaths(projectId, pathsAtPastVersion)
 
     const origin = {
       kind: 'project-restore',
@@ -447,7 +676,7 @@ const RestoreManager = {
     if (file.isEditable()) {
       return await FileWriter.promises.writeContentToDisk(
         historyId + '_restore-manager-editable',
-        file.getContent()
+        file.getContent({ filterTrackedDeletes: true })
       )
     } else {
       const hash = file.getHash()

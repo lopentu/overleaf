@@ -1,14 +1,4 @@
-/* eslint-disable
-    no-return-assign,
-    no-unused-vars,
-*/
-// TODO: This file was created by bulk-decaffeinate.
-// Fix any style issues and re-enable lint.
-/*
- * decaffeinate suggestions:
- * DS102: Remove unnecessary code created because of implicit returns
- * Full docs: https://github.com/decaffeinate/decaffeinate/blob/master/docs/suggestions.md
- */
+const assert = require('node:assert/strict')
 const sinon = require('sinon')
 const modulePath = '../../../../app/js/RealTimeRedisManager.js'
 const SandboxedModule = require('sandboxed-module')
@@ -16,14 +6,11 @@ const Errors = require('../../../../app/js/Errors')
 
 describe('RealTimeRedisManager', function () {
   beforeEach(function () {
-    this.rclient = {
-      auth() {},
-      exec: sinon.stub(),
-    }
-    this.rclient.multi = () => this.rclient
+    this.rclient = { eval: sinon.stub() }
     this.pubsubClient = { publish: sinon.stub() }
     this.RealTimeRedisManager = SandboxedModule.require(modulePath, {
       requires: {
+        './Errors': Errors,
         '@overleaf/redis-wrapper': {
           createClient: config =>
             config.name === 'pubsub' ? this.pubsubClient : this.rclient,
@@ -33,7 +20,7 @@ describe('RealTimeRedisManager', function () {
             documentupdater: (this.settings = {
               key_schema: {
                 pendingProjectUpdates({ project_id: projectId }) {
-                  return `PendingProjectUpdates:${projectId}`
+                  return `PendingProjectUpdates:{${projectId}}`
                 },
               },
             }),
@@ -58,66 +45,77 @@ describe('RealTimeRedisManager', function () {
 
     this.doc_id = 'doc-id-123'
     this.project_id = 'project-id-123'
-    return (this.callback = sinon.stub())
+    this.callback = sinon.stub()
   })
 
   describe('getPendingProjectUpdates', function () {
-    beforeEach(function () {
-      this.rclient.llen = sinon.stub()
-      this.rclient.lrange = sinon.stub()
-      this.rclient.ltrim = sinon.stub()
+    it('checks protection and pops a batch using one project-slot EVAL', async function () {
+      const updates = [
+        { doc: 'doc-1', op: [{ i: 'foo', p: 4 }] },
+        { doc: 'doc-2', op: [{ i: 'bar', p: 6 }] },
+      ]
+      const raw = updates.map(update => JSON.stringify(update))
+      this.rclient.eval.resolves(['popped', 2, raw])
+      assert.deepEqual(
+        await this.RealTimeRedisManager.promises.getPendingProjectUpdates(
+          this.project_id
+        ),
+        updates
+      )
+      const tag = `{${this.project_id}}`
+      sinon.assert.calledOnceWithExactly(
+        this.rclient.eval,
+        sinon.match.string,
+        4,
+        `PendingProjectUpdates:${tag}`,
+        `EditableRetirements:${tag}`,
+        `PendingProjectUpdatesInFlight:${tag}`,
+        `PendingProjectUpdatesGeneration:${tag}`,
+        'legacy-pop'
+      )
+      assert.equal(this.metrics.summary.callCount, raw.length)
+      assert.equal(this.metrics.histogram.firstCall.args[1], 2)
     })
 
-    describe('successfully', function () {
-      beforeEach(function () {
-        this.updates = [
-          { doc: 'doc-1', op: [{ i: 'foo', p: 4 }] },
-          { doc: 'doc-2', op: [{ i: 'bar', p: 6 }] },
-        ]
-        this.jsonUpdates = this.updates.map(update => JSON.stringify(update))
-        this.rclient.exec = sinon.stub().yields(null, [2, this.jsonUpdates])
-        return this.RealTimeRedisManager.getPendingProjectUpdates(
+    it('signals a protected queue as an error and reports no pop', async function () {
+      this.rclient.eval.resolves(['guarded'])
+      await new Promise((resolve, reject) => {
+        this.RealTimeRedisManager.getPendingProjectUpdates(
           this.project_id,
-          this.callback
+          (error, updates) => {
+            try {
+              assert.ok(error instanceof Errors.ProjectUpdateQueueGuardedError)
+              assert.equal(updates, undefined)
+              assert.equal(this.metrics.summary.callCount, 0)
+              resolve()
+            } catch (assertionError) {
+              reject(assertionError)
+            }
+          }
         )
       })
-
-      it('should get the pending updates from the per-project queue', function () {
-        return this.rclient.lrange
-          .calledWith(`PendingProjectUpdates:${this.project_id}`, 0, 7)
-          .should.equal(true)
-      })
-
-      it('should delete the pending updates', function () {
-        return this.rclient.ltrim
-          .calledWith(`PendingProjectUpdates:${this.project_id}`, 8, -1)
-          .should.equal(true)
-      })
-
-      return it('should call the callback with the updates', function () {
-        return this.callback.calledWith(null, this.updates).should.equal(true)
-      })
     })
 
-    return describe("when the JSON doesn't parse", function () {
-      beforeEach(function () {
-        this.jsonUpdates = [
-          JSON.stringify({ doc: 'doc-1', op: [{ i: 'foo', p: 4 }] }),
-          'broken json',
-        ]
-        this.rclient.exec = sinon.stub().yields(null, [2, this.jsonUpdates])
-        return this.RealTimeRedisManager.getPendingProjectUpdates(
-          this.project_id,
-          this.callback
-        )
-      })
-
-      return it('should return an error to the callback', function () {
-        return this.callback
-          .calledWith(sinon.match.has('name', 'SyntaxError'))
-          .should.equal(true)
-      })
+    it('reports malformed persisted JSON as a parse error', async function () {
+      this.rclient.eval.resolves(['popped', 1, ['broken json']])
+      await assert.rejects(
+        this.RealTimeRedisManager.promises.getPendingProjectUpdates(
+          this.project_id
+        ),
+        SyntaxError
+      )
     })
+  })
+
+  it('reuses the same project queue for guarded processing and mode reads', async function () {
+    this.rclient.eval.resolves(['legacy'])
+    assert.equal(
+      await this.RealTimeRedisManager.guardedProjectQueue.getDrainMode(
+        this.project_id
+      ),
+      'legacy'
+    )
+    assert.equal(this.rclient.eval.firstCall.args.at(-1), 'drain-mode')
   })
 
   describe('getProjectUpdatesLength', function () {
@@ -131,7 +129,7 @@ describe('RealTimeRedisManager', function () {
 
     it('should look up the length of the per-project queue', function () {
       return this.rclient.llen
-        .calledWith(`PendingProjectUpdates:${this.project_id}`)
+        .calledWith(`PendingProjectUpdates:{${this.project_id}}`)
         .should.equal(true)
     })
 

@@ -482,6 +482,7 @@ describe('DocManager', () => {
         version: ctx.version,
         ranges: ctx.originalRanges,
       }
+      ctx.previousRevision = { rev: ctx.rev, version: ctx.version }
 
       ctx.DocManager._getDoc = sinon.stub()
     })
@@ -500,19 +501,25 @@ describe('DocManager', () => {
 
       it('should get the existing doc', ctx => {
         ctx.DocManager._getDoc
-          .calledWith(ctx.project_id, ctx.doc_id, {
-            version: true,
-            rev: true,
-            lines: true,
-            ranges: true,
-            inS3: true,
-          })
+          .calledWith(
+            ctx.project_id,
+            ctx.doc_id,
+            {
+              version: true,
+              rev: true,
+              lines: true,
+              ranges: true,
+              inS3: true,
+              retired: true,
+            },
+            { rawVersion: true }
+          )
           .should.equal(true)
       })
 
       it('should upsert the document to the doc collection', ctx => {
         ctx.MongoManager.upsertIntoDocCollection
-          .calledWith(ctx.project_id, ctx.doc_id, ctx.rev, {
+          .calledWith(ctx.project_id, ctx.doc_id, ctx.previousRevision, {
             lines: ctx.newDocLines,
           })
           .should.equal(true)
@@ -538,7 +545,7 @@ describe('DocManager', () => {
 
       it('should upsert the ranges', ctx => {
         ctx.MongoManager.upsertIntoDocCollection
-          .calledWith(ctx.project_id, ctx.doc_id, ctx.rev, {
+          .calledWith(ctx.project_id, ctx.doc_id, ctx.previousRevision, {
             ranges: ctx.newRanges,
           })
           .should.equal(true)
@@ -565,7 +572,7 @@ describe('DocManager', () => {
         ctx.MongoManager.upsertIntoDocCollection.should.have.been.calledWith(
           ctx.project_id,
           ctx.doc_id,
-          ctx.rev,
+          ctx.previousRevision,
           { version: ctx.version + 1 }
         )
       })
@@ -710,7 +717,7 @@ describe('DocManager', () => {
         ctx.MongoManager.upsertIntoDocCollection.should.have.been.calledWith(
           ctx.project_id,
           ctx.doc_id,
-          undefined,
+          null,
           {
             lines: ctx.newDocLines,
             ranges: ctx.originalRanges,
@@ -744,7 +751,7 @@ describe('DocManager', () => {
         ctx.MongoManager.upsertIntoDocCollection.should.have.been.calledWith(
           ctx.project_id,
           ctx.doc_id,
-          ctx.rev,
+          ctx.previousRevision,
           {
             ranges: ctx.newRanges,
             lines: ctx.newDocLines,

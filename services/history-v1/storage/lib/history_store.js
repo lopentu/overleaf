@@ -146,7 +146,7 @@ class HistoryStore {
    *
    * @param {string} projectId
    * @param {string} chunkId
-   * @param {import('overleaf-editor-core/lib/types').RawHistory} rawHistory
+   * @param {import('overleaf-editor-core/lib/types').RawStorageHistory} rawHistory
    */
   async storeRaw(projectId, chunkId, rawHistory) {
     assert.projectId(projectId, 'bad projectId')

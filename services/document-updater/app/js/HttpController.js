@@ -24,6 +24,27 @@ const docParamsSchema = z.strictObject({
   doc_id: zz.objectId(),
 })
 
+const retirementSchema = z.object({
+  params: docParamsSchema.extend({ operation_id: z.uuid() }),
+  body: z.strictObject({ version: z.number().int().nonnegative() }),
+})
+
+async function reconcileDocumentRetirement(req, res) {
+  const EditableDocumentRetirement = require('./EditableDocumentRetirement')
+  if (!EditableDocumentRetirement.isEnabled()) return res.sendStatus(404)
+  const {
+    params: { project_id: projectId, doc_id: docId, operation_id: operationId },
+    body: { version },
+  } = parseReq(req, retirementSchema)
+  const result = await EditableDocumentRetirement.reconcileRetirement({
+    projectId,
+    docId,
+    operationId,
+    version,
+  })
+  res.set('Cache-Control', 'no-store').json(result)
+}
+
 const commentParamsSchema = z.strictObject({
   project_id: zz.objectId(),
   doc_id: zz.objectId(),
@@ -237,19 +258,42 @@ async function clearProjectState(req, res) {
   res.sendStatus(200)
 }
 
+const setDocBodySchema = z.strictObject({
+  lines: z.array(z.string()),
+  source: z.string(),
+  user_id: zz.objectId().nullish(),
+  undoing: z.boolean().optional(),
+  trackChanges: z.boolean().optional(),
+})
+
 const setDocSchema = z.object({
   params: docParamsSchema,
-  body: z.strictObject({
-    lines: z.array(z.string()),
-    source: z.string(),
-    user_id: zz.objectId().nullish(),
-    undoing: z.boolean().optional(),
-    trackChanges: z.boolean().optional(),
+  body: setDocBodySchema,
+})
+
+const setDocIfVersionSchema = setDocSchema.extend({
+  body: setDocBodySchema.extend({
+    expectedVersion: z.int().nonnegative(),
   }),
 })
 
 async function setDoc(req, res) {
-  const { params, body } = parseReq(req, setDocSchema, { logOnly: true })
+  const request = parseReq(req, setDocSchema, { logOnly: true })
+  return await applySetDoc(request, res)
+}
+
+async function setDocIfVersion(req, res) {
+  // Keep the conditional route separate so older updaters reject it.
+  const request = parseReq(req, setDocIfVersionSchema)
+  return await applySetDoc(request, res, request.body.expectedVersion)
+}
+
+/**
+ * @param {z.output<typeof setDocSchema>} request
+ * @param {import('express').Response} res
+ * @param {number} [expectedVersion]
+ */
+async function applySetDoc({ params, body }, res, expectedVersion) {
   const { project_id: projectId, doc_id: docId } = params
   const { lines, source, user_id: userId, undoing, trackChanges } = body
   if (trackChanges && !userId) {
@@ -270,17 +314,27 @@ async function setDoc(req, res) {
   )
   const timer = new Metrics.Timer('http.setDoc')
 
-  const result = await DocumentManager.promises.setDocWithLock(
-    projectId,
-    docId,
-    lines,
-    source,
-    userId,
-    undoing,
-    true,
-    trackChanges
-  )
-  timer.done()
+  let result
+  try {
+    result = await DocumentManager.promises.setDocWithLock(
+      projectId,
+      docId,
+      lines,
+      source,
+      userId,
+      undoing,
+      true,
+      trackChanges,
+      expectedVersion
+    )
+  } catch (error) {
+    if (error instanceof Errors.DocumentVersionMismatchError) {
+      return res.sendStatus(409)
+    }
+    throw error
+  } finally {
+    timer.done()
+  }
   logger.debug({ projectId, docId }, 'set doc via http')
 
   // If the document is unchanged and hasn't been updated, `result` will be
@@ -862,8 +916,10 @@ module.exports = {
   clearProjectState: expressify(clearProjectState),
   appendToDoc: expressify(appendToDoc),
   setDoc: expressify(setDoc),
+  setDocIfVersion: expressify(setDocIfVersion),
   flushDocIfLoaded: expressify(flushDocIfLoaded),
   deleteDoc: expressify(deleteDoc),
+  reconcileDocumentRetirement: expressify(reconcileDocumentRetirement),
   flushProject: expressify(flushProject),
   deleteProject: expressify(deleteProject),
   deleteMultipleProjects: expressify(deleteMultipleProjects),

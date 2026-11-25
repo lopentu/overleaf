@@ -54,17 +54,16 @@ ENV NODE_OPTIONS="--require /overleaf/.pnp.cjs --import /overleaf/.pnp.register.
 # The image contains public code/dependencies, never runtime secrets or state.
 # COPY parents and dependency installers can create root-only directories.
 # Keep the complete runtime readable, immutable to non-root users, and tested.
-RUN chmod -R a+rX,go-w /overleaf \
-    && runuser -u www-data -- /bin/sh -c 'cd /overleaf/services/web && node -e "require(\"@overleaf/settings\"); require(\"bcrypt\")"'
+RUN chmod -R a+rX,go-w /overleaf
 
 
 # Copy runit service startup scripts to its location
 # --------------------------------------------------
-ADD server-ce/runit /etc/service
+COPY --chmod=0755 server-ce/runit/ /etc/service/
 
 # Copy runit global settings to its location
 # ------------------------------------------
-ADD server-ce/config/env.sh /etc/overleaf/env.sh
+COPY --chmod=0644 server-ce/config/env.sh /etc/overleaf/env.sh
 
 # Configure nginx
 # ---------------
@@ -95,12 +94,12 @@ COPY server-ce/init_preshutdown_scripts/ /etc/my_init.pre_shutdown.d/
 
 # Copy app settings files
 # -----------------------
-COPY server-ce/config/settings.js /etc/overleaf/settings.js
+COPY --chmod=0644 server-ce/config/settings.js /etc/overleaf/settings.js
 
 # Copy history-v1 files
 # -----------------------
-COPY server-ce/config/production.json /overleaf/services/history-v1/config/production.json
-COPY server-ce/config/custom-environment-variables.json /overleaf/services/history-v1/config/custom-environment-variables.json
+COPY --chmod=0644 server-ce/config/production.json /overleaf/services/history-v1/config/production.json
+COPY --chmod=0644 server-ce/config/custom-environment-variables.json /overleaf/services/history-v1/config/custom-environment-variables.json
 
 # Copy grunt thin wrapper
 # -----------------------
@@ -116,12 +115,14 @@ RUN chmod +x /overleaf/bin/force-history-resyncs
 
 # Copy Latexmkrc
 # -----------------------
-COPY server-ce/config/latexmkrc /usr/local/share/latexmk/LatexMk
+COPY --chmod=0644 server-ce/config/latexmkrc /usr/local/share/latexmk/LatexMk
 
 # File that controls open|closed status of the site
 # -------------------------------------------------
 ENV SITE_MAINTENANCE_FILE="/etc/overleaf/site_status"
-RUN touch $SITE_MAINTENANCE_FILE
+# COPY --chmod can also set the mode of a destination directory it creates.
+RUN chmod 0755 /etc/overleaf /usr/local/share/latexmk \
+    && touch "$SITE_MAINTENANCE_FILE"
 
 # Set Environment Variables
 # --------------------------------
@@ -153,6 +154,18 @@ ENV GIT_BRIDGE_REPOSTORE_MAX_FILE_SIZE=52428800
 RUN --network=none \
     --mount=type=bind,source=server-ce/runtime-cleanup.cjs,target=/run/overleaf-runtime-cleanup.cjs,readonly \
     OVERLEAF_FINAL_RUNTIME_BUILD=1 /usr/bin/node /run/overleaf-runtime-cleanup.cjs --final-image-build
+
+# Verify the final configuration with the account used by the services.
+RUN --network=none runuser -u www-data -- /bin/sh -ec '\
+    test -r /etc/overleaf/env.sh; \
+    test -r /usr/local/share/latexmk/LatexMk; \
+    test -x /etc/service/web-overleaf; \
+    cd /overleaf/services/history-v1; \
+    test -r config/production.json; \
+    test -r config/custom-environment-variables.json; \
+    node -e "require(\"config\")"; \
+    cd /overleaf/services/web; \
+    node -e "require(\"@overleaf/settings\"); require(\"bcrypt\")"'
 
 EXPOSE 80
 

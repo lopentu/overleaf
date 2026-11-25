@@ -2,6 +2,7 @@ import logger from '@overleaf/logger'
 import OError from '@overleaf/o-error'
 import Metrics from '@overleaf/metrics'
 import ProjectEntityUpdateHandler from '../Project/ProjectEntityUpdateHandler.mjs'
+import { retirementEnabled } from '../Project/ProjectDocumentRetirementCoordinator.mjs'
 import ProjectOptionsHandler from '../Project/ProjectOptionsHandler.mjs'
 import ProjectDetailsHandler from '../Project/ProjectDetailsHandler.mjs'
 import ProjectDeleter from '../Project/ProjectDeleter.mjs'
@@ -10,6 +11,36 @@ import EditorRealTimeController from './EditorRealTimeController.mjs'
 import async from 'async'
 import PublicAccessLevels from '../Authorization/PublicAccessLevels.mjs'
 import { promisify, promisifyMultiResult } from '@overleaf/promise-utils'
+
+function notifyNewDoc(projectId, folderId, doc, source, userId) {
+  EditorRealTimeController.emitToRoom(
+    projectId,
+    'reciveNewDoc',
+    folderId,
+    doc,
+    source,
+    userId
+  )
+}
+
+function notifyNewFile(
+  projectId,
+  folderId,
+  file,
+  source,
+  linkedFileData,
+  userId
+) {
+  EditorRealTimeController.emitToRoom(
+    projectId,
+    'reciveNewFile',
+    folderId,
+    file,
+    source,
+    linkedFileData,
+    userId
+  )
+}
 
 const EditorController = {
   addDoc(projectId, folderId, docName, docLines, source, userId, callback) {
@@ -53,14 +84,7 @@ const EditorController = {
           })
           return callback(err)
         }
-        EditorRealTimeController.emitToRoom(
-          projectId,
-          'reciveNewDoc',
-          folderId,
-          doc,
-          source,
-          userId
-        )
+        notifyNewDoc(projectId, folderId, doc, source, userId)
         callback(err, doc)
       }
     )
@@ -95,9 +119,8 @@ const EditorController = {
           })
           return callback(err)
         }
-        EditorRealTimeController.emitToRoom(
+        notifyNewFile(
           projectId,
-          'reciveNewFile',
           folderId,
           fileRef,
           source,
@@ -205,14 +228,20 @@ const EditorController = {
     docLines,
     source,
     userId,
+    expectedDocument,
     callback
   ) {
+    if (typeof expectedDocument === 'function') {
+      callback = expectedDocument
+      expectedDocument = undefined
+    }
     ProjectEntityUpdateHandler.upsertDocWithPath(
       projectId,
       elementPath,
       docLines,
       source,
       userId,
+      ...(expectedDocument !== undefined ? [expectedDocument] : []),
       function (err, doc, didAddNewDoc, newFolders, lastFolder) {
         if (err) {
           return callback(err)
@@ -248,8 +277,13 @@ const EditorController = {
     linkedFileData,
     source,
     userId,
+    expectedFile,
     callback
   ) {
+    if (typeof expectedFile === 'function') {
+      callback = expectedFile
+      expectedFile = undefined
+    }
     ProjectEntityUpdateHandler.upsertFileWithPath(
       projectId,
       elementPath,
@@ -257,6 +291,7 @@ const EditorController = {
       linkedFileData,
       userId,
       source,
+      ...(expectedFile !== undefined ? [expectedFile] : []),
       function (
         err,
         newFile,
@@ -267,6 +302,9 @@ const EditorController = {
       ) {
         if (err) {
           return callback(err)
+        }
+        if (expectedFile && 'docId' in expectedFile && retirementEnabled()) {
+          return callback(null, { file: newFile, folder: lastFolder })
         }
         EditorController._notifyProjectUsersOfNewFolders(
           projectId,
@@ -396,15 +434,34 @@ const EditorController = {
     )
   },
 
-  deleteEntityWithPath(projectId, path, source, userId, callback) {
+  deleteEntityWithPath(
+    projectId,
+    path,
+    source,
+    userId,
+    expectedEntity,
+    callback
+  ) {
+    if (typeof expectedEntity === 'function') {
+      callback = expectedEntity
+      expectedEntity = undefined
+    }
     ProjectEntityUpdateHandler.deleteEntityWithPath(
       projectId,
       path,
       userId,
       source,
+      ...(expectedEntity !== undefined ? [expectedEntity] : []),
       function (err, entityId) {
         if (err) {
           return callback(err)
+        }
+        if (
+          expectedEntity &&
+          'docId' in expectedEntity &&
+          retirementEnabled()
+        ) {
+          return callback(null, entityId)
         }
         EditorRealTimeController.emitToRoom(
           projectId,
@@ -721,6 +778,41 @@ const EditorController = {
 }
 
 EditorController.promises = {
+  async addHistoryRecovery(
+    projectId,
+    folderId,
+    basename,
+    restoredBasename,
+    content,
+    source,
+    userId,
+    beforeInsert
+  ) {
+    const result = await ProjectEntityUpdateHandler.promises.addHistoryRecovery(
+      projectId,
+      folderId,
+      basename,
+      restoredBasename,
+      content,
+      source,
+      userId,
+      beforeInsert
+    )
+    if (result.type === 'doc') {
+      notifyNewDoc(projectId, result.folderId, result.doc, source, userId)
+      return { _id: result.doc._id, type: 'doc' }
+    }
+
+    notifyNewFile(
+      projectId,
+      result.folderId,
+      result.fileRef,
+      source,
+      content.linkedFileData,
+      userId
+    )
+    return { _id: result.fileRef._id, type: 'file' }
+  },
   addDoc: promisify(EditorController.addDoc),
   addDocWithRanges: promisify(EditorController.addDocWithRanges),
   addFile: promisify(EditorController.addFile),

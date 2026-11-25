@@ -32,6 +32,18 @@ router.post(
 )
 
 router.post(
+  '/projects/:project_id/activation-receipts/append',
+  handleBasicAuth,
+  projectImportController.appendActivationChange
+)
+
+router.get(
+  '/projects/:project_id/activation-receipts/readiness',
+  handleBasicAuth,
+  projectImportController.getActivationReadiness
+)
+
+router.post(
   '/projects/:project_id/set_content',
   handleBasicAuth,
   projectImportController.setContent

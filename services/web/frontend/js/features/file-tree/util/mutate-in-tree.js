@@ -37,6 +37,10 @@ export function createEntityInTree(tree, parentFolderId, newEntityData) {
   const entityType = `${type}s`
 
   return mutateInTree(tree, parentFolderId, (parent, folder, index) => {
+    if (folder[entityType].some(entity => entity?._id === newEntity._id)) {
+      parent[index] = folder
+      return parent
+    }
     parent[index] = {
       ...folder,
       [entityType]: [...folder[entityType], newEntity],

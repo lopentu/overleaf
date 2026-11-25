@@ -13,10 +13,12 @@ const Metrics = require('./Metrics')
 const ProjectHistoryRedisManager = require('./ProjectHistoryRedisManager')
 const HistoryManager = require('./HistoryManager')
 const RealTimeRedisManager = require('./RealTimeRedisManager')
+const QueuedDocumentApply = require('./QueuedDocumentApply')
 
 /**
  * @typedef {import("./types").Update} Update
  * @typedef {import("./types").HistoryOTEditOperationUpdate} HistoryOTEditOperationUpdate
+ * @typedef {import("./QueuedDocumentApply").GuardedProcessingContext} GuardedProcessingContext
  */
 
 /**
@@ -42,8 +44,18 @@ function isHistoryOTEditOperationUpdate(update) {
  * @param {string} docId
  * @param {HistoryOTEditOperationUpdate} update
  * @param {Profiler} profiler
+ * @param {GuardedProcessingContext} [processing]
  */
-async function tryApplyUpdate(projectId, docId, update, profiler) {
+async function tryApplyUpdate(projectId, docId, update, profiler, processing) {
+  if (processing) {
+    const receipt = await QueuedDocumentApply.getExistingReceipt(
+      projectId,
+      docId,
+      processing
+    )
+    if (receipt) return receipt
+    update = structuredClone(update)
+  }
   let { lines, version, pathname, type } =
     await DocumentManager.promises.getDoc(projectId, docId)
   profiler.log('getDoc')
@@ -54,6 +66,7 @@ async function tryApplyUpdate(projectId, docId, update, profiler) {
   if (type !== 'history-ot') {
     throw new Errors.OTTypeMismatchError(type, 'history-ot')
   }
+  const previousVersion = version
 
   // An update carries a list of sequential ops (e.g. a text edit composed
   // with a comment op). Keep the sequential apply in step with the frontend's
@@ -90,12 +103,41 @@ async function tryApplyUpdate(projectId, docId, update, profiler) {
     for (const op of ops) {
       file.edit(op)
     }
+    lines = file.toRaw()
     version += 1
     update.meta.ts = Date.now()
+  }
+
+  const forHistory = () => ({
+    ...update,
+    meta: { ...update.meta, pathname },
+  })
+  let receipt
+  if (processing) {
+    // The editor's submitted base version remains on the broadcast update.
+    // History must see the actual base used by the guarded document write.
+    const historyEntries = update.dup
+      ? []
+      : [JSON.stringify({ ...forHistory(), v: previousVersion })]
+    const result = QueuedDocumentApply.requireReceipt(
+      await RedisManager.promises.updateDocument(
+        projectId,
+        docId,
+        lines,
+        version,
+        update.dup ? [] : [update],
+        {},
+        update.meta,
+        { identity: processing.identity, previousVersion, historyEntries }
+      )
+    )
+    if (result.status === 'replayed') return result.receipt
+    receipt = result.receipt
+  } else if (!update.dup) {
     await RedisManager.promises.updateDocument(
       projectId,
       docId,
-      file.toRaw(),
+      lines,
       version,
       [update],
       {},
@@ -106,13 +148,7 @@ async function tryApplyUpdate(projectId, docId, update, profiler) {
     try {
       const projectOpsLength =
         await ProjectHistoryRedisManager.promises.queueOps(projectId, [
-          JSON.stringify({
-            ...update,
-            meta: {
-              ...update.meta,
-              pathname,
-            },
-          }),
+          JSON.stringify(forHistory()),
         ])
       HistoryManager.recordAndFlushHistoryOps(
         projectId,
@@ -126,6 +162,8 @@ async function tryApplyUpdate(projectId, docId, update, profiler) {
       // Just record the error here and acknowledge the write-op.
       Metrics.inc('history-queue-error')
     }
+  }
+  if (!update.dup) {
     await RedisManager.promises.recordProjectNotificationTimestamp(
       projectId,
       update.meta.ts
@@ -137,6 +175,7 @@ async function tryApplyUpdate(projectId, docId, update, profiler) {
     doc_id: docId,
     op: update,
   })
+  return receipt
 }
 
 /**
@@ -145,8 +184,9 @@ async function tryApplyUpdate(projectId, docId, update, profiler) {
  * @param {string} projectId
  * @param {string} docId
  * @param {HistoryOTEditOperationUpdate} update
+ * @param {GuardedProcessingContext} [processing]
  */
-async function applyUpdate(projectId, docId, update) {
+async function applyUpdate(projectId, docId, update, processing) {
   const profiler = new Profiler('applyUpdate', {
     project_id: projectId,
     doc_id: docId,
@@ -154,14 +194,17 @@ async function applyUpdate(projectId, docId, update) {
   })
 
   try {
-    await tryApplyUpdate(projectId, docId, update, profiler)
+    return await tryApplyUpdate(projectId, docId, update, profiler, processing)
   } catch (error) {
-    RealTimeRedisManager.sendData({
-      project_id: projectId,
-      doc_id: docId,
-      error: error instanceof Error ? error.message : String(error),
-    })
-    profiler.log('sendData')
+    // The batch owner reconciles an uncertain guarded write before notifying.
+    if (!processing) {
+      RealTimeRedisManager.sendData({
+        project_id: projectId,
+        doc_id: docId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      profiler.log('sendData')
+    }
     throw error
   } finally {
     profiler.end()

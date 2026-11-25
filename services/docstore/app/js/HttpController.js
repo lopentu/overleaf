@@ -86,6 +86,12 @@ const patchDocSchema = z.object({
     deleted: z.literal(true),
     deletedAt: z.coerce.date(),
     name: z.string(),
+    expectedRevision: z
+      .strictObject({
+        version: z.number().int().nonnegative(),
+        rev: z.number().int().nonnegative(),
+      })
+      .optional(),
   }),
 })
 
@@ -301,12 +307,20 @@ async function updateDoc(req, res) {
 }
 
 async function patchDoc(req, res) {
-  const { params, body: meta } = parseReq(req, patchDocSchema, {
+  const {
+    params,
+    body: { expectedRevision, ...meta },
+  } = parseReq(req, patchDocSchema, {
     fallbackSchema: patchDocFallbackSchema,
   })
   const { doc_id: docId, project_id: projectId } = params
   logger.debug({ projectId, docId }, 'patching doc')
-  await DocManager.patchDoc(projectId, docId, meta)
+  await DocManager.patchDoc(
+    projectId,
+    docId,
+    meta,
+    ...(expectedRevision ? [expectedRevision] : [])
+  )
   res.sendStatus(204)
 }
 

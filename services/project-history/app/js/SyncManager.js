@@ -1,6 +1,7 @@
 // @ts-check
 
 import _ from 'lodash'
+import { randomUUID } from 'node:crypto'
 import { callbackify, promisify } from 'node:util'
 import { callbackifyMultiResult } from '@overleaf/promise-utils'
 import Settings from '@overleaf/settings'
@@ -14,6 +15,7 @@ import {
 } from 'overleaf-editor-core/lib/errors.js'
 import {
   FileContentEmptyError,
+  HistoryQueueResetBlockedError,
   NeedFullProjectStructureResyncError,
   SYNC_ONGOING_ERROR_MESSAGE,
   SyncError,
@@ -66,7 +68,7 @@ async function startResync(projectId, options = {}) {
     await LockManager.promises.runWithLock(
       keys.projectHistoryLock({ project_id: projectId }),
       async extendLock => {
-        await startResyncWithoutLock(projectId, options)
+        await startResyncWithoutLock(projectId, options, extendLock)
       }
     )
   } catch (error) {
@@ -84,10 +86,12 @@ async function startHardResync(projectId, options = {}) {
     await LockManager.promises.runWithLock(
       keys.projectHistoryLock({ project_id: projectId }),
       async extendLock => {
-        await clearResyncState(projectId)
-        await RedisManager.promises.clearFirstOpTimestamp(projectId)
-        await RedisManager.promises.destroyDocUpdatesQueue(projectId)
-        await startResyncWithoutLock(projectId, { ...options, hard: true })
+        await startResyncWithReservation(
+          projectId,
+          { ...options, hard: true },
+          extendLock,
+          true
+        )
       }
     )
   } catch (error) {
@@ -99,8 +103,86 @@ async function startHardResync(projectId, options = {}) {
   }
 }
 
-// The caller must hold the lock and should record any errors via the ErrorRecorder.
-async function startResyncWithoutLock(projectId, options) {
+// The caller must hold the history project lock.
+async function startResyncWithoutLock(projectId, options, extendLock) {
+  await startResyncWithReservation(projectId, options, extendLock, false)
+}
+
+async function startResyncWithReservation(
+  projectId,
+  options,
+  extendLock,
+  resetQueue
+) {
+  let reservation
+  if (Settings.documentupdater?.enableRetirementQueue === true) {
+    if (typeof extendLock !== 'function') {
+      throw new SyncError(
+        'Cannot reserve history resync without its project lock'
+      )
+    }
+    const token = randomUUID()
+    await extendLock()
+    const claim = await WebApiManager.promises.claimResyncReservation(
+      projectId,
+      token
+    )
+    if (claim.status !== 'claimed') {
+      throw new SyncError(
+        'History resync is blocked by a document retirement or another reservation'
+      )
+    }
+    reservation = { token, extendLock }
+  }
+
+  let refusal
+  try {
+    if (resetQueue) {
+      if (reservation) {
+        await extendLock()
+        // Reset checks for pending publications before deleting the queue.
+        await RedisManager.promises.destroyDocUpdatesQueue(projectId)
+        await extendLock()
+        await clearResyncState(projectId)
+      } else {
+        await clearResyncState(projectId)
+        await RedisManager.promises.clearFirstOpTimestamp(projectId)
+        await RedisManager.promises.destroyDocUpdatesQueue(projectId)
+      }
+    }
+    await queueResyncAndSaveState(projectId, options, reservation)
+  } catch (error) {
+    const declinedBeforeMutation = resetQueue
+      ? error instanceof HistoryQueueResetBlockedError
+      : error instanceof SyncOngoingError
+    // A failed dispatch may still write. Retain its reservation for recovery.
+    if (!reservation || !declinedBeforeMutation) throw error
+    refusal = error
+  }
+
+  if (reservation) {
+    try {
+      // A confirmed refusal can release its own token even after lease expiry.
+      if (!refusal) await extendLock()
+      const release = await WebApiManager.promises.releaseResyncReservation(
+        projectId,
+        reservation.token
+      )
+      if (release.status === 'conflict') {
+        throw new SyncError('History resync reservation changed before release')
+      }
+    } catch (error) {
+      if (!refusal) throw error
+      logger.warn(
+        { projectId },
+        'history resync reservation release unconfirmed'
+      )
+    }
+  }
+  if (refusal) throw refusal
+}
+
+async function queueResyncAndSaveState(projectId, options, reservation) {
   await ErrorRecorder.promises.recordSyncStart(projectId)
 
   const syncState = await getResyncState(projectId)
@@ -159,8 +241,13 @@ async function startResyncWithoutLock(projectId, options) {
   if (options.resyncProjectStructureOnly) {
     webOpts.resyncProjectStructureOnly = options.resyncProjectStructureOnly
   }
+  if (reservation) {
+    await reservation.extendLock()
+    webOpts.resyncReservationToken = reservation.token
+  }
   await WebApiManager.promises.requestResync(projectId, webOpts)
-  await setResyncState(projectId, syncState)
+  if (reservation) await reservation.extendLock()
+  await setResyncState(projectId, syncState, Boolean(reservation))
 }
 
 /**
@@ -192,7 +279,7 @@ async function getResyncState(projectId) {
   return syncState
 }
 
-async function setResyncState(projectId, syncState) {
+async function setResyncState(projectId, syncState, durable = false) {
   // skip if syncState is null (i.e. unchanged)
   if (syncState == null) {
     return
@@ -233,7 +320,7 @@ async function setResyncState(projectId, syncState) {
   await db.projectHistorySyncState.updateOne(
     { project_id: new ObjectId(projectId) },
     update,
-    { upsert: true }
+    { upsert: true, ...(durable ? { writeConcern: { w: 'majority' } } : {}) }
   )
 
   if (!syncState.isSyncOngoing()) {

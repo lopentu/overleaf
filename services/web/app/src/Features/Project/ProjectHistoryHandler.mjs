@@ -2,6 +2,7 @@ import { Project } from '../../models/Project.mjs'
 import ProjectDetailsHandler from './ProjectDetailsHandler.mjs'
 import HistoryManager from '../History/HistoryManager.mjs'
 import ProjectEntityUpdateHandler from './ProjectEntityUpdateHandler.mjs'
+import { retirementEnabled } from './ProjectDocumentRetirementCoordinator.mjs'
 import { callbackify } from 'node:util'
 
 const ProjectHistoryHandler = {
@@ -45,6 +46,11 @@ const ProjectHistoryHandler = {
     }
 
     await ProjectHistoryHandler.setHistoryId(projectId, historyId)
+
+    if (retirementEnabled()) {
+      // Project-history claims the resync reservation and flushes the sync.
+      return HistoryManager.promises.resyncProject(projectId)
+    }
 
     await ProjectEntityUpdateHandler.promises.resyncProjectHistory(
       projectId,

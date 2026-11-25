@@ -1,7 +1,9 @@
+import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import sinon from 'sinon'
 import { Writable } from 'node:stream'
 import mongodb from 'mongodb-legacy'
+import { blobHashFromString } from 'overleaf-editor-core/lib/blob_utils.js'
 
 const { ObjectId } = mongodb
 
@@ -133,6 +135,107 @@ describe('UpdateMerger :', function () {
     }))
 
     ctx.UpdateMerger = (await import(MODULE_PATH)).default
+  })
+
+  describe('guarded GitHub writes', function () {
+    it('preserves the guard through the text-file adapter', async function (ctx) {
+      const expected = { docId: ctx.doc._id.toString(), version: 0 }
+      ctx.FileTypeManager.promises.getType.resolves({
+        binary: false,
+        encoding: 'utf-8',
+      })
+      await ctx.UpdateMerger.promises._mergeUpdate(
+        ctx.userId,
+        ctx.projectId,
+        ctx.docPath,
+        ctx.fsPath,
+        'github',
+        expected
+      )
+      expect(
+        ctx.EditorController.promises.upsertDocWithPath
+      ).to.have.been.calledWithExactly(
+        ctx.projectId,
+        ctx.docPath,
+        ctx.docLines,
+        'github',
+        ctx.userId,
+        expected
+      )
+    })
+
+    it('returns the hash of normalized editable bytes for the GitHub comparison', async function (ctx) {
+      ctx.fsPromises.readFile.withArgs(ctx.fsPath).resolves('café\r\nnext\r')
+      ctx.FileTypeManager.promises.getType.resolves({
+        binary: false,
+        encoding: 'utf-8',
+      })
+
+      const result = await ctx.UpdateMerger.promises._mergeUpdate(
+        ctx.userId,
+        ctx.projectId,
+        ctx.docPath,
+        ctx.fsPath,
+        'github',
+        null
+      )
+
+      expect(result.contentHash).to.equal(blobHashFromString('café\nnext\n'))
+    })
+
+    it('keeps an existing binary path binary and forwards its identity', async function (ctx) {
+      const expectedFile = { fileId: ctx.file._id.toString(), rev: 0 }
+      ctx.FileTypeManager.promises.getType.resolves({
+        binary: false,
+        encoding: 'utf-8',
+      })
+
+      const result = await ctx.UpdateMerger.promises._mergeUpdate(
+        ctx.userId,
+        ctx.projectId,
+        ctx.filePath,
+        ctx.fsPath,
+        'github',
+        expectedFile
+      )
+
+      expect(result.entityType).to.equal('file')
+      expect(
+        ctx.EditorController.promises.upsertFileWithPath
+      ).to.have.been.calledWithExactly(
+        ctx.projectId,
+        ctx.filePath,
+        ctx.fsPath,
+        null,
+        'github',
+        ctx.userId,
+        expectedFile
+      )
+    })
+
+    it('keeps an editable document when the imported bytes are binary', async function (ctx) {
+      const expected = { docId: ctx.doc._id.toString(), version: 0 }
+      ctx.FileTypeManager.promises.getType.resolves({
+        binary: true,
+        encoding: null,
+      })
+      await assert.rejects(
+        ctx.UpdateMerger.promises._mergeUpdate(
+          ctx.userId,
+          ctx.projectId,
+          ctx.docPath,
+          ctx.fsPath,
+          'github',
+          expected
+        ),
+        {
+          message:
+            'GitHub sync cannot replace a guarded editable document with a binary file.',
+        }
+      )
+      expect(ctx.EditorController.promises.upsertFileWithPath).not.to.have.been
+        .called
+    })
   })
 
   describe('mergeUpdate', function () {

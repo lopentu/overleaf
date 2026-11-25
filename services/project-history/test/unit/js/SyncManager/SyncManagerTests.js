@@ -13,6 +13,7 @@ import { UnprocessableError } from 'overleaf-editor-core/lib/errors.js'
 import { strict as esmock } from 'esmock'
 import {
   FileContentEmptyError,
+  HistoryQueueResetBlockedError,
   SyncOngoingError,
 } from '../../../../app/js/Errors.js'
 const { ObjectId } = mongodb
@@ -83,6 +84,7 @@ describe('SyncManager', function () {
       projectHistorySyncState: {
         findOne: sinon.stub().resolves(this.syncState),
         updateOne: sinon.stub().resolves(),
+        deleteOne: sinon.stub().resolves(),
       },
       projects: {
         updateOne: sinon.stub().resolves(),
@@ -111,6 +113,8 @@ describe('SyncManager', function () {
       promises: {
         getHistoryId: sinon.stub(),
         requestResync: sinon.stub().resolves(),
+        claimResyncReservation: sinon.stub(),
+        releaseResyncReservation: sinon.stub(),
       },
     }
     this.WebApiManager.promises.getHistoryId
@@ -124,7 +128,12 @@ describe('SyncManager', function () {
       },
     }
 
-    this.RedisManager = {}
+    this.RedisManager = {
+      promises: {
+        clearFirstOpTimestamp: sinon.stub().resolves(),
+        destroyDocUpdatesQueue: sinon.stub().resolves(),
+      },
+    }
 
     this.SnapshotManager = {
       promises: {
@@ -144,6 +153,7 @@ describe('SyncManager', function () {
     this.Metrics = { inc: sinon.stub() }
 
     this.Settings = {
+      documentupdater: { enableRetirementQueue: false },
       redis: {
         lock: {
           key_schema: {
@@ -182,6 +192,83 @@ describe('SyncManager', function () {
 
   afterEach(function () {
     tk.reset()
+  })
+
+  it('holds a guarded hard resync reservation through reset, snapshot, and durable state', async function () {
+    this.Settings.documentupdater.enableRetirementQueue = true
+    const { claimResyncReservation, requestResync, releaseResyncReservation } =
+      this.WebApiManager.promises
+    const reset = this.RedisManager.promises.destroyDocUpdatesQueue
+    const save = this.db.projectHistorySyncState.updateOne
+    const start = () =>
+      this.SyncManager.promises.startHardResync(this.projectId)
+
+    claimResyncReservation.resolves({ status: 'blocked' })
+    await expect(start()).to.be.rejectedWith('document retirement')
+    sinon.assert.notCalled(reset)
+    sinon.assert.notCalled(this.db.projectHistorySyncState.deleteOne)
+    sinon.assert.notCalled(requestResync)
+
+    claimResyncReservation.resetHistory()
+    claimResyncReservation.onFirstCall().resolves({ status: 'held' })
+    claimResyncReservation.onSecondCall().resolves({ status: 'claimed' })
+    await expect(start()).to.be.rejectedWith('another reservation')
+    sinon.assert.calledOnce(claimResyncReservation)
+    sinon.assert.notCalled(reset)
+    sinon.assert.notCalled(this.db.projectHistorySyncState.deleteOne)
+    sinon.assert.notCalled(requestResync)
+    sinon.assert.notCalled(releaseResyncReservation)
+
+    claimResyncReservation.reset()
+    claimResyncReservation.resolves({ status: 'claimed' })
+    releaseResyncReservation.resolves({ status: 'released' })
+    await start()
+
+    const [, token] = claimResyncReservation.firstCall.args
+    sinon.assert.calledOnceWithExactly(requestResync, this.projectId, {
+      resyncReservationToken: token,
+    })
+    sinon.assert.calledOnceWithExactly(
+      releaseResyncReservation,
+      this.projectId,
+      token
+    )
+    expect(save.firstCall.args[2]).to.deep.equal({
+      upsert: true,
+      writeConcern: { w: 'majority' },
+    })
+    expect(claimResyncReservation.firstCall.callId).to.be.lessThan(
+      reset.firstCall.callId
+    )
+    sinon.assert.callOrder(reset, requestResync, save, releaseResyncReservation)
+
+    claimResyncReservation.resetBehavior()
+    claimResyncReservation.resolves({ status: 'claimed' })
+    save.rejects(new Error('sync state acknowledgement lost'))
+    await expect(start()).to.be.rejectedWith('sync state acknowledgement lost')
+    sinon.assert.calledOnce(releaseResyncReservation)
+  })
+
+  it('releases its own hard resync reservation when pending history prevents reset', async function () {
+    this.Settings.documentupdater.enableRetirementQueue = true
+    const { claimResyncReservation, requestResync, releaseResyncReservation } =
+      this.WebApiManager.promises
+    claimResyncReservation.resolves({ status: 'claimed' })
+    releaseResyncReservation.resolves({ status: 'released' })
+    this.RedisManager.promises.destroyDocUpdatesQueue.rejects(
+      new HistoryQueueResetBlockedError('pending history publications')
+    )
+
+    await expect(
+      this.SyncManager.promises.startHardResync(this.projectId)
+    ).to.be.rejectedWith(HistoryQueueResetBlockedError)
+
+    sinon.assert.notCalled(this.db.projectHistorySyncState.deleteOne)
+    sinon.assert.notCalled(requestResync)
+    sinon.assert.calledOnceWithExactly(
+      releaseResyncReservation,
+      ...claimResyncReservation.firstCall.args
+    )
   })
 
   describe('startResync', function () {
@@ -246,6 +333,27 @@ describe('SyncManager', function () {
         await expect(
           this.SyncManager.promises.startResync(this.projectId)
         ).to.be.rejectedWith(SyncOngoingError, 'sync ongoing')
+      })
+
+      it('releases its guarded reservation for a resync declined before dispatch', async function () {
+        this.Settings.documentupdater.enableRetirementQueue = true
+        const {
+          claimResyncReservation,
+          requestResync,
+          releaseResyncReservation,
+        } = this.WebApiManager.promises
+        claimResyncReservation.resolves({ status: 'claimed' })
+        releaseResyncReservation.resolves({ status: 'released' })
+
+        await expect(
+          this.SyncManager.promises.startResync(this.projectId)
+        ).to.be.rejectedWith(SyncOngoingError, 'sync ongoing')
+
+        sinon.assert.notCalled(requestResync)
+        sinon.assert.calledOnceWithExactly(
+          releaseResyncReservation,
+          ...claimResyncReservation.firstCall.args
+        )
       })
     })
 

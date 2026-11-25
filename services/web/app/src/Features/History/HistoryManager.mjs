@@ -190,7 +190,9 @@ async function copyBlob(sourceHistoryId, targetHistoryId, hash, sizeLimit) {
       let size
       try {
         ;({ size } = JSON.parse(err.body))
-      } catch {}
+      } catch {
+        // History can reject the copy without reporting the blob size.
+      }
       throw new FileTooLargeError('file too large', { size })
     }
     throw err
@@ -288,6 +290,35 @@ async function getContentAtVersion(projectId, version) {
       'failed to load project history snapshot at version',
       { historyId, version }
     )
+  }
+}
+
+/**
+ * @typedef {ReturnType<typeof import('overleaf-editor-core').getDocUpdaterCompatibleRanges> & {
+ *   editable: boolean,
+ *   content: string | null,
+ *   timestamp: string | null,
+ *   metadata: Record<string, unknown> | null
+ * }} FileRecoverySnapshot
+ */
+
+/**
+ * @param {string} projectId
+ * @param {number} version
+ * @param {string} pathname
+ * @returns {Promise<FileRecoverySnapshot>}
+ */
+async function getFileRecoveryAtVersion(projectId, version, pathname) {
+  const url =
+    `${settings.apis.project_history.url}/project/${projectId}/recovery/version/${version}/` +
+    encodeURIComponent(pathname)
+  try {
+    return await fetchJson(url, { signal: AbortSignal.timeout(60_000) })
+  } catch (error) {
+    if (error instanceof RequestFailedError && error.response.status === 404) {
+      throw new NotFoundError('file not found in snapshot')
+    }
+    throw error
   }
 }
 
@@ -512,6 +543,7 @@ export default {
     deleteProjectHistory,
     getCurrentContent,
     getContentAtVersion,
+    getFileRecoveryAtVersion,
     uploadBlobFromDisk,
     copyBlob,
     requestBlob,

@@ -1,7 +1,35 @@
+import { createHash } from 'node:crypto'
 import sinon from 'sinon'
 import { expect } from 'chai'
 import { strict as esmock } from 'esmock'
 import * as Errors from '../../../../app/js/Errors.js'
+import {
+  getHistoryPublication,
+  parseHistoryUpdate,
+} from '../../../../app/js/HistoryPublicationEnvelope.js'
+
+const taggedHistoryId = '59bfd450e3028c4d40a1e9aa'
+
+function makeTaggedUpdate() {
+  const source = JSON.stringify({
+    doc: '59bfd450e3028c4d40a1e9ab',
+    v: 1,
+    op: [{ p: 0, i: 'a' }],
+    meta: { ts: 1700000000000, pathname: '/main.tex', doc_length: 0 },
+  })
+  return parseHistoryUpdate(
+    JSON.stringify({
+      historyPublication: {
+        historyId: taggedHistoryId,
+        batchId: 'c7f6da2e-4df9-4d69-9728-0853a197db8a',
+        ordinal: 0,
+        entryOrdinal: 0,
+        digest: createHash('sha256').update(source).digest('hex'),
+      },
+      source,
+    })
+  )
+}
 
 const MODULE_PATH = '../../../../app/js/UpdatesProcessor.js'
 
@@ -24,6 +52,13 @@ describe('UpdatesProcessor', function () {
     this.HistoryStoreManager = {
       getMostRecentVersion: sinon.stub(),
       sendChanges: sinon.stub().yields(null, { resyncNeeded: true }),
+      lookupActivationReceipt: sinon.stub().resolves({ status: 'pending' }),
+      appendGuardedChange: sinon
+        .stub()
+        .resolves({ status: 'committed', historyVersion: 9 }),
+      promises: {
+        getMostRecentVersion: sinon.stub().resolves({ version: 8 }),
+      },
     }
     this.LockManager = {
       runWithLock: sinon.spy((key, runner, callback) =>
@@ -44,6 +79,7 @@ describe('UpdatesProcessor', function () {
     }
     this.WebApiManager = {
       getHistoryId: sinon.stub(),
+      getFreshHistoryId: sinon.stub(),
     }
     this.SyncManager = {
       expandSyncUpdates: sinon.stub(),
@@ -87,6 +123,7 @@ describe('UpdatesProcessor', function () {
       timing: sinon.stub(),
     }
     this.Settings = {
+      documentupdater: { enableRetirementQueue: false },
       redis: {
         lock: {
           key_schema: {
@@ -283,6 +320,120 @@ describe('UpdatesProcessor', function () {
         expect(this.err).to.not.exist
         this.SyncManager.promises.getResyncState.should.not.have.been.called
       })
+    })
+  })
+
+  describe('private history publications', function () {
+    beforeEach(function () {
+      this.guarded = makeTaggedUpdate()
+      this.publication = getHistoryPublication(this.guarded)
+      this.change = { historyPublication: { ...this.publication } }
+      this.UpdateTranslator.convertToChanges.returns([
+        { toStorageRaw: () => this.change },
+      ])
+      this.processGuarded = () =>
+        new Promise((resolve, reject) => {
+          this.UpdatesProcessor._processUpdates(
+            this.project_id,
+            taggedHistoryId,
+            [this.guarded],
+            this.extendLock,
+            (error, result) => (error ? reject(error) : resolve(result))
+          )
+        })
+    })
+
+    it('requires the authoritative history to match the publication', function (done) {
+      this.WebApiManager.getFreshHistoryId.resolves('59bfd450e3028c4d40a1e9ac')
+      this.UpdatesProcessor._getHistoryId(
+        this.project_id,
+        [makeTaggedUpdate()],
+        error => {
+          expect(error?.message).to.equal(
+            'private history publication does not match project history'
+          )
+          done()
+        }
+      )
+    })
+
+    it('keeps publications away from legacy outbound and skip paths', function (done) {
+      this.SyncManager.skipUpdatesDuringSync.yields(null, [], null)
+      this.UpdatesProcessor._processUpdates(
+        this.project_id,
+        taggedHistoryId,
+        [makeTaggedUpdate()],
+        this.extendLock,
+        error => {
+          expect(error?.message).to.equal(
+            'private history publication transport is unavailable'
+          )
+          expect(this.SyncManager.skipUpdatesDuringSync.called).to.equal(false)
+          expect(this.HistoryStoreManager.sendChanges.called).to.equal(false)
+          done()
+        }
+      )
+    })
+
+    it('appends a pending publication using the guarded API and exact receipt identity', async function () {
+      this.Settings.documentupdater.enableRetirementQueue = true
+
+      expect(await this.processGuarded()).to.deep.equal({ resyncNeeded: false })
+      sinon.assert.calledOnceWithExactly(
+        this.HistoryStoreManager.lookupActivationReceipt,
+        this.publication
+      )
+      sinon.assert.calledOnceWithExactly(
+        this.HistoryStoreManager.appendGuardedChange,
+        this.change,
+        8
+      )
+      sinon.assert.calledOnce(this.extendLock)
+      sinon.assert.notCalled(this.HistoryStoreManager.sendChanges)
+    })
+
+    it('recovers a prior append through its durable receipt', async function () {
+      this.Settings.documentupdater.enableRetirementQueue = true
+      this.HistoryStoreManager.lookupActivationReceipt.resolves({
+        status: 'committed',
+        historyVersion: 9,
+      })
+      this.SyncManager.promises.getResyncState.resolves(
+        makeSyncState({ ongoing: true })
+      )
+
+      expect(await this.processGuarded()).to.deep.equal({ resyncNeeded: false })
+      sinon.assert.notCalled(this.HistoryStoreManager.appendGuardedChange)
+      sinon.assert.notCalled(
+        this.HistoryStoreManager.promises.getMostRecentVersion
+      )
+    })
+
+    it('does not treat the document watermark as a committed publication', async function () {
+      this.Settings.documentupdater.enableRetirementQueue = true
+      this.HistoryStoreManager.promises.getMostRecentVersion.resolves({
+        version: 8,
+        projectStructureAndDocVersions: {
+          docs: { [this.guarded.doc]: { v: 1 } },
+        },
+      })
+
+      await expect(this.processGuarded()).to.be.rejectedWith(
+        'without the exact receipt'
+      )
+      sinon.assert.notCalled(this.HistoryStoreManager.appendGuardedChange)
+    })
+
+    it('retains a publication after an indeterminate append', async function () {
+      this.Settings.documentupdater.enableRetirementQueue = true
+      this.HistoryStoreManager.appendGuardedChange.resolves({
+        status: 'pending',
+      })
+
+      await expect(this.processGuarded()).to.be.rejectedWith(
+        'unresolved (pending)'
+      )
+      sinon.assert.notCalled(this.HistoryStoreManager.sendChanges)
     })
   })
 

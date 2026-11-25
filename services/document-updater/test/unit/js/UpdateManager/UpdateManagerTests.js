@@ -2,6 +2,8 @@ const { createHash } = require('node:crypto')
 const sinon = require('sinon')
 const { expect } = require('chai')
 const SandboxedModule = require('sandboxed-module')
+const { RequestFailedError } = require('@overleaf/fetch-utils')
+const Errors = require('../../../../app/js/Errors')
 
 const MODULE_PATH = '../../../../app/js/UpdateManager.js'
 
@@ -12,6 +14,7 @@ describe('UpdateManager', function () {
     this.doc_id = 'document-id-123'
     this.projectLockValue = 'mock-project-lock-value'
     this.pathname = '/a/b/c.tex'
+    this.Settings = { documentupdater: {} }
 
     this.Metrics = {
       inc: sinon.stub(),
@@ -41,6 +44,7 @@ describe('UpdateManager', function () {
 
     this.RealTimeRedisManager = {
       sendData: sinon.stub(),
+      guardedProjectQueue: {},
       promises: {
         getProjectUpdatesLength: sinon.stub().resolves(0),
         getPendingProjectUpdates: sinon.stub().resolves([]),
@@ -60,6 +64,7 @@ describe('UpdateManager', function () {
 
     this.HistoryManager = {
       recordAndFlushHistoryOps: sinon.stub(),
+      promises: { ensureQueuedHistoryDurable: sinon.stub() },
     }
 
     this.DocumentManager = {
@@ -95,12 +100,14 @@ describe('UpdateManager', function () {
     this.buildSparseChangePreviews = sinon.stub().returns([])
     this.UpdateManager = SandboxedModule.require(MODULE_PATH, {
       requires: {
+        '@overleaf/settings': this.Settings,
         './ProjectLockManager': this.ProjectLockManager,
         './RedisManager': this.RedisManager,
         './RealTimeRedisManager': this.RealTimeRedisManager,
         './ShareJsUpdateManager': this.ShareJsUpdateManager,
         './HistoryManager': this.HistoryManager,
         './HistoryOTUpdateManager': this.HistoryOTUpdateManager,
+        './Errors': Errors,
         './Metrics': this.Metrics,
         './DocumentManager': this.DocumentManager,
         './RangesManager': this.RangesManager,
@@ -191,7 +198,90 @@ describe('UpdateManager', function () {
 
   describe('fetchAndApplyProjectUpdates', function () {
     beforeEach(function () {
+      this.applyUpdate = this.UpdateManager.promises.applyUpdate
       this.UpdateManager.promises.applyUpdate = sinon.stub().resolves()
+    })
+
+    it('applies a sibling edit after Web confirms that the preceding document is missing', async function () {
+      this.UpdateManager.promises.applyUpdate = this.applyUpdate
+      const missing = { doc: 'removed-doc', op: [{ p: 0, i: 'text' }] }
+      const sibling = { doc: 'sibling-doc', op: [{ textOperation: ['text'] }] }
+      const webUrl = 'http://web.invalid'
+      const missingDocUrl = new URL(
+        `/project/${this.project_id}/doc/${missing.doc}`,
+        webUrl
+      )
+      const fetchJson = sinon
+        .stub()
+        .rejects(
+          new RequestFailedError(
+            missingDocUrl,
+            { method: 'GET' },
+            new Response(null, { status: 404 }),
+            null
+          )
+        )
+      const persistence = SandboxedModule.require(
+        '../../../../app/js/PersistenceManager.js',
+        {
+          globals: { AbortSignal },
+          requires: {
+            '@overleaf/fetch-utils': { fetchJson, RequestFailedError },
+            '@overleaf/settings': { apis: { web: { url: webUrl } } },
+            './Errors': Errors,
+            './Metrics': this.Metrics,
+            './HistoryConversions': {},
+          },
+        }
+      )
+      this.DocumentManager.promises.getDoc
+        .withArgs(this.project_id, missing.doc)
+        .callsFake(persistence.promises.getDoc)
+      this.HistoryOTUpdateManager.isHistoryOTEditOperationUpdate
+        .withArgs(sibling)
+        .returns(true)
+      this.RealTimeRedisManager.promises.getPendingProjectUpdates.resolves([
+        missing,
+        sibling,
+      ])
+
+      await this.UpdateManager.promises.fetchAndApplyProjectUpdates(
+        this.project_id,
+        new this.Profiler()
+      )
+
+      expect(fetchJson).to.have.been.calledOnceWith(
+        missingDocUrl,
+        sinon.match({ method: 'GET' })
+      )
+      expect(this.RealTimeRedisManager.sendData).to.have.been.calledOnceWith({
+        project_id: this.project_id,
+        doc_id: missing.doc,
+        error: 'doc not found',
+      })
+      expect(
+        this.HistoryOTUpdateManager.applyUpdate
+      ).to.have.been.calledOnceWith(this.project_id, sibling.doc, sibling)
+      sinon.assert.callOrder(
+        this.RealTimeRedisManager.sendData,
+        this.HistoryOTUpdateManager.applyUpdate
+      )
+    })
+
+    it('keeps propagating a not-found error from any other source', async function () {
+      const missing = { doc: 'missing-doc', op: [{ p: 0, i: 'text' }] }
+      const error = new Errors.NotFoundError('missing')
+      this.UpdateManager.promises.applyUpdate.rejects(error)
+      this.RealTimeRedisManager.promises.getPendingProjectUpdates.resolves([
+        missing,
+      ])
+
+      await expect(
+        this.UpdateManager.promises.fetchAndApplyProjectUpdates(
+          this.project_id,
+          new this.Profiler()
+        )
+      ).to.be.rejectedWith(error)
     })
 
     describe('with updates carrying their doc id', function () {
@@ -872,6 +962,77 @@ describe('UpdateManager', function () {
       this.methodResult = 'method result'
       this.method = sinon.stub().resolves(this.methodResult)
       this.arg1 = 'argument 1'
+    })
+
+    describe('for a protected queue', function () {
+      beforeEach(function () {
+        this.Settings.documentupdater.enableRetirementQueue = true
+        this.Settings.documentupdater.enableRetirementWriterSeal = true
+        this.RealTimeRedisManager.promises.getPendingProjectUpdates.rejects(
+          new Errors.ProjectUpdateQueueGuardedError('guarded queue')
+        )
+        this.UpdateManager.promises.continueProcessingUpdatesWithLock = sinon
+          .stub()
+          .resolves()
+        this.drainGuarded = sinon.stub()
+        this.UpdateManager.promises.processGuardedQueuedBatchUnderLock =
+          this.drainGuarded
+        this.run = () =>
+          this.UpdateManager.promises.lockUpdatesAndDo(
+            this.method,
+            this.project_id,
+            this.doc_id,
+            this.arg1
+          )
+      })
+
+      it('requires an empty guarded queue before calling the document operation', async function () {
+        this.drainGuarded.onFirstCall().resolves('acknowledged')
+        this.drainGuarded.onSecondCall().resolves('empty')
+
+        expect(await this.run()).to.equal(this.methodResult)
+        sinon.assert.calledTwice(this.drainGuarded)
+        sinon.assert.calledWithExactly(
+          this.drainGuarded,
+          this.project_id,
+          this.projectLockValue,
+          {
+            queue: this.RealTimeRedisManager.guardedProjectQueue,
+            ensureHistoryDurable:
+              this.HistoryManager.promises.ensureQueuedHistoryDurable,
+          }
+        )
+        expect(
+          this.drainGuarded.secondCall.calledBefore(this.method.firstCall)
+        ).to.equal(true)
+        sinon.assert.callOrder(
+          this.method,
+          this.ProjectLockManager.promises.releaseLock
+        )
+        sinon.assert.notCalled(
+          this.UpdateManager.promises.continueProcessingUpdatesWithLock
+        )
+      })
+
+      it('releases the lock and retains the operation when guarded history is pending', async function () {
+        this.drainGuarded.resolves('waiting-history')
+
+        await expect(this.run()).to.be.rejectedWith(
+          Errors.ProjectStateChangedError
+        )
+        sinon.assert.notCalled(this.method)
+        sinon.assert.calledOnce(this.ProjectLockManager.promises.releaseLock)
+      })
+
+      it('leaves the queue protected when this worker has guarded mode disabled', async function () {
+        this.Settings.documentupdater.enableRetirementQueue = false
+
+        await expect(this.run()).to.be.rejectedWith(
+          Errors.ProjectStateChangedError
+        )
+        sinon.assert.notCalled(this.drainGuarded)
+        sinon.assert.notCalled(this.method)
+      })
     })
 
     describe('successfully', function () {

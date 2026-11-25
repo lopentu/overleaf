@@ -11,6 +11,7 @@ logger.logger.addSerializers(require('./app/js/LoggerSerializers'))
 
 const RedisManager = require('./app/js/RedisManager')
 const DispatchManager = require('./app/js/DispatchManager')
+const HistoryManager = require('./app/js/HistoryManager')
 const DeleteQueueManager = require('./app/js/DeleteQueueManager')
 const Errors = require('./app/js/Errors')
 const { handleValidationError } = require('@overleaf/validation-tools')
@@ -25,7 +26,10 @@ const app = express()
 app.use(express.json({ limit: Settings.maxJsonRequestSize }))
 Metrics.injectMetricsRoute(app)
 
-DispatchManager.createAndStartDispatchers(Settings.dispatcherCount)
+DispatchManager.createAndStartDispatchers(
+  Settings.dispatcherCount,
+  HistoryManager.promises.ensureQueuedHistoryDurable
+)
 
 app.get('/status', (req, res) => {
   if (Settings.shuttingDown) {
@@ -138,12 +142,20 @@ app.get(
 )
 app.post('/project/:project_id/clearState', HttpController.clearProjectState)
 app.post('/project/:project_id/doc/:doc_id', HttpController.setDoc)
+app.post(
+  '/project/:project_id/doc/:doc_id/set-if-version',
+  HttpController.setDocIfVersion
+)
 app.post('/project/:project_id/doc/:doc_id/append', HttpController.appendToDoc)
 app.post(
   '/project/:project_id/doc/:doc_id/flush',
   HttpController.flushDocIfLoaded
 )
 app.delete('/project/:project_id/doc/:doc_id', HttpController.deleteDoc)
+app.post(
+  '/project/:project_id/doc/:doc_id/retirement/:operation_id',
+  HttpController.reconcileDocumentRetirement
+)
 app.delete('/project/:project_id', HttpController.deleteProject)
 app.delete('/project', HttpController.deleteMultipleProjects)
 app.post('/project/:project_id', HttpController.updateProject)
@@ -228,7 +240,7 @@ const shutdownCleanly = signal => () => {
 
 const watchForEvent = eventName => {
   docUpdaterRedisClient.on(eventName, e => {
-    console.log(`redis event: ${eventName} ${e}`) // eslint-disable-line no-console
+    console.log(`redis event: ${eventName} ${e}`)
   })
 }
 

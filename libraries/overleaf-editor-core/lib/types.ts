@@ -63,6 +63,16 @@ export type RawOrigin = z.infer<typeof schemas.rawOrigin>
 
 export type RawChange = z.infer<typeof schemas.rawChange>
 
+export type HistoryPublication = {
+  historyId: string
+  batchId: string
+  ordinal: number
+  entryOrdinal: number
+  digest: string
+}
+
+export type RawStorageChange = z.infer<typeof schemas.rawStorageChange>
+
 export type RawOperation = z.infer<typeof schemas.rawOperation>
 
 export type RawSnapshot = z.infer<typeof schemas.rawSnapshot>
@@ -70,6 +80,11 @@ export type RawSnapshot = z.infer<typeof schemas.rawSnapshot>
 export type RawHistory = {
   snapshot: RawSnapshot
   changes: RawChange[]
+}
+
+export type RawStorageHistory = {
+  snapshot: RawSnapshot
+  changes: RawStorageChange[]
 }
 
 export type RawChunk = {

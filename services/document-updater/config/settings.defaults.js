@@ -107,6 +107,15 @@ module.exports = {
         docVersion({ doc_id: docId }) {
           return `DocVersion:{${docId}}`
         },
+        documentWriterSeal({ doc_id: docId }) {
+          return `DocumentWriterSeal:{${docId}}`
+        },
+        documentLoadReservation({ doc_id: docId }) {
+          return `DocumentLoadReservation:{${docId}}`
+        },
+        documentApplicationReceipts({ doc_id: docId }) {
+          return `DocumentApplicationReceipts:{${docId}}`
+        },
         docHash({ doc_id: docId }) {
           return `DocHash:{${docId}}`
         },
@@ -157,6 +166,13 @@ module.exports = {
         },
       },
     },
+  },
+
+  documentupdater: {
+    enableRetirementQueue:
+      process.env.OVERLEAF_ENABLE_GUARDED_DOCUMENT_RETIREMENT === 'true',
+    enableRetirementWriterSeal:
+      process.env.OVERLEAF_ENABLE_GUARDED_DOCUMENT_RETIREMENT === 'true',
   },
 
   max_doc_length: 2 * 1024 * 1024, // 2mb

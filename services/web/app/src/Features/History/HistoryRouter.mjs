@@ -120,6 +120,16 @@ function apply(webRouter, privateApiRouter) {
     AuthenticationController.requirePrivateApiAuth(),
     HistoryController.resyncProjectHistory
   )
+  privateApiRouter.post(
+    '/project/:Project_id/history/resync-reservation/claim',
+    AuthenticationController.requirePrivateApiAuth(),
+    HistoryController.claimResyncReservation
+  )
+  privateApiRouter.post(
+    '/project/:Project_id/history/resync-reservation/release',
+    AuthenticationController.requirePrivateApiAuth(),
+    HistoryController.releaseResyncReservation
+  )
 
   // History labels
 

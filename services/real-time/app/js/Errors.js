@@ -30,6 +30,12 @@ class DataTooLargeToParseError extends OError {
   }
 }
 
+class DocumentRetirementFencedError extends OError {
+  constructor() {
+    super('document is being retired')
+  }
+}
+
 class DocumentUpdaterRequestFailedError extends OError {
   constructor(action, statusCode) {
     super('doc updater returned a non-success status code', {
@@ -86,6 +92,7 @@ export default {
   CorruptedJoinProjectResponseError,
   ClientRequestedMissingOpsError,
   DataTooLargeToParseError,
+  DocumentRetirementFencedError,
   DocumentUpdaterRequestFailedError,
   MissingSessionError,
   NotAuthorizedError,

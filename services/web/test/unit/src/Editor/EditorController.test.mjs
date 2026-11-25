@@ -338,6 +338,53 @@ describe('EditorController', function () {
         .should.equal(true)
     })
 
+    it('forwards the guarded write to the project entity handler', async function (ctx) {
+      const expected = { docId: '507f1f77bcf86cd799439011', version: 0 }
+      ctx.ProjectEntityUpdateHandler.upsertDocWithPath.resetHistory()
+      await ctx.EditorController.promises.upsertDocWithPath(
+        ctx.project_id,
+        ctx.docPath,
+        ctx.docLines,
+        'github',
+        ctx.user_id,
+        expected
+      )
+      expect(
+        ctx.ProjectEntityUpdateHandler.upsertDocWithPath
+      ).to.have.been.calledWithExactly(
+        ctx.project_id,
+        ctx.docPath,
+        ctx.docLines,
+        'github',
+        ctx.user_id,
+        expected,
+        sinon.match.func
+      )
+    })
+
+    it('forwards the absence guard separately from a legacy callback', async function (ctx) {
+      ctx.ProjectEntityUpdateHandler.upsertDocWithPath.resetHistory()
+      await ctx.EditorController.promises.upsertDocWithPath(
+        ctx.project_id,
+        ctx.docPath,
+        ctx.docLines,
+        'github',
+        ctx.user_id,
+        null
+      )
+      expect(
+        ctx.ProjectEntityUpdateHandler.upsertDocWithPath
+      ).to.have.been.calledWithExactly(
+        ctx.project_id,
+        ctx.docPath,
+        ctx.docLines,
+        'github',
+        ctx.user_id,
+        null,
+        sinon.match.func
+      )
+    })
+
     describe('doc does not exist', function () {
       beforeEach(function (ctx) {
         ctx.ProjectEntityUpdateHandler.upsertDocWithPath = sinon

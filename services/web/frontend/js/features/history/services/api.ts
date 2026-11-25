@@ -82,11 +82,11 @@ export function diffDoc(
   return getJSON<DocDiffResponse>(diffUrl, { signal })
 }
 
-export function restoreFile(projectId: string, selectedFile: FileRemoved) {
+export function restoreFile(projectId: string, file: FileRemoved) {
   return postJSON<RestoreFileResponse>(`/project/${projectId}/restore_file`, {
     body: {
-      version: selectedFile.deletedAtV,
-      pathname: selectedFile.pathname,
+      version: file.deletedAtV,
+      pathname: file.newPathname ?? file.pathname,
     },
   })
 }
