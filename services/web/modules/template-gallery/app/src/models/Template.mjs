@@ -17,13 +17,14 @@ export const TemplateSchema = new Schema(
     imageName: { type: String },
     language: { type: String },
     version: { type: Number, default: 1, required: true },
+    reservedVersion: { type: Number },
     owner: { type: ObjectId, ref: 'User' },
     lastUpdated: {
       type: Date,
       default() {
         return new Date()
       },
-    required: true
+      required: true,
     },
   },
   { minimize: false }
